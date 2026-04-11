@@ -1,0 +1,26 @@
+{
+  "data": [
+    {
+      "id": "qemu/100",
+      "type": "vm",
+      "vmid": 100,
+      "name": "web1",
+      "node": "pve1",
+      "status": "running",
+      "tags": "pmox"
+    },
+    {
+      "id": "qemu/200",
+      "type": "vm",
+      "vmid": 200,
+      "name": "legacy",
+      "node": "pve2",
+      "status": "stopped"
+    },
+    {
+      "id": "storage/pve1/local",
+      "type": "storage",
+      "node": "pve1"
+    }
+  ]
+}

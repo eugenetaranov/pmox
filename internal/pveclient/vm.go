@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // VMStatus is the parsed /status/current response for a single VM.
@@ -60,7 +61,11 @@ func (c *Client) SetConfig(ctx context.Context, node string, vmid int, kv map[st
 	form := url.Values{}
 	for k, v := range kv {
 		if k == "sshkeys" {
-			v = url.QueryEscape(v)
+			// PVE requires sshkeys to be pre-URL-encoded with spaces as
+			// %20, NOT as + — url.QueryEscape produces + for spaces
+			// (application/x-www-form-urlencoded style), which PVE's
+			// validator rejects as "invalid urlencoded string".
+			v = strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 		}
 		form.Set(k, v)
 	}
@@ -73,6 +78,30 @@ func (c *Client) SetConfig(ctx context.Context, node string, vmid int, kv map[st
 // the UPID of the asynchronous start task.
 func (c *Client) Start(ctx context.Context, node string, vmid int) (string, error) {
 	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/start", node, vmid)
+	body, err := c.requestForm(ctx, "POST", path, nil)
+	if err != nil {
+		return "", err
+	}
+	return parseDataString(body)
+}
+
+// Shutdown issues POST /nodes/{node}/qemu/{vmid}/status/shutdown (the
+// graceful, ACPI-driven power-off) and returns the UPID of the
+// asynchronous task.
+func (c *Client) Shutdown(ctx context.Context, node string, vmid int) (string, error) {
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/shutdown", node, vmid)
+	body, err := c.requestForm(ctx, "POST", path, nil)
+	if err != nil {
+		return "", err
+	}
+	return parseDataString(body)
+}
+
+// Stop issues POST /nodes/{node}/qemu/{vmid}/status/stop (hard
+// power-off, no guest cooperation) and returns the UPID of the
+// asynchronous task.
+func (c *Client) Stop(ctx context.Context, node string, vmid int) (string, error) {
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/stop", node, vmid)
 	body, err := c.requestForm(ctx, "POST", path, nil)
 	if err != nil {
 		return "", err

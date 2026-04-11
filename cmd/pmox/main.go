@@ -61,6 +61,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Proxmox server URL (overrides PMOX_SERVER)")
 
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(newLaunchCmd())
+	rootCmd.AddCommand(newDeleteCmd())
 }
 
 // signalContext returns a context that is cancelled on the first SIGINT/SIGTERM

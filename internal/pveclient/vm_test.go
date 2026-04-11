@@ -181,11 +181,16 @@ func TestSetConfig_SSHKeysDoubleEncoded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	// After form decoding, the server receives the once-url-encoded
-	// value (the inner QueryEscape survives the outer form decode).
-	want := url.QueryEscape(rawKey)
+	// After form decoding, the server sees the once-url-encoded value.
+	// Spaces must be %20 (not +) because PVE's sshkeys validator
+	// rejects the form-urlencoded + variant as "invalid urlencoded
+	// string". The @ in user@host must still be %40.
+	want := strings.ReplaceAll(url.QueryEscape(rawKey), "+", "%20")
 	if got := gotForm.Get("sshkeys"); got != want {
 		t.Errorf("sshkeys = %q, want %q", got, want)
+	}
+	if strings.Contains(want, "+") {
+		t.Errorf("expected value must not contain '+' for spaces: %q", want)
 	}
 }
 
@@ -210,6 +215,68 @@ func TestStart(t *testing.T) {
 	}
 	if !strings.HasPrefix(upid, "UPID:") {
 		t.Errorf("upid = %q", upid)
+	}
+}
+
+// --- Shutdown ---
+
+func TestShutdown_HappyPath(t *testing.T) {
+	var gotPath, gotMethod string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":"UPID:pve1:shutdown:"}`))
+	})
+	upid, err := c.Shutdown(context.Background(), "pve1", 104)
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if gotMethod != "POST" || gotPath != "/nodes/pve1/qemu/104/status/shutdown" {
+		t.Errorf("method/path = %q %q", gotMethod, gotPath)
+	}
+	if !strings.HasPrefix(upid, "UPID:") {
+		t.Errorf("upid = %q", upid)
+	}
+}
+
+func TestShutdown_ServerError(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := c.Shutdown(context.Background(), "pve1", 104)
+	if !errors.Is(err, ErrAPIError) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// --- Stop ---
+
+func TestStop_HappyPath(t *testing.T) {
+	var gotPath, gotMethod string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":"UPID:pve1:stop:"}`))
+	})
+	upid, err := c.Stop(context.Background(), "pve1", 104)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if gotMethod != "POST" || gotPath != "/nodes/pve1/qemu/104/status/stop" {
+		t.Errorf("method/path = %q %q", gotMethod, gotPath)
+	}
+	if !strings.HasPrefix(upid, "UPID:") {
+		t.Errorf("upid = %q", upid)
+	}
+}
+
+func TestStop_ServerError(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := c.Stop(context.Background(), "pve1", 104)
+	if !errors.Is(err, ErrAPIError) {
+		t.Errorf("err = %v", err)
 	}
 }
 
