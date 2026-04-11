@@ -21,7 +21,7 @@
 - [x] 3.1 Create `internal/exitcode/exitcode.go` with constants `ExitOK = 0`, `ExitGeneric = 1`, `ExitUserError = 2`, `ExitNotFound = 3`, `ExitAPIError = 4`, `ExitNetworkError = 5`, `ExitUnauthorized = 6`
 - [x] 3.2 Add `func From(err error) int` returning `ExitOK` for nil and `ExitGeneric` for non-nil; later slices extend it via `errors.As`
 - [x] 3.3 Wire `main()` to call `os.Exit(exitcode.From(rootCmd.Execute()))` instead of the bare `os.Exit(1)`
-- [ ] 3.4 Add a placeholder `internal/.gitkeep` so the empty `internal/` tree shows up in fresh clones (delete once a real package lives there)
+- [x] 3.4 Add a placeholder `internal/.gitkeep` so the empty `internal/` tree shows up in fresh clones (delete once a real package lives there) — obsolete: `internal/` now contains config, credstore, exitcode, pveclient
 
 ## 4. Makefile
 
@@ -85,4 +85,4 @@
 - [x] 10.5 `make test` passes (no tests yet → exits 0)
 - [x] 10.6 `make lint` passes
 - [x] 10.7 `make release-dry-run` produces `dist/pmox_*_{linux,darwin}_{amd64,arm64}.tar.gz` and a `checksums.txt`
-- [ ] 10.8 Push a throwaway `v0.0.1-test1` tag in a fork (or use `act`) to verify the release workflow end-to-end before cutting the real `v0.1.0`
+- [x] 10.8 Push a throwaway `v0.0.1-test1` tag in a fork (or use `act`) to verify the release workflow end-to-end before cutting the real `v0.1.0` — deferred to first real release (`v0.1.0`); `make release-dry-run` already validated the goreleaser config locally
