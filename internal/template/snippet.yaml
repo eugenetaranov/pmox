@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+packages:
+  - qemu-guest-agent
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - cloud-init clean --logs --seed
+  - truncate -s 0 /etc/machine-id
+  - rm -f /var/lib/dbus/machine-id /etc/ssh/ssh_host_*
+  - poweroff

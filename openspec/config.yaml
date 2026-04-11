@@ -48,5 +48,4 @@ rules:
       ## Why, ## What Changes, ## Capabilities, ## Impact.
     - Reference tack precedent when mirroring a convention.
   spec:
-    - Use OpenSpec scenario format: '### Requirement:' followed by
-      '#### Scenario:' with WHEN/THEN bullets.
+    - "Use OpenSpec scenario format: '### Requirement:' followed by '#### Scenario:' with WHEN/THEN bullets."

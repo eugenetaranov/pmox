@@ -3,6 +3,7 @@
 package exitcode
 
 import (
+	"context"
 	"errors"
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
@@ -17,6 +18,7 @@ const (
 	ExitAPIError     = 4
 	ExitNetworkError = 5
 	ExitUnauthorized = 6
+	ExitTimeout      = 7
 )
 
 // ErrUserInput is a sentinel for interactive-prompt input errors
@@ -40,6 +42,10 @@ func From(err error) int {
 		return ExitNotFound
 	case errors.Is(err, credstore.ErrNotFound):
 		return ExitNotFound
+	case errors.Is(err, pveclient.ErrTimeout):
+		return ExitTimeout
+	case errors.Is(err, context.DeadlineExceeded):
+		return ExitTimeout
 	case errors.Is(err, pveclient.ErrAPIError):
 		return ExitAPIError
 	case errors.Is(err, pveclient.ErrNetwork):

@@ -126,6 +126,40 @@ func (c *Client) GetStatus(ctx context.Context, node string, vmid int) (*VMStatu
 	return &payload.Data, nil
 }
 
+// CreateVM issues POST /nodes/{node}/qemu to create a new VM from
+// scratch. kv holds the free-form config keys (name, memory, cores,
+// net0, scsi0, ide2, cicustom, agent, serial0, vga, scsihw, boot,
+// ipconfig0, ...); vmid is added to the form automatically. Returns
+// the UPID of the asynchronous create task.
+//
+// Used by `pmox create-template` to create the template-build VM
+// with a `scsi0=<storage>:0,importfrom=<iso-storage>:iso/<file>`
+// disk spec — the importfrom parameter (PVE 8.0+) turns a one-step
+// API call into the equivalent of `qm create` + `qm importdisk`.
+func (c *Client) CreateVM(ctx context.Context, node string, vmid int, kv map[string]string) (string, error) {
+	form := url.Values{}
+	form.Set("vmid", strconv.Itoa(vmid))
+	for k, v := range kv {
+		form.Set(k, v)
+	}
+	path := fmt.Sprintf("/nodes/%s/qemu", node)
+	body, err := c.requestForm(ctx, "POST", path, form)
+	if err != nil {
+		return "", err
+	}
+	return parseDataString(body)
+}
+
+// ConvertToTemplate issues POST /nodes/{node}/qemu/{vmid}/template,
+// flipping an existing stopped VM into a Proxmox template. The VM
+// must be stopped; calling this on a running VM returns an API
+// error from PVE.
+func (c *Client) ConvertToTemplate(ctx context.Context, node string, vmid int) error {
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/template", node, vmid)
+	_, err := c.requestForm(ctx, "POST", path, nil)
+	return err
+}
+
 // Delete issues DELETE /nodes/{node}/qemu/{vmid} and returns the UPID
 // of the asynchronous destroy task. The caller is responsible for
 // stopping the VM first — deleting a running VM will fail at the PVE

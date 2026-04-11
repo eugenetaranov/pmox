@@ -6,11 +6,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -68,10 +70,8 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Status)
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: %s", ErrAPIError, resp.Status)
 	case resp.StatusCode >= 400:
-		return nil, fmt.Errorf("%w: %s", ErrAPIError, resp.Status)
+		return nil, fmt.Errorf("%w: %s: %s", ErrAPIError, resp.Status, summarizeBody(body))
 	}
 	return body, nil
 }
@@ -111,12 +111,45 @@ func (c *Client) requestForm(ctx context.Context, method, path string, form url.
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Status)
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: %s", ErrAPIError, resp.Status)
 	case resp.StatusCode >= 400:
-		return nil, fmt.Errorf("%w: %s", ErrAPIError, resp.Status)
+		return nil, fmt.Errorf("%w: %s: %s", ErrAPIError, resp.Status, summarizeBody(respBody))
 	}
 	return respBody, nil
+}
+
+// summarizeBody extracts a short human-readable message from a PVE
+// error response body. PVE returns a JSON envelope like
+// {"data":null,"errors":{"param":"reason"}} on 4xx — surfacing the
+// errors map is much more useful than the bare HTTP status.
+func summarizeBody(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	var envelope struct {
+		Errors  map[string]string `json:"errors"`
+		Message string            `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil {
+		if len(envelope.Errors) > 0 {
+			parts := make([]string, 0, len(envelope.Errors))
+			for k, v := range envelope.Errors {
+				parts = append(parts, fmt.Sprintf("%s: %s", k, v))
+			}
+			sort.Strings(parts)
+			if envelope.Message != "" {
+				return envelope.Message + " (" + strings.Join(parts, "; ") + ")"
+			}
+			return strings.Join(parts, "; ")
+		}
+		if envelope.Message != "" {
+			return envelope.Message
+		}
+	}
+	if len(s) > 500 {
+		s = s[:500] + "..."
+	}
+	return s
 }
 
 func isTLSError(err error) bool {

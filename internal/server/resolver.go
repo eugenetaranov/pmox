@@ -53,6 +53,11 @@ type Resolved struct {
 	URL    string
 	Server *config.Server
 	Secret string
+	// Source is a human-readable label naming which rung of the
+	// precedence ladder selected this server. One of:
+	// "--server flag", "PMOX_SERVER env var", "single configured",
+	// "interactive picker".
+	Source string
 }
 
 // Resolve runs the precedence ladder and returns the resolved server.
@@ -70,7 +75,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		if err != nil {
 			return nil, err
 		}
-		return hydrate(url, srv)
+		return hydrate(url, srv, "--server flag")
 	}
 
 	// Rung 2: PMOX_SERVER env var
@@ -79,7 +84,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		if err != nil {
 			return nil, err
 		}
-		return hydrate(url, srv)
+		return hydrate(url, srv, "PMOX_SERVER env var")
 	}
 
 	urls := opts.Cfg.ServerURLs()
@@ -89,7 +94,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 	case 0:
 		return nil, fmt.Errorf("%w: no server configured; run 'pmox configure' to add one", exitcode.ErrNotFound)
 	case 1:
-		return hydrate(urls[0], opts.Cfg.Servers[urls[0]])
+		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
 
 	// Rung 4: interactive picker (TTY only)
@@ -102,7 +107,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		return hydrate(selected, opts.Cfg.Servers[selected])
+		return hydrate(selected, opts.Cfg.Servers[selected], "interactive picker")
 	}
 
 	// Rung 5: non-TTY ambiguity
@@ -131,7 +136,7 @@ func matchInput(input string, cfg *config.Config) (string, *config.Server, error
 
 // hydrate fetches the token secret from the keychain and builds a
 // *Resolved bundle. A missing keychain entry is a hard error.
-func hydrate(url string, srv *config.Server) (*Resolved, error) {
+func hydrate(url string, srv *config.Server, source string) (*Resolved, error) {
 	secret, err := credstore.Get(url)
 	if err != nil {
 		if errors.Is(err, credstore.ErrNotFound) {
@@ -139,7 +144,7 @@ func hydrate(url string, srv *config.Server) (*Resolved, error) {
 		}
 		return nil, fmt.Errorf("load secret for %s: %w", url, err)
 	}
-	return &Resolved{URL: url, Server: srv, Secret: secret}, nil
+	return &Resolved{URL: url, Server: srv, Secret: secret, Source: source}, nil
 }
 
 // candidateList formats a sorted list of configured URLs for inclusion

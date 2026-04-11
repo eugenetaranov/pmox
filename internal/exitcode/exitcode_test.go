@@ -1,6 +1,7 @@
 package exitcode
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -30,6 +31,9 @@ func TestFrom(t *testing.T) {
 		{"user input wrapped", fmt.Errorf("resolve: %w", ErrUserInput), ExitUserError},
 		{"exitcode notfound", ErrNotFound, ExitNotFound},
 		{"exitcode notfound wrapped", fmt.Errorf("resolve: %w", ErrNotFound), ExitNotFound},
+		{"pveclient timeout", pveclient.ErrTimeout, ExitTimeout},
+		{"pveclient timeout wrapped", fmt.Errorf("x: %w", pveclient.ErrTimeout), ExitTimeout},
+		{"context deadline exceeded", context.DeadlineExceeded, ExitTimeout},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
