@@ -75,10 +75,9 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && p == "/version":
 		fmt.Fprintf(w, `{"data":{"version":"%s","release":"","repoid":""}}`, f.pveVersion)
 	case r.Method == "GET" && p == "/nodes/pve/storage":
-		// Target storage list + snippets storage already enabled.
-		fmt.Fprint(w, `{"data":[{"storage":"local","type":"dir","content":"iso,vztmpl,snippets,images","active":1,"enabled":1}]}`)
-	case r.Method == "POST" && strings.HasSuffix(p, "/upload"):
-		fmt.Fprint(w, `{"data":null}`)
+		fmt.Fprint(w, `{"data":[{"storage":"local","type":"dir","content":"iso,vztmpl,images","active":1,"enabled":1}]}`)
+	case r.Method == "GET" && strings.HasPrefix(p, "/storage/"):
+		fmt.Fprint(w, `{"data":{"path":"/var/lib/vz"}}`)
 	case r.Method == "GET" && p == "/cluster/resources":
 		fmt.Fprint(w, `{"data":[]}`)
 	case r.Method == "POST" && strings.HasSuffix(p, "/download-url"):
@@ -121,15 +120,17 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 
 func baseOpts(f *fakePVE) Options {
 	return Options{
-		Client:                f.client,
-		Node:                  "pve",
-		Bridge:                "vmbr0",
-		Wait:                  5 * time.Second,
-		CatalogueURL:          f.catalogue.URL,
-		PickImage:             func([]ImageEntry) int { return 0 },
-		PickTargetStorage:     func([]pveclient.Storage) int { return 0 },
-		PickSnippetsStorage:   func([]pveclient.Storage) int { return 0 },
-		ConfirmEnableSnippets: func(string) bool { return false },
+		Client:              f.client,
+		Node:                "pve",
+		Bridge:              "vmbr0",
+		Wait:                5 * time.Second,
+		CatalogueURL:        f.catalogue.URL,
+		PickImage:           func([]ImageEntry) int { return 0 },
+		PickTargetStorage:   func([]pveclient.Storage) int { return 0 },
+		PickSnippetsStorage: func([]pveclient.Storage) int { return 0 },
+		UploadSnippet: func(ctx context.Context, storagePath, filename string, content []byte) error {
+			return nil
+		},
 	}
 }
 
@@ -142,11 +143,13 @@ func TestRun_HappyPath(t *testing.T) {
 	if r.VMID != 9000 {
 		t.Errorf("VMID = %d, want 9000", r.VMID)
 	}
-	// Endpoint sequence from design D2.
+	// Endpoint sequence: version, target-storage list, snippets-storage list,
+	// then GetStoragePath for the snippets pool.
 	expectedPrefix := []string{
 		"GET /version",
 		"GET /nodes/pve/storage",
-		"GET /nodes/pve/storage", // ensureSnippets does its own ListStorage
+		"GET /nodes/pve/storage",
+		"GET /storage/local",
 	}
 	got := f.paths()
 	for i, want := range expectedPrefix {
@@ -156,7 +159,6 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 	// Must include these in order later on.
 	want := []string{
-		"POST /nodes/pve/storage/local/upload",
 		"GET /cluster/resources",
 		"POST /nodes/pve/storage/local/download-url",
 		"POST /nodes/pve/qemu",

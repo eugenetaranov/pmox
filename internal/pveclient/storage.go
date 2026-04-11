@@ -1,14 +1,34 @@
 package pveclient
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
-	"mime/multipart"
-	"net/http"
 	"net/url"
 )
+
+// GetStoragePath calls GET /storage/{storage} and returns the on-disk
+// "path" field — the mountpoint the storage is rooted at. Block-only
+// storages (e.g. lvm, zfspool) return an empty path; callers should
+// treat that as an error.
+func (c *Client) GetStoragePath(ctx context.Context, storage string) (string, error) {
+	body, err := c.request(ctx, "GET", "/storage/"+storage, nil)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Data struct {
+			Path string `json:"path"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("parse storage response: %w", err)
+	}
+	if resp.Data.Path == "" {
+		return "", fmt.Errorf("storage %s has no on-disk path (block-only storage cannot hold snippets)", storage)
+	}
+	return resp.Data.Path, nil
+}
 
 // DownloadURL issues POST /nodes/{node}/storage/{storage}/download-url,
 // which asks PVE to fetch a URL (typically a cloud image) directly to
@@ -28,65 +48,3 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage string, params m
 	return parseDataString(body)
 }
 
-// UploadSnippet issues POST /nodes/{node}/storage/{storage}/upload with
-// content=snippets and a multipart body carrying filename and file
-// bytes. Used by `pmox create-template` to push the qemu-guest-agent
-// bake snippet to the snippets storage before creating the VM.
-func (c *Client) UploadSnippet(ctx context.Context, node, storage, filename string, content []byte) error {
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("content", "snippets"); err != nil {
-		return fmt.Errorf("write content field: %w", err)
-	}
-	fw, err := mw.CreateFormFile("filename", filename)
-	if err != nil {
-		return fmt.Errorf("create file part: %w", err)
-	}
-	if _, err := fw.Write(content); err != nil {
-		return fmt.Errorf("write file bytes: %w", err)
-	}
-	if err := mw.Close(); err != nil {
-		return fmt.Errorf("close multipart: %w", err)
-	}
-
-	path := fmt.Sprintf("/nodes/%s/storage/%s/upload", node, storage)
-	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+path, &buf)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.TokenID, c.Secret))
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		if isTLSError(err) {
-			return fmt.Errorf("%w: %w", ErrTLSVerificationFailed, err)
-		}
-		return fmt.Errorf("%w: %w", ErrNetwork, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
-	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("%w: %s", ErrNotFound, resp.Status)
-	case resp.StatusCode >= 400:
-		return fmt.Errorf("%w: %s: %s", ErrAPIError, resp.Status, summarizeBody(respBody))
-	}
-	return nil
-}
-
-// UpdateStorageContent issues PUT /storage/{storage} with the given
-// comma-joined content list. Cluster-wide endpoint, not per-node.
-// Used to append `snippets` to a dir-capable storage during
-// `pmox create-template`.
-func (c *Client) UpdateStorageContent(ctx context.Context, storage, content string) error {
-	form := url.Values{}
-	form.Set("content", content)
-	path := fmt.Sprintf("/storage/%s", storage)
-	_, err := c.requestForm(ctx, "PUT", path, form)
-	return err
-}

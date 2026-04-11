@@ -12,6 +12,38 @@ import (
 
 const service = "pmox"
 
+// Suffixes appended to a canonical server URL to form the keyring
+// account for secrets other than the main API token. These live beside
+// the bare URL entry (which holds the API token secret).
+const (
+	suffixSSHPassword      = "#node_ssh_password"
+	suffixSSHKeyPassphrase = "#node_ssh_key_passphrase"
+)
+
+// GetNodeSSHPassword returns the SSH password for url, or ErrNotFound.
+func GetNodeSSHPassword(url string) (string, error) { return Get(url + suffixSSHPassword) }
+
+// SetNodeSSHPassword stores the SSH password for url.
+func SetNodeSSHPassword(url, value string) error { return Set(url+suffixSSHPassword, value) }
+
+// RemoveNodeSSHPassword deletes the SSH password entry for url.
+func RemoveNodeSSHPassword(url string) error { return Remove(url + suffixSSHPassword) }
+
+// GetNodeSSHKeyPassphrase returns the SSH key passphrase for url.
+func GetNodeSSHKeyPassphrase(url string) (string, error) {
+	return Get(url + suffixSSHKeyPassphrase)
+}
+
+// SetNodeSSHKeyPassphrase stores the SSH key passphrase for url.
+func SetNodeSSHKeyPassphrase(url, value string) error {
+	return Set(url+suffixSSHKeyPassphrase, value)
+}
+
+// RemoveNodeSSHKeyPassphrase deletes the SSH key passphrase entry for url.
+func RemoveNodeSSHKeyPassphrase(url string) error {
+	return Remove(url + suffixSSHKeyPassphrase)
+}
+
 // ErrNotFound is returned by Get when no secret exists for the URL.
 var ErrNotFound = errors.New("token not found in keychain")
 

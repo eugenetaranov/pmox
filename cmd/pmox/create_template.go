@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/template"
 	"github.com/eugenetaranov/pmox/internal/tui"
@@ -82,6 +82,10 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 		return err
 	}
 
+	if !resolved.HasNodeSSH() {
+		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload). Run 'pmox configure' to add SSH credentials.", exitcode.ErrUserInput)
+	}
+
 	srv := resolved.Server
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 	node := firstNonEmpty(f.node, srv.Node)
@@ -90,13 +94,57 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 	bridge := firstNonEmpty(f.bridge, srv.Bridge, "vmbr0")
 
-	return runCreateTemplateWithClient(ctx, cmd, client, resolved.URL, resolved.Source, node, bridge, f.wait)
+	// Lazily dial SSH: only phase 5 (upload snippet) actually needs it,
+	// so failures in earlier phases surface cleanly without paying the
+	// SSH handshake cost or its failure modes.
+	var sshClient *pvessh.Client
+	defer func() {
+		if sshClient != nil {
+			_ = sshClient.Close()
+		}
+	}()
+	upload := func(ctx context.Context, storagePath, filename string, content []byte) error {
+		if sshClient == nil {
+			c, err := dialPvessh(ctx, resolved)
+			if err != nil {
+				return fmt.Errorf("ssh to %s: %w", resolved.URL, err)
+			}
+			sshClient = c
+		}
+		return sshClient.UploadSnippet(ctx, storagePath, filename, content)
+	}
+
+	return runCreateTemplateWithClient(ctx, cmd, client, resolved.URL, resolved.Source, node, bridge, f.wait, upload)
+}
+
+// dialPvessh opens an SSH+SFTP session to the PVE node named in the
+// resolved server record. The SSH host is derived from the API URL's
+// hostname on port 22.
+func dialPvessh(ctx context.Context, resolved *server.Resolved) (*pvessh.Client, error) {
+	u, err := url.Parse(resolved.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parse server url: %w", err)
+	}
+	host := u.Hostname() + ":22"
+	kh, err := pvessh.KnownHostsPath()
+	if err != nil {
+		return nil, err
+	}
+	return pvessh.Dial(ctx, pvessh.Config{
+		Host:       host,
+		User:       resolved.NodeSSHUser,
+		Password:   resolved.NodeSSHPassword,
+		KeyPath:    resolved.NodeSSHKeyPath,
+		KeyPass:    resolved.NodeSSHKeyPassphrase,
+		Insecure:   SSHInsecure(),
+		KnownHosts: kh,
+	})
 }
 
 // runCreateTemplateWithClient runs everything from the verbose log
 // line onward. Extracted so tests can drive it with a fake PVE server
 // and without touching config loading.
-func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, resolvedURL, resolvedSource, node, bridge string, wait time.Duration) error {
+func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, resolvedURL, resolvedSource, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
 	if verbose {
 		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolvedURL, resolvedSource)
 	}
@@ -136,9 +184,7 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 			idx, _ := strconv.Atoi(picked)
 			return idx
 		},
-		ConfirmEnableSnippets: func(name string) bool {
-			return readYN(os.Stdin, cmd.ErrOrStderr(), fmt.Sprintf("enable snippets on %s? [y/N]: ", name))
-		},
+		UploadSnippet: upload,
 	}
 
 	r, err := template.Run(ctx, opts)
@@ -149,22 +195,3 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 	return nil
 }
 
-// readYN reads a single line from r and returns true only when the
-// first character is 'y' or 'Y'. Anything else (including errors
-// and empty input) is treated as "no", matching the [y/N] prompt.
-func readYN(r io.Reader, w io.Writer, prompt string) bool {
-	fmt.Fprint(w, prompt)
-	br := bufio.NewReader(r)
-	line, err := br.ReadString('\n')
-	if err != nil && line == "" {
-		return false
-	}
-	if len(line) == 0 {
-		return false
-	}
-	switch line[0] {
-	case 'y', 'Y':
-		return true
-	}
-	return false
-}

@@ -259,6 +259,112 @@ func TestMatchInput_Forms(t *testing.T) {
 	}
 }
 
+func TestResolve_NodeSSH_PasswordMode(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: "password"},
+		},
+	}}
+	if err := credstore.Set(urlA, "api"); err != nil {
+		t.Fatal(err)
+	}
+	if err := credstore.SetNodeSSHPassword(urlA, "hunter2"); err != nil {
+		t.Fatal(err)
+	}
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !r.HasNodeSSH() {
+		t.Fatalf("HasNodeSSH = false")
+	}
+	if r.NodeSSHUser != "root" || r.NodeSSHAuth != "password" || r.NodeSSHPassword != "hunter2" {
+		t.Fatalf("resolved: %+v", r)
+	}
+	if r.NodeSSHKeyPath != "" || r.NodeSSHKeyPassphrase != "" {
+		t.Fatalf("key fields should be empty: %+v", r)
+	}
+}
+
+func TestResolve_NodeSSH_KeyModeUnencrypted(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: "key", KeyPath: "/path/key"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.NodeSSHAuth != "key" || r.NodeSSHKeyPath != "/path/key" || r.NodeSSHKeyPassphrase != "" {
+		t.Fatalf("resolved: %+v", r)
+	}
+	if r.NodeSSHPassword != "" {
+		t.Fatalf("password should be empty")
+	}
+}
+
+func TestResolve_NodeSSH_KeyModeEncrypted(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: "key", KeyPath: "/k"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	_ = credstore.SetNodeSSHKeyPassphrase(urlA, "pp")
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.NodeSSHKeyPassphrase != "pp" {
+		t.Fatalf("passphrase: %q", r.NodeSSHKeyPassphrase)
+	}
+}
+
+func TestResolve_NodeSSH_LegacyNoFields(t *testing.T) {
+	cfg := setupCfg(t, 1)
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.HasNodeSSH() {
+		t.Fatalf("HasNodeSSH should be false for legacy record")
+	}
+}
+
+func TestResolve_NodeSSH_PasswordMissingInKeyring(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: "password"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	// Intentionally no SetNodeSSHPassword — gap should be a hard error.
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	_, err := Resolve(context.Background(), opts)
+	if !errors.Is(err, exitcode.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
 func TestMatchInput_NoPrefixMatching(t *testing.T) {
 	cfg := setupCfg(t, 1)
 	_, _, err := matchInput("pve", cfg) // prefix only — should NOT match

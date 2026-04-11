@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/muesli/cancelreader v0.2.2
+	github.com/pkg/sftp v1.13.10
 	github.com/spf13/cobra v1.8.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
@@ -29,6 +30,7 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect

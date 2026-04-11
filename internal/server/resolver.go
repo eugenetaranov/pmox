@@ -58,6 +58,30 @@ type Resolved struct {
 	// "--server flag", "PMOX_SERVER env var", "single configured",
 	// "interactive picker".
 	Source string
+
+	// Node-SSH credentials, populated from config + keyring when the
+	// server record has a node_ssh block. Commands that don't need SSH
+	// (everything except create-template) can ignore these fields.
+	NodeSSHUser          string
+	NodeSSHAuth          string // "password" | "key" | "" (unconfigured)
+	NodeSSHPassword      string // populated when NodeSSHAuth == "password"
+	NodeSSHKeyPath       string // populated when NodeSSHAuth == "key"
+	NodeSSHKeyPassphrase string // only when the key is passphrase-protected
+}
+
+// HasNodeSSH reports whether this server has SSH credentials resolved
+// and is ready for snippet upload via pvessh.
+func (r *Resolved) HasNodeSSH() bool {
+	if r == nil || r.NodeSSHAuth == "" || r.NodeSSHUser == "" {
+		return false
+	}
+	switch r.NodeSSHAuth {
+	case "password":
+		return r.NodeSSHPassword != ""
+	case "key":
+		return r.NodeSSHKeyPath != ""
+	}
+	return false
 }
 
 // Resolve runs the precedence ladder and returns the resolved server.
@@ -144,7 +168,48 @@ func hydrate(url string, srv *config.Server, source string) (*Resolved, error) {
 		}
 		return nil, fmt.Errorf("load secret for %s: %w", url, err)
 	}
-	return &Resolved{URL: url, Server: srv, Secret: secret, Source: source}, nil
+	r := &Resolved{URL: url, Server: srv, Secret: secret, Source: source}
+	if err := hydrateNodeSSH(r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// hydrateNodeSSH loads node_ssh fields from config and the keyring into
+// the resolved bundle. A server record without a node_ssh block leaves
+// the fields empty — create-template is the only caller that cares and
+// checks HasNodeSSH() before attempting to use them.
+func hydrateNodeSSH(r *Resolved) error {
+	if r.Server == nil || r.Server.NodeSSH == nil {
+		return nil
+	}
+	ns := r.Server.NodeSSH
+	r.NodeSSHUser = ns.User
+	if r.NodeSSHUser == "" {
+		r.NodeSSHUser = "root"
+	}
+	r.NodeSSHAuth = ns.Auth
+	switch ns.Auth {
+	case "password":
+		pw, err := credstore.GetNodeSSHPassword(r.URL)
+		if err != nil {
+			if errors.Is(err, credstore.ErrNotFound) {
+				return fmt.Errorf("%w: node SSH password for %s missing from keychain; re-run 'pmox configure'", exitcode.ErrNotFound, r.URL)
+			}
+			return fmt.Errorf("load node SSH password for %s: %w", r.URL, err)
+		}
+		r.NodeSSHPassword = pw
+	case "key":
+		r.NodeSSHKeyPath = ns.KeyPath
+		// Passphrase is optional — absent keyring entry is fine.
+		pp, err := credstore.GetNodeSSHKeyPassphrase(r.URL)
+		if err == nil {
+			r.NodeSSHKeyPassphrase = pp
+		} else if !errors.Is(err, credstore.ErrNotFound) {
+			return fmt.Errorf("load node SSH key passphrase for %s: %w", r.URL, err)
+		}
+	}
+	return nil
 }
 
 // candidateList formats a sorted list of configured URLs for inclusion

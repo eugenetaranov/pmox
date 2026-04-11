@@ -56,7 +56,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 		Template: "9000",
 		Storage:  "local-lvm",
 		Bridge:   "vmbr0",
-		SSHKey:   "~/.ssh/id_ed25519.pub",
+		SSHPubkey:   "~/.ssh/id_ed25519.pub",
 		User:     "ubuntu",
 		Insecure: true,
 	})
@@ -93,6 +93,48 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	}
 	if !srv.Insecure {
 		t.Errorf("Insecure = false, want true")
+	}
+}
+
+func TestNodeSSHRoundtrip(t *testing.T) {
+	cases := []struct {
+		name string
+		ns   *NodeSSH
+	}{
+		{"password-mode", &NodeSSH{User: "root", Auth: "password"}},
+		{"key-mode-plain", &NodeSSH{User: "root", Auth: "key", KeyPath: "/home/e/.ssh/pve"}},
+		{"key-mode-other-user", &NodeSSH{User: "pmox", Auth: "key", KeyPath: "/key"}},
+		{"none", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			cfg := &Config{Servers: map[string]*Server{}}
+			cfg.AddServer("https://pve.home.lan:8006/api2/json", &Server{
+				TokenID: "t@pam!x", NodeSSH: tc.ns,
+			})
+			if err := cfg.Save(); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			got, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			srv := got.Servers["https://pve.home.lan:8006/api2/json"]
+			if tc.ns == nil {
+				if srv.NodeSSH != nil {
+					t.Fatalf("expected nil NodeSSH, got %+v", srv.NodeSSH)
+				}
+				return
+			}
+			if srv.NodeSSH == nil {
+				t.Fatalf("NodeSSH not persisted")
+			}
+			if srv.NodeSSH.User != tc.ns.User || srv.NodeSSH.Auth != tc.ns.Auth || srv.NodeSSH.KeyPath != tc.ns.KeyPath {
+				t.Fatalf("roundtrip mismatch: got %+v want %+v", srv.NodeSSH, tc.ns)
+			}
+		})
 	}
 }
 

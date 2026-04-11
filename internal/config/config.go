@@ -14,15 +14,30 @@ import (
 )
 
 // Server is the persisted per-server configuration block.
+//
+// SSHPubkey is the path to a local public key file that pmox injects
+// into cloud-init's ssh_authorized_keys on launch/clone. It has no
+// relation to the NodeSSH block — that one is the *private* key used to
+// SSH into the Proxmox node itself for snippet upload.
 type Server struct {
-	TokenID  string `yaml:"token_id"`
-	Node     string `yaml:"node,omitempty"`
-	Template string `yaml:"template,omitempty"`
-	Storage  string `yaml:"storage,omitempty"`
-	Bridge   string `yaml:"bridge,omitempty"`
-	SSHKey   string `yaml:"ssh_key,omitempty"`
-	User     string `yaml:"user,omitempty"`
-	Insecure bool   `yaml:"insecure"`
+	TokenID   string   `yaml:"token_id"`
+	Node      string   `yaml:"node,omitempty"`
+	Template  string   `yaml:"template,omitempty"`
+	Storage   string   `yaml:"storage,omitempty"`
+	Bridge    string   `yaml:"bridge,omitempty"`
+	SSHPubkey string   `yaml:"ssh_pubkey,omitempty"`
+	User      string   `yaml:"user,omitempty"`
+	Insecure  bool     `yaml:"insecure"`
+	NodeSSH   *NodeSSH `yaml:"node_ssh,omitempty"`
+}
+
+// NodeSSH holds the SSH credentials pmox uses to reach the PVE node
+// itself (for snippet upload during create-template). Password and key
+// passphrase live in the keyring, not this struct.
+type NodeSSH struct {
+	User    string `yaml:"user"`              // default "root"
+	Auth    string `yaml:"auth"`              // "password" | "key"
+	KeyPath string `yaml:"key_path,omitempty"` // private key path when Auth == "key"
 }
 
 // Config is the top-level YAML shape on disk.

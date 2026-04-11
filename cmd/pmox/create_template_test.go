@@ -66,7 +66,8 @@ func TestCreateTemplate_VerboseLogLine(t *testing.T) {
 	cmd.SetOut(&outBuf)
 	cmd.SetContext(context.Background())
 
-	err := runCreateTemplateWithClient(context.Background(), cmd, client, srv.URL, "single configured", "pve", "vmbr0", time.Minute)
+	noopUpload := func(context.Context, string, string, []byte) error { return nil }
+	err := runCreateTemplateWithClient(context.Background(), cmd, client, srv.URL, "single configured", "pve", "vmbr0", time.Minute, noopUpload)
 	if err == nil {
 		t.Fatal("expected error from short-circuited /version")
 	}

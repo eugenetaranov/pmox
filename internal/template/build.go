@@ -18,7 +18,8 @@ import (
 
 // Options bundles everything Run needs. Interactive pickers are
 // injected as function fields so tests can return a fixed choice
-// without driving a TTY.
+// without driving a TTY. UploadSnippet is an interface seam so tests
+// can replace the pvessh SCP path with an in-process stub.
 type Options struct {
 	Client  *pveclient.Client
 	Node    string
@@ -32,10 +33,14 @@ type Options struct {
 	// leaves it empty (defaultCatalogueURL).
 	CatalogueURL string
 
-	PickImage             func([]ImageEntry) int
-	PickTargetStorage     func([]pveclient.Storage) int
-	PickSnippetsStorage   func([]pveclient.Storage) int
-	ConfirmEnableSnippets func(name string) bool
+	PickImage           func([]ImageEntry) int
+	PickTargetStorage   func([]pveclient.Storage) int
+	PickSnippetsStorage func([]pveclient.Storage) int
+
+	// UploadSnippet writes the bake snippet to the PVE node's snippets
+	// directory via SFTP. Called once per Run, after the storage path
+	// has been resolved via GET /storage/{storage}.
+	UploadSnippet func(ctx context.Context, storagePath, filename string, content []byte) error
 }
 
 // Result is returned to the caller on success.
@@ -95,18 +100,23 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	// Phase 4 — ensure a snippets-capable storage.
-	confirm := opts.ConfirmEnableSnippets
-	if confirm == nil {
-		confirm = func(string) bool { return false }
-	}
-	snippetsStorage, err := ensureSnippetsStorage(ctx, opts.Client, opts.Node, confirm)
+	// Phase 4 — pick a dir-capable snippets storage.
+	snippetsStorage, err := pickSnippetsStorage(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Phase 5 — upload the bake snippet.
-	if err := opts.Client.UploadSnippet(ctx, opts.Node, snippetsStorage, bakeSnippetFilename, bakeSnippet); err != nil {
+	// Phase 4.5 — resolve its on-disk path via PVE API.
+	storagePath, err := opts.Client.GetStoragePath(ctx, snippetsStorage)
+	if err != nil {
+		return nil, fmt.Errorf("resolve snippets storage path: %w", err)
+	}
+
+	// Phase 5 — upload the bake snippet via SFTP.
+	if opts.UploadSnippet == nil {
+		return nil, fmt.Errorf("upload bake snippet: no UploadSnippet injected")
+	}
+	if err := opts.UploadSnippet(ctx, storagePath, bakeSnippetFilename, bakeSnippet); err != nil {
 		return nil, fmt.Errorf("upload bake snippet: %w", err)
 	}
 

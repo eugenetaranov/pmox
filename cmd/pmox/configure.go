@@ -185,6 +185,12 @@ func runRemove(p prompter, rawURL string) error {
 	if err := credstore.Remove(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
 		return err
 	}
+	if err := credstore.RemoveNodeSSHPassword(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
+		return err
+	}
+	if err := credstore.RemoveNodeSSHKeyPassphrase(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
+		return err
+	}
 	p.Printf("removed %s\n", canonical)
 	return nil
 }
@@ -272,7 +278,7 @@ func runInteractive(ctx context.Context, p prompter) error {
 		Template: template,
 		Storage:  storage,
 		Bridge:   bridge,
-		SSHKey:   sshKey,
+		SSHPubkey: sshKey,
 		User:     user,
 		Insecure: insecure,
 	}
