@@ -1,0 +1,1 @@
+{"data":{"result":[{"name":"lo","hardware-address":"00:00:00:00:00:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"127.0.0.1","prefix":8}]},{"name":"eth0","hardware-address":"bc:24:11:ab:cd:ef","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.168.1.50","prefix":24},{"ip-address-type":"ipv6","ip-address":"fe80::be24:11ff:feab:cdef","prefix":64}]}]}}

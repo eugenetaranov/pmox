@@ -8,4 +8,5 @@ var (
 	ErrAPIError              = errors.New("api error")
 	ErrTLSVerificationFailed = errors.New("tls verification failed")
 	ErrNetwork               = errors.New("network error")
+	ErrTimeout               = errors.New("operation timed out")
 )

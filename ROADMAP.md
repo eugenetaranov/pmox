@@ -15,7 +15,7 @@ slices under `openspec/changes/`.
 | 1 | `project-skeleton`       | ✅ Shipped | `cmd/pmox`, exit codes, Makefile, goreleaser, CI, release workflow, license, placeholder README |
 | 2 | `configure-and-credstore`| ✅ Shipped | `pmox configure` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
 | 3 | `server-resolution`      | ✅ Shipped | `internal/server.Resolve` + `--server` root flag + `PMOX_SERVER`; unit-tested, first real caller in slice 5 |
-| 4 | `pveclient-core`         | 📋 Planned | HTTP client endpoints for launch-time ops |
+| 4 | `pveclient-core`         | ✅ Shipped | `NextID`, `Clone`, `Resize`, `SetConfig`, `Start`, `GetStatus`, `Delete`, `AgentNetwork`, `WaitTask`; form-body helper; no-retry client |
 | 5 | `launch-default`         | 📋 Planned | Happy-path launch with built-in cloud-init |
 | 6 | `list-info-lifecycle`    | 📋 Planned | `list`, `info`, `start`, `stop`, `delete`, `clone` |
 | 7 | `cloud-init-custom`      | 📋 Planned | `--cloud-init` (full replace only) |
@@ -67,9 +67,14 @@ small.
 
 ### 4. `pveclient-core`
 
-Extends the minimal `internal/pveclient` with launch-time endpoints:
-`NextID`, `Clone`, `Resize`, `SetConfig`, `Start`, `AgentNetwork`, `Delete`,
-`GetStatus`. Mostly mechanical once the PVE API docs are open.
+Shipped. Extended `internal/pveclient` with every launch/lifecycle
+endpoint (`NextID`, `Clone`, `Resize`, `SetConfig`, `Start`,
+`GetStatus`, `Delete`, `AgentNetwork`) plus `WaitTask` for polling
+async PVE task completion. Added `requestForm` helper so write-path
+calls can POST/PUT form bodies without widening the existing
+`request` signature. `SetConfig` handles the PVE `sshkeys` double-
+encoding quirk. No client-level retries — the CLI is human-driven,
+errors surface immediately. Pure library — no CLI surface yet.
 
 ### 5. `launch-default`
 
