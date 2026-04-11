@@ -1,0 +1,93 @@
+{
+  "content_id": "com.ubuntu.cloud:released:download",
+  "format": "products:1.0",
+  "datatype": "image-downloads",
+  "products": {
+    "com.ubuntu.cloud:server:24.04:amd64": {
+      "release": "noble",
+      "release_title": "24.04",
+      "release_codename": "Noble Numbat",
+      "aliases": "24.04,lts,noble",
+      "arch": "amd64",
+      "versions": {
+        "20240423": {
+          "items": {
+            "disk1.img": {
+              "path": "releases/noble/release-20240423/ubuntu-24.04-server-cloudimg-amd64.img",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "ftype": "disk1.img",
+              "size": 600000000
+            }
+          }
+        },
+        "20240101": {
+          "items": {
+            "disk1.img": {
+              "path": "releases/noble/release-20240101/ubuntu-24.04-server-cloudimg-amd64.img",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "ftype": "disk1.img",
+              "size": 600000000
+            }
+          }
+        }
+      }
+    },
+    "com.ubuntu.cloud:server:22.04:amd64": {
+      "release": "jammy",
+      "release_title": "22.04",
+      "release_codename": "Jammy Jellyfish",
+      "aliases": "22.04,lts,jammy",
+      "arch": "amd64",
+      "versions": {
+        "20240315": {
+          "items": {
+            "disk1.img": {
+              "path": "releases/jammy/release-20240315/ubuntu-22.04-server-cloudimg-amd64.img",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "ftype": "disk1.img",
+              "size": 600000000
+            }
+          }
+        }
+      }
+    },
+    "com.ubuntu.cloud:server:23.10:amd64": {
+      "release": "mantic",
+      "release_title": "23.10",
+      "release_codename": "Mantic Minotaur",
+      "aliases": "23.10,mantic",
+      "arch": "amd64",
+      "versions": {
+        "20240210": {
+          "items": {
+            "disk1.img": {
+              "path": "releases/mantic/release-20240210/ubuntu-23.10-server-cloudimg-amd64.img",
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "ftype": "disk1.img",
+              "size": 600000000
+            }
+          }
+        }
+      }
+    },
+    "com.ubuntu.cloud:server:24.04:arm64": {
+      "release": "noble",
+      "release_title": "24.04",
+      "release_codename": "Noble Numbat",
+      "aliases": "24.04,lts,noble",
+      "arch": "arm64",
+      "versions": {
+        "20240423": {
+          "items": {
+            "disk1.img": {
+              "path": "releases/noble/release-20240423/ubuntu-24.04-server-cloudimg-arm64.img",
+              "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "ftype": "disk1.img",
+              "size": 600000000
+            }
+          }
+        }
+      }
+    }
+  }
+}

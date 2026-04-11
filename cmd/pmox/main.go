@@ -63,6 +63,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(newLaunchCmd())
 	rootCmd.AddCommand(newDeleteCmd())
+	rootCmd.AddCommand(newCreateTemplateCmd())
 }
 
 // signalContext returns a context that is cancelled on the first SIGINT/SIGTERM

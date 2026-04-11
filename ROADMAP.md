@@ -21,6 +21,7 @@ slices under `openspec/changes/`.
 | 7 | `cloud-init-custom`      | 📋 Planned | `--cloud-init` (full replace only) |
 | 8 | `post-create-hooks`      | 📋 Planned | `--post-create`, `--tack`, `--ansible`, `--strict-hooks` |
 | 9 | `docs-and-llms-txt`      | 📋 Planned | Real README, llms.txt, examples/ |
+| 10 | `create-template`       | 📋 Planned | `pmox create-template` — builds an Ubuntu cloud-image template in the 9000–9099 range |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
@@ -88,6 +89,7 @@ until slice 4 is solid.
 - **7. `cloud-init-custom`** — `--cloud-init` (full replace, per D-T5)
 - **8. `post-create-hooks`** — `--post-create`, `--tack`, `--ansible`, `--strict-hooks`
 - **9. `docs-and-llms-txt`** — real README, `llms.txt`, `examples/`
+- **10. `create-template`** — `pmox create-template` builds an Ubuntu cloud-image Proxmox template from Canonical's simplestreams catalogue. Interactive picker for image and target storage, downloads via PVE's `download-url`, boots a throw-away VM with a `qemu-guest-agent`-installing cloud-init snippet, waits for shutdown, detaches cloud-init, and converts to a template in the 9000–9099 VMID range. Requires PVE 8.0+.
 
 ## Out of scope for v1
 

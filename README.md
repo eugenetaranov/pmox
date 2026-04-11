@@ -32,8 +32,13 @@ The token needs to see nodes, VMs, storage pools, and network bridges during `co
 | `VM.PowerMgmt`        | `/vms`        | start/stop the new VM                   |
 | `Datastore.Audit`     | `/storage`    | list storage pools                      |
 | `Datastore.AllocateSpace` | `/storage/<pool>` | allocate a disk on the target pool |
+| `Datastore.Allocate`  | `/storage/<pool>` | `pmox create-template` enabling `snippets` content on a storage pool |
 | `SDN.Use`             | `/sdn/zones/localnetwork` | attach NICs to bridges      |
 
 Quick path (if you're happy using `root@pam`): in **Datacenter → Permissions → API Tokens**, click **Add**, pick `root@pam`, name the token, and **uncheck Privilege Separation**. The token then inherits root's full rights and no extra role assignment is needed.
 
 If `pmox configure` shows `no VMs visible on node …` or `could not list storage …`, it means the token is missing `VM.Audit` or `Datastore.Audit` respectively — fix the role or disable privilege separation on the token.
+
+## Creating a template
+
+`pmox create-template` builds a ready-to-launch Proxmox template from an Ubuntu cloud image interactively. It fetches Canonical's simplestreams catalogue, lets you pick a release and target storage, downloads the image via PVE's `download-url`, boots a throw-away VM with a cloud-init snippet that installs `qemu-guest-agent` and cleans machine IDs, waits for the guest to power itself off, detaches the cloud-init drive, and converts the VM to a template in the 9000–9099 VMID range. The command requires PVE 8.0+ and an interactive TTY. See the slice spec at `openspec/specs/create-template/spec.md` for the full state machine and error contract.

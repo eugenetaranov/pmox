@@ -50,8 +50,11 @@ const (
 	createTimeout   = 5 * time.Minute
 	startTimeout    = 2 * time.Minute
 	defaultWait     = 10 * time.Minute
-	pollInterval    = 5 * time.Second
 )
+
+// pollInterval is a var (not const) so tests can shrink it to keep
+// the integration suite fast. Production uses 5s per design D8.
+var pollInterval = 5 * time.Second
 
 // Run walks the 13-phase template-build state machine end-to-end.
 // Any pre-CreateVM failure is a clean abort with no cleanup needed;
