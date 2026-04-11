@@ -1,0 +1,125 @@
+# GoReleaser configuration for pmox
+# Documentation: https://goreleaser.com
+
+version: 2
+
+project_name: pmox
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: pmox
+    binary: pmox
+    main: ./cmd/pmox
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: eugenetaranov
+    name: pmox
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## pmox {{ .Version }}
+
+    A multipass-style CLI for Proxmox VE.
+  footer: |
+    ## Installation
+
+    ### Homebrew (macOS/Linux)
+    ```bash
+    brew install eugenetaranov/tap/pmox
+    ```
+
+    ### Direct Download
+    Download the appropriate binary for your platform from the assets below.
+
+    ### Build from Source
+    ```bash
+    go install github.com/eugenetaranov/pmox/cmd/pmox@{{ .Tag }}
+    ```
+
+# Homebrew Tap
+brews:
+  - name: pmox
+    repository:
+      owner: eugenetaranov
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/eugenetaranov/pmox"
+    description: "Multipass-style CLI for launching and managing VMs on Proxmox VE"
+    license: "MIT"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    dependencies:
+      - name: go
+        type: optional
+    test: |
+      system "#{bin}/pmox", "--version"
+    install: |
+      bin.install "pmox"
+
+# Announce release (optional)
+announce:
+  skip: true

@@ -1,0 +1,9 @@
+# golangci-lint configuration for pmox.
+# Tack ships with the upstream defaults (no config file); pmox matches that
+# baseline until a reason to diverge appears.
+
+run:
+  timeout: 3m
+
+linters:
+  disable-all: false

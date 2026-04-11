@@ -1,0 +1,38 @@
+package exitcode
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/eugenetaranov/pmox/internal/credstore"
+	"github.com/eugenetaranov/pmox/internal/pveclient"
+)
+
+func TestFrom(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nil", nil, ExitOK},
+		{"generic", errors.New("boom"), ExitGeneric},
+		{"unauthorized", pveclient.ErrUnauthorized, ExitUnauthorized},
+		{"unauthorized wrapped", fmt.Errorf("validate: %w", pveclient.ErrUnauthorized), ExitUnauthorized},
+		{"api error", pveclient.ErrAPIError, ExitAPIError},
+		{"api error wrapped", fmt.Errorf("oops: %w", pveclient.ErrAPIError), ExitAPIError},
+		{"network", pveclient.ErrNetwork, ExitNetworkError},
+		{"tls", pveclient.ErrTLSVerificationFailed, ExitNetworkError},
+		{"pveclient notfound", pveclient.ErrNotFound, ExitNotFound},
+		{"credstore notfound", credstore.ErrNotFound, ExitNotFound},
+		{"credstore notfound wrapped", fmt.Errorf("x: %w", credstore.ErrNotFound), ExitNotFound},
+		{"user input", ErrUserInput, ExitUserError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := From(tc.err); got != tc.want {
+				t.Errorf("From(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
+	}
+}
