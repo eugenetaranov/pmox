@@ -11,4 +11,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 After merge, run `openspec archive enforce-full-clone` so the tightened requirement lands in `openspec/specs/pveclient-core/spec.md`.
+- [x] 3.1 After merge, run `openspec archive enforce-full-clone` so the tightened requirement lands in `openspec/specs/pveclient-core/spec.md`.

@@ -1,5 +1,14 @@
-## ADDED Requirements
+## Purpose
 
+The `internal/pveclient` package provides the typed Go client for the
+Proxmox VE REST API used by every `pmox` subcommand. It owns HTTP
+transport, authentication, error-to-sentinel mapping, form-body
+encoding, task polling, and the minimal set of VM-lifecycle endpoints
+(`Clone`, `Resize`, `SetConfig`, `Start`, `Stop`, `Shutdown`, `Delete`,
+`GetStatus`, `AgentNetwork`, `CreateVM`, `ConvertToTemplate`,
+`ClusterResources`, `NextID`, `WaitTask`) needed to create, configure,
+launch, query, and destroy VMs on a Proxmox host.
+## Requirements
 ### Requirement: Form-body HTTP requests
 
 The `internal/pveclient` package SHALL provide an internal helper that
@@ -46,10 +55,22 @@ The client SHALL expose `Clone(ctx, node, sourceID, newID, name)` which
 issues `POST /nodes/{node}/qemu/{sourceID}/clone` and returns the PVE
 task UPID of the asynchronous clone operation.
 
+The client MUST always request a full clone by sending `full=1` in the
+form body. The `full` parameter MUST NOT be exposed to callers, and the
+client MUST NOT provide an alternative code path that issues a linked
+clone. This guarantees the new VM is independent of its source template
+so that template upgrades, disk resize, cloud-init rewrites, and
+`pmox delete` cannot affect the template.
+
 #### Scenario: Clone issues a POST with the expected form
 - **WHEN** `Clone` is called with `node="pve1"`, `sourceID=9000`, `newID=100`, `name="test"`
 - **THEN** the client SHALL issue `POST /nodes/pve1/qemu/9000/clone`
 - **AND** the form body SHALL contain `newid=100`, `name=test`, `full=1`
+
+#### Scenario: Full clone flag is unconditional
+- **WHEN** `Clone` is called with any valid arguments
+- **THEN** the form body SHALL always contain `full=1`
+- **AND** the `Clone` function signature SHALL NOT accept any parameter that would suppress or override the full-clone flag
 
 #### Scenario: UPID is returned on success
 - **WHEN** the PVE API responds with `{"data": "UPID:pve1:..."}`
@@ -220,3 +241,4 @@ The client SHALL expose `ClusterResources(ctx, typeFilter)` returning a slice of
 #### Scenario: Missing tags field parses as empty string
 - **WHEN** a resource in the response omits the `tags` field
 - **THEN** the corresponding `Resource.Tags` SHALL be the empty string
+
