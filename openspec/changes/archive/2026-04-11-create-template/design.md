@@ -14,7 +14,7 @@ image to a user-chosen storage, boots it once with a cloud-init
 snippet that bakes in `qemu-guest-agent`, and converts the result
 to a template — all via the PVE HTTP API, no SSH to the host.
 
-The key enabler is PVE 8.0's `importfrom` disk parameter, which
+The key enabler is PVE 8.0's `import-from` disk parameter, which
 turns "import a qcow2 as a VM disk" from a host-shell operation
 (`qm importdisk`) into a single API field on `POST /nodes/{node}/
 qemu`. Without it, building templates remotely would require a
@@ -237,26 +237,29 @@ Rejected: uploading a unique filename per build (e.g.
 snippets storage after the template build completes. We can't
 clean them up reliably from the API.
 
-### D7. Download-as-ISO workaround
+### D7. Download under the `import` content type
 
-PVE's `/nodes/{node}/storage/{storage}/download-url` endpoint
-accepts `content` values from a fixed list: `iso`, `vztmpl`. It
-does **not** accept `images`. That sounds like a blocker for
-downloading qcow2 cloud images — until you notice that the
-endpoint doesn't actually validate that the downloaded file is
-an ISO. It just stores it under the storage's ISO directory.
+PVE 9 introduced a dedicated `import` storage content type for
+disk images destined to become VM disks, and `import-from` on
+`POST /qemu` will only read from a source volume whose storage
+has `content=import` enabled — attempting to read from an
+`iso`-content volume fails with `has wrong type 'iso' - needs to
+be 'images' or 'import'`. PVE's installer enables `import` on
+`local` by default on fresh PVE 9 installs.
 
-Then in phase 8, `CreateVM`'s `importfrom` parameter accepts a
-path like `local:iso/noble.img` regardless of whether the file
-is actually an ISO or a qcow2. The disk-import machinery
-`qemu-img info`s the file and reads whatever format it finds.
+So we pass `content=import` to `download-url` and reference the
+file as `<storage>:import/<name>.qcow2` in the phase-8 `CreateVM`
+call. The `.qcow2` extension is mandatory: PVE's storage plugin
+import regex is `\.(ova|ovf|qcow2|raw|vmdk)` — `.img` (which is
+what Canonical publishes upstream) is rejected by `download-url`
+with `invalid filename or wrong extension`. Ubuntu cloud images
+are qcow2 internally regardless of the upstream filename, so
+renaming on the way in is safe; `qemu-img info` / the import
+machinery read the actual format from the file header.
 
-So we download with `content=iso` as a documented workaround.
-This is the same pattern used by tooling like Packer's Proxmox
-builder.
-
-Rejected: downloading with `content=vztmpl`. vztmpl is LXC
-template storage; the mental model gets worse, not better.
+Rejected: downloading with `content=vztmpl` or `content=iso`.
+Both are no longer accepted by `import-from` on PVE 9, and even
+on PVE 8 the mental model gets worse, not better.
 
 Rejected: downloading client-side (pmox does the HTTP GET and
 uploads via the ISO upload endpoint). That's ~600 MB of
@@ -388,16 +391,18 @@ tested at the `internal/template.Run` level.
   breaks, we ship a point release with a fallback catalogue
   URL.
 
-- **[Risk] `content=iso` download workaround breaks when PVE
-  starts validating ISO files]** → Mitigation: unlikely — the
-  endpoint has shipped this way since PVE 7.2 and Proxmox has
-  no incentive to add validation. If it does break, we switch
-  to `content=vztmpl` or client-side download + ISO upload.
+- **[Risk] Storage picked for `content=import` doesn't have that
+  content type enabled]** → Mitigation: PVE 9's installer enables
+  `import` on `local` by default. If the user picks a storage
+  that doesn't have it, `download-url` fails fast with PVE's own
+  error message. A follow-up could filter the picker list to
+  import-capable storages up front.
 
-- **[Risk] `importfrom` semantics change across PVE 8.x point
+- **[Risk] `import-from` semantics change across PVE point
   releases]** → Mitigation: pin the minimum version check at
-  8.0 but exercise against 8.1, 8.2, 8.3 manually before each
-  pmox release.
+  8.0 but exercise against PVE 8.x and 9.x manually before each
+  pmox release. PVE 9 already renamed the accepted content type
+  for `import-from` sources from `iso` to `import`.
 
 - **[Risk] Apt install of qemu-guest-agent hangs on a slow
   mirror and blows the 10 minute wait budget]** → Mitigation:

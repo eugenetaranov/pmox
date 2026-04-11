@@ -13,8 +13,8 @@ UPID of the asynchronous create operation.
 - **AND** the form body SHALL contain `vmid=9000`, `name=ubuntu-2404-template`, `memory=2048`, `cores=2`
 - **AND** SHALL return the UPID string parsed from the `{"data": "UPID:..."}` envelope
 
-#### Scenario: importfrom value is passed through unchanged
-- **WHEN** `CreateVM` is called with a kv entry `scsi0=local-lvm:0,importfrom=local:iso/noble.img`
+#### Scenario: import-from value is passed through unchanged
+- **WHEN** `CreateVM` is called with a kv entry `scsi0=local-lvm:0,import-from=local:import/noble.qcow2`
 - **THEN** the form body SHALL contain `scsi0` with that exact value
 - **AND** the client SHALL NOT split or reinterpret the comma-separated disk spec
 
@@ -50,7 +50,7 @@ to make the PVE host fetch a remote file into the named storage.
 Returns the PVE task UPID of the asynchronous download.
 
 #### Scenario: DownloadURL issues the expected POST
-- **WHEN** `DownloadURL` is called with `node="pve1"`, `storage="local"`, and params `url=https://example/img`, `content=iso`, `filename=noble.img`, `checksum=abc`, `checksum-algorithm=sha256`
+- **WHEN** `DownloadURL` is called with `node="pve1"`, `storage="local"`, and params `url=https://example/img`, `content=import`, `filename=noble.qcow2`, `checksum=abc`, `checksum-algorithm=sha256`
 - **THEN** the client SHALL issue `POST /nodes/pve1/storage/local/download-url`
 - **AND** the form body SHALL contain each param verbatim
 - **AND** SHALL return the UPID string from the `{"data": "UPID:..."}` envelope
@@ -105,11 +105,7 @@ entry. The method is cluster-scoped (no node in the path).
 
 ### Requirement: No retries on new endpoints
 
-The four new write-path endpoints (`CreateVM`, `ConvertToTemplate`,
-`DownloadURL`, `UploadSnippet`, `UpdateStorageContent`) SHALL
-continue the existing pveclient policy of issuing exactly one HTTP
-call per invocation with no built-in retry, matching every other
-method in the package.
+The four new write-path endpoints (`CreateVM`, `ConvertToTemplate`, `DownloadURL`, `UploadSnippet`, `UpdateStorageContent`) SHALL continue the existing pveclient policy of issuing exactly one HTTP call per invocation with no built-in retry, matching every other method in the package.
 
 #### Scenario: Single HTTP call per invocation
 - **WHEN** any of the new endpoints is invoked

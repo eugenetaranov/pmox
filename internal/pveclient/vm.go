@@ -126,6 +126,30 @@ func (c *Client) GetStatus(ctx context.Context, node string, vmid int) (*VMStatu
 	return &payload.Data, nil
 }
 
+// GetConfig issues GET /nodes/{node}/qemu/{vmid}/config and returns
+// the VM's full config as a string map. PVE returns values as a mix
+// of ints, strings, and occasionally bools (e.g. `template: 1`); all
+// values are stringified via fmt.Sprintf("%v", v) so callers can treat
+// the map uniformly.
+func (c *Client) GetConfig(ctx context.Context, node string, vmid int) (map[string]string, error) {
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	body, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("parse config response: %w", err)
+	}
+	out := make(map[string]string, len(payload.Data))
+	for k, v := range payload.Data {
+		out[k] = fmt.Sprintf("%v", v)
+	}
+	return out, nil
+}
+
 // CreateVM issues POST /nodes/{node}/qemu to create a new VM from
 // scratch. kv holds the free-form config keys (name, memory, cores,
 // net0, scsi0, ide2, cicustom, agent, serial0, vga, scsihw, boot,
@@ -133,8 +157,8 @@ func (c *Client) GetStatus(ctx context.Context, node string, vmid int) (*VMStatu
 // the UPID of the asynchronous create task.
 //
 // Used by `pmox create-template` to create the template-build VM
-// with a `scsi0=<storage>:0,importfrom=<iso-storage>:iso/<file>`
-// disk spec — the importfrom parameter (PVE 8.0+) turns a one-step
+// with a `scsi0=<storage>:0,import-from=<src-storage>:import/<file>`
+// disk spec — the import-from parameter (PVE 8.0+) turns a one-step
 // API call into the equivalent of `qm create` + `qm importdisk`.
 func (c *Client) CreateVM(ctx context.Context, node string, vmid int, kv map[string]string) (string, error) {
 	form := url.Values{}

@@ -1,5 +1,8 @@
-## ADDED Requirements
+# create-template Specification
 
+## Purpose
+TBD - created by archiving change create-template. Update Purpose after archive.
+## Requirements
 ### Requirement: `pmox create-template` command
 
 The CLI SHALL expose `pmox create-template` which interactively
@@ -23,7 +26,7 @@ and converts the result into a Proxmox VM template ready for
 
 The command SHALL verify the cluster is running Proxmox VE 8.0 or
 later before issuing any write-path call, because the VM creation
-step depends on the `importfrom` disk parameter which was added in
+step depends on the `import-from` disk parameter which was added in
 qemu-server 8.0.
 
 #### Scenario: PVE 7.x is rejected cleanly
@@ -148,14 +151,17 @@ error cleanly if the whole range is occupied.
 
 The command SHALL download the selected cloud image to the chosen
 PVE storage via `DownloadURL`, passing the image URL, filename,
-sha256 checksum, and `content=iso` (a documented workaround — the
-endpoint does not validate that the file is actually an ISO, and
-`importfrom` in the next phase does not care about the source
-storage's declared content class).
+sha256 checksum, and `content=import`. PVE 9's storage plugin
+only accepts sources for `import-from` from storages whose
+content list includes `import`, and the filename SHALL use the
+`.qcow2` extension (PVE's import content regex is
+`\.(ova|ovf|qcow2|raw|vmdk)` — `.img` is rejected by
+`download-url` as an invalid extension, even though Ubuntu cloud
+images are qcow2 internally).
 
 #### Scenario: Download call shape
 - **WHEN** the download phase runs
-- **THEN** the client SHALL call `DownloadURL` with `content=iso`, `url=<simplestreams URL>`, `filename=<stable name derived from release>`, `checksum=<sha256>`, `checksum-algorithm=sha256`
+- **THEN** the client SHALL call `DownloadURL` with `content=import`, `url=<simplestreams URL>`, `filename=<stable name ending in .qcow2>`, `checksum=<sha256>`, `checksum-algorithm=sha256`
 - **AND** SHALL wait for the returned UPID task to reach `stopped` via `WaitTask`
 
 #### Scenario: Download failure is cleanable
@@ -163,17 +169,17 @@ storage's declared content class).
 - **THEN** the command SHALL exit with `ExitRemote`
 - **AND** no VM SHALL have been created yet (the download phase precedes `CreateVM`)
 
-### Requirement: VM creation with importfrom
+### Requirement: VM creation with import-from
 
 The command SHALL create the template-building VM with a single
-`CreateVM` call whose `scsi0` parameter uses the `importfrom`
+`CreateVM` call whose `scsi0` parameter uses the `import-from`
 syntax to import the just-downloaded cloud image as the VM's boot
 disk in one step.
 
-#### Scenario: CreateVM form contains importfrom and required keys
+#### Scenario: CreateVM form contains import-from and required keys
 - **WHEN** `CreateVM` is called
 - **THEN** the form body SHALL contain `vmid=<reserved>`, `name=<template name>`, `memory=2048`, `cores=2`, `cpu=host`, `agent=1`, `serial0=socket`, `vga=serial0`, `scsihw=virtio-scsi-single`, `boot=order=scsi0`, `ipconfig0=ip=dhcp`, `net0=virtio,bridge=<configured-bridge>`, `ide2=<target-storage>:cloudinit`, `cicustom=user=<snippets-storage>:snippets/pmox-qga-bake.yaml`
-- **AND** `scsi0` SHALL equal `<target-storage>:0,importfrom=<download-storage>:iso/<downloaded-filename>`
+- **AND** `scsi0` SHALL equal `<target-storage>:0,import-from=<download-storage>:import/<downloaded-filename>`
 
 ### Requirement: Boot, wait-for-stop, detach, convert
 
@@ -238,3 +244,4 @@ The command SHALL map error classes to the typed exit codes from
 #### Scenario: Wait timeout surfaces ExitTimeout
 - **WHEN** the wait-stopped phase exceeds its budget
 - **THEN** the process SHALL exit with `ExitTimeout`
+

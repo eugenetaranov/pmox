@@ -39,7 +39,7 @@ result to a template ready for `pmox launch`.
   Scan existing VMIDs on the node, allocate the lowest unused slot
   in the range. If the entire range is occupied, error out with a
   clear message naming the occupied VMIDs. `NextID` is not used.
-- PVE 8.0+ is a hard requirement because the `importfrom` disk
+- PVE 8.0+ is a hard requirement because the `import-from` disk
   parameter is the API-exposed replacement for `qm importdisk`.
   Detect the cluster version via `GetVersion` up front and error
   cleanly with `PVE 8.0 or later required (found X.Y)` if older.
@@ -50,7 +50,7 @@ result to a template ready for `pmox launch`.
   and powers off. The snippet is embedded in the Go binary and
   uploaded fresh on every run to avoid drift.
 - VM creation via `POST /nodes/{node}/qemu` with
-  `scsi0=<storage>:0,importfrom=<iso-storage>:iso/<file>` —
+  `scsi0=<storage>:0,import-from=<src-storage>:import/<file>` —
   one API call creates the VM and imports the downloaded image as
   its boot disk. Also sets `cicustom=user=<snippets>:snippets/<name>.yaml`,
   `ide2=<storage>:cloudinit`, `serial0=socket`, `vga=serial0`,

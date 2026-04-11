@@ -24,7 +24,7 @@ func TestCreateVM_HappyPath(t *testing.T) {
 	upid, err := c.CreateVM(context.Background(), "pve1", 9000, map[string]string{
 		"name":   "test",
 		"memory": "2048",
-		"scsi0":  "local-lvm:0,importfrom=local:iso/noble.img",
+		"scsi0":  "local-lvm:0,import-from=local:iso/noble.img",
 	})
 	if err != nil {
 		t.Fatalf("CreateVM: %v", err)
@@ -42,11 +42,11 @@ func TestCreateVM_HappyPath(t *testing.T) {
 	if form.Get("name") != "test" || form.Get("memory") != "2048" {
 		t.Errorf("form fields missing: %v", form)
 	}
-	// The importfrom parameter must pass through unchanged in the
+	// The import-from parameter must pass through unchanged in the
 	// scsi0 field value — this is the core PVE 8.0+ primitive the
 	// create-template slice depends on.
-	if got := form.Get("scsi0"); got != "local-lvm:0,importfrom=local:iso/noble.img" {
-		t.Errorf("scsi0 = %q, want importfrom verbatim", got)
+	if got := form.Get("scsi0"); got != "local-lvm:0,import-from=local:iso/noble.img" {
+		t.Errorf("scsi0 = %q, want import-from verbatim", got)
 	}
 	if !strings.HasPrefix(upid, "UPID:") {
 		t.Errorf("upid = %q", upid)

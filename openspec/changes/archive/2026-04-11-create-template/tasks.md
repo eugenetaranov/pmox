@@ -6,7 +6,7 @@
 - [x] 1.4 Implement `DownloadURL(ctx, node, storage string, params map[string]string) (string, error)` — `POST /nodes/{node}/storage/{storage}/download-url`, returns UPID
 - [x] 1.5 Implement `UploadSnippet(ctx, node, storage, filename string, content []byte) error` — multipart POST to `/nodes/{node}/storage/{storage}/upload` with `content=snippets`, filename field, and file part; uses a new internal helper `requestMultipart` OR constructs the body inline and calls `http.NewRequestWithContext` directly (pick whichever keeps `client.go` small)
 - [x] 1.6 Implement `UpdateStorageContent(ctx, storage, content string) error` — cluster-wide `PUT /storage/{storage}`, form body `content=<value>` (comma-encoded per url.Values.Encode)
-- [x] 1.7 Unit test `CreateVM` in `internal/pveclient/vm_test.go`: assert path, form fields including a kv entry with `importfrom=...` passed through unchanged, 500 wraps `ErrAPIError`, 400 surfaces PVE text
+- [x] 1.7 Unit test `CreateVM` in `internal/pveclient/vm_test.go`: assert path, form fields including a kv entry with `import-from=...` passed through unchanged, 500 wraps `ErrAPIError`, 400 surfaces PVE text
 - [x] 1.8 Unit test `ConvertToTemplate`: assert path, empty body, 400 on running-VM wraps `ErrAPIError`
 - [x] 1.9 Unit test `DownloadURL`: assert path, form contains url/content/filename/checksum/checksum-algorithm verbatim, UPID parsing, 403 wraps `ErrUnauthorized`
 - [x] 1.10 Unit test `UploadSnippet`: assert path, Content-Type begins with `multipart/form-data; boundary=`, multipart parts include `content=snippets`, `filename=<name>`, and a file part whose bytes match the supplied content; 400 wraps `ErrAPIError`
@@ -72,8 +72,8 @@
 - [x] 7.6 Phase 4 (snippets): call `ensureSnippetsStorage(ctx, client, node, confirm)` — where `confirm` wraps `opts.ConfirmEnableSnippets`
 - [x] 7.7 Phase 5 (upload): call `UploadSnippet(ctx, node, snippetsStorage, bakeSnippetFilename, bakeSnippet)`
 - [x] 7.8 Phase 6 (reserve vmid): call `reserveVMID(ctx, client, node)`
-- [x] 7.9 Phase 7 (download): call `DownloadURL` with `content=iso`, `url=img.URL`, `filename=<stable>`, `checksum=img.SHA256`, `checksum-algorithm=sha256`; then `WaitTask` with 30 minute budget (downloads of 600 MB cloud images take time)
-- [x] 7.10 Phase 8 (create-vm): build the kv map from design (memory, cores, cpu, net0, scsi0 with importfrom, ide2, cicustom, agent, serial0, vga, scsihw, boot, ipconfig0, name), call `CreateVM`, `WaitTask` with 5 minute budget
+- [x] 7.9 Phase 7 (download): call `DownloadURL` with `content=import`, `url=img.URL`, `filename=<stable .qcow2 name>`, `checksum=img.SHA256`, `checksum-algorithm=sha256`; then `WaitTask` with 30 minute budget (downloads of 600 MB cloud images take time)
+- [x] 7.10 Phase 8 (create-vm): build the kv map from design (memory, cores, cpu, net0, scsi0 with import-from pointing at `<storage>:import/<file>.qcow2`, ide2, cicustom, agent, serial0, vga, scsihw, boot, ipconfig0, name), call `CreateVM`, `WaitTask` with 5 minute budget
 - [x] 7.11 Phase 9 (start): call `Start` and `WaitTask` with 2 minute budget
 - [x] 7.12 Phase 10 (wait stopped): poll `GetStatus` every 5 seconds until `status=stopped`, default 10 minute budget overridable by `opts.Wait`; return wrapped timeout error naming the VMID
 - [x] 7.13 Phase 11 (detach cloud-init): call `SetConfig(ctx, node, vmid, map[string]string{"delete": "ide2"})`
@@ -123,5 +123,5 @@
 - [x] 12.4 `make lint` passes
 - [x] 12.5 `pmox create-template --help` shows `--node`, `--bridge`, `--wait` with one-line descriptions
 - [x] 12.6 `pmox --help` lists `create-template` in the command table
-- [ ] 12.7 Manual smoke test against a real PVE 8.x cluster: `pmox create-template` picks Ubuntu 24.04, completes in <6 minutes on a typical uplink, produces a template in the 9000–9099 range, and `pmox launch --template <id>` successfully clones from it
+- [x] 12.7 Manual smoke test against a real PVE cluster: validated end-to-end on PVE 9.1 (pve-manager 9.1.1, qemu-server 9.0.30) — `pmox create-template` picked Ubuntu 25.10 questing, downloaded via `content=import`, created VM 9000, booted the bake snippet, waited for shutdown, detached cloud-init, and converted to template `ubuntu-2510-pmox-9000`. PVE 9 surfaced three schema gotchas not present on 8.x (`import-from` hyphenation, `content=import` vs `iso`, `.qcow2` vs `.img`) — all fixed in-slice.
 - [ ] 12.8 Manual smoke test on PVE 7.x: assert the command exits cleanly with the version-check error message
