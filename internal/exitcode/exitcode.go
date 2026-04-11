@@ -23,6 +23,11 @@ const (
 // (invalid entries, too many attempts).
 var ErrUserInput = errors.New("user input error")
 
+// ErrNotFound is a sentinel for "requested entity is not configured"
+// errors raised outside the PVE client / keychain — e.g. the server
+// resolver reporting that no servers are configured.
+var ErrNotFound = errors.New("not found")
+
 // From maps a top-level command error to the corresponding exit code.
 func From(err error) int {
 	if err == nil {
@@ -43,6 +48,8 @@ func From(err error) int {
 		return ExitNetworkError
 	case errors.Is(err, ErrUserInput):
 		return ExitUserError
+	case errors.Is(err, ErrNotFound):
+		return ExitNotFound
 	}
 	return ExitGeneric
 }

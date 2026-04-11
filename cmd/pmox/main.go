@@ -24,6 +24,7 @@ var (
 	verbose    bool
 	noColor    bool
 	outputMode string
+	serverFlag string
 )
 
 var rootCmd = &cobra.Command{
@@ -55,6 +56,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
 	rootCmd.PersistentFlags().StringVar(&outputMode, "output", "text", "Output format: text or json")
+	// --server selects which configured server a command targets. Overrides
+	// PMOX_SERVER. `pmox configure` ignores both the flag and the env var.
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Proxmox server URL (overrides PMOX_SERVER)")
 
 	rootCmd.AddCommand(versionCmd)
 }

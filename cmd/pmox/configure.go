@@ -23,6 +23,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 var (
@@ -365,35 +366,6 @@ func discoveryCtx(parent context.Context) (context.Context, context.CancelFunc) 
 	return context.WithTimeout(parent, 5*time.Second)
 }
 
-// selectOne runs a huh.Select with arrow-key navigation (no filter input).
-// Returns the chosen value, or the fallback on error. On user-abort
-// (Ctrl+C / Esc) it re-raises SIGINT so the root signal handler cancels the
-// process context — huh/bubbletea traps the signal itself, so we have to
-// synthesise it for our own code.
-func selectOne(title string, opts []huh.Option[string], fallback string) string {
-	if len(opts) == 0 {
-		return fallback
-	}
-	if len(opts) == 1 {
-		return opts[0].Value
-	}
-	fmt.Println()
-	selected := opts[0].Value
-	err := huh.NewSelect[string]().
-		Title(title).
-		Options(opts...).
-		Value(&selected).
-		Filtering(false).
-		Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		}
-		return fallback
-	}
-	return selected
-}
-
 func pickNode(ctx context.Context, p prompter, client *pveclient.Client) string {
 	if ctx.Err() != nil {
 		return ""
@@ -418,7 +390,7 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client) string 
 		}
 		opts = append(opts, huh.NewOption(label, n.Node))
 	}
-	return selectOne("Default node", opts, nodes[0].Node)
+	return tui.SelectOne("Default node", opts, nodes[0].Node)
 }
 
 func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, node string) string {
@@ -452,7 +424,7 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 		label := fmt.Sprintf("%d  %s", t.VMID, t.Name)
 		opts = append(opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
 	}
-	return selectOne("Default template", opts, strconv.Itoa(tmpls[0].VMID))
+	return tui.SelectOne("Default template", opts, strconv.Itoa(tmpls[0].VMID))
 }
 
 func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node string) string {
@@ -488,7 +460,7 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 		label := fmt.Sprintf("%s (%s)", s.Storage, s.Type)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
-	return selectOne("Default storage", opts, usable[0].Storage)
+	return tui.SelectOne("Default storage", opts, usable[0].Storage)
 }
 
 func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node string) string {
@@ -513,7 +485,7 @@ func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node 
 	for _, b := range bridges {
 		opts = append(opts, huh.NewOption(b.Iface, b.Iface))
 	}
-	return selectOne("Default bridge", opts, bridges[0].Iface)
+	return tui.SelectOne("Default bridge", opts, bridges[0].Iface)
 }
 
 func displayPath(path, home string) string {

@@ -27,6 +27,9 @@ func TestFrom(t *testing.T) {
 		{"credstore notfound", credstore.ErrNotFound, ExitNotFound},
 		{"credstore notfound wrapped", fmt.Errorf("x: %w", credstore.ErrNotFound), ExitNotFound},
 		{"user input", ErrUserInput, ExitUserError},
+		{"user input wrapped", fmt.Errorf("resolve: %w", ErrUserInput), ExitUserError},
+		{"exitcode notfound", ErrNotFound, ExitNotFound},
+		{"exitcode notfound wrapped", fmt.Errorf("resolve: %w", ErrNotFound), ExitNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
