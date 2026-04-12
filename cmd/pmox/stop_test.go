@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 func newStopFake(t *testing.T) *pvetest.Server {
@@ -47,6 +51,30 @@ func TestStop_ForceRoutesToStop(t *testing.T) {
 		t.Errorf("shutdown hits = %d, want 0", f.Count("POST", "/status/shutdown"))
 	}
 	if !strings.Contains(out.String(), "stop web1") {
+		t.Errorf("stdout = %q", out.String())
+	}
+}
+
+// Task 3.3: zero-arg invocation auto-selects the only pmox VM via the
+// picker seam.
+func TestStop_ZeroArgs_OneVMAutoSelect(t *testing.T) {
+	f := newStopFake(t)
+
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		return &vm.Ref{VMID: 104}, nil
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+
+	cmd, out, _ := newTestInfoCmd()
+	arg, err := resolveTargetArg(cmd.Context(), f.Client(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if err := executeStop(cmd.Context(), cmd, f.Client(), arg, &stopFlags{}); err != nil {
+		t.Fatalf("executeStop: %v", err)
+	}
+	if !strings.Contains(out.String(), "shutdown web1") {
 		t.Errorf("stdout = %q", out.String())
 	}
 }

@@ -22,17 +22,20 @@ type startFlags struct {
 func newStartCmd() *cobra.Command {
 	f := &startFlags{}
 	cmd := &cobra.Command{
-		Use:   "start <name|vmid>",
+		Use:   "start [name|vmid]",
 		Short: "Start a stopped VM",
 		Long: `Start a VM on the resolved Proxmox cluster. By default, pmox waits
 for the start task to complete and then polls the qemu-guest-agent
 until it reports a usable IPv4 address, mirroring 'pmox launch'.
 
+If the argument is omitted, pmox auto-selects the only pmox VM when
+one exists, or shows an interactive picker when there are several.
+
 --no-wait returns as soon as the start task finishes and skips the
 IP-wait loop. --wait overrides the default 3m budget for the IP poll.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStart(cmd, args[0], f)
+			return runStart(cmd, args, f)
 		},
 	}
 	cmd.Flags().BoolVar(&f.noWait, "no-wait", false, "return after the start task completes; skip the IP-ready poll")
@@ -40,12 +43,16 @@ IP-wait loop. --wait overrides the default 3m budget for the IP poll.`,
 	return cmd
 }
 
-func runStart(cmd *cobra.Command, arg string, f *startFlags) error {
+func runStart(cmd *cobra.Command, args []string, f *startFlags) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	client, err := buildDeleteClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

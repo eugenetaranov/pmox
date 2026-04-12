@@ -40,10 +40,12 @@ func addSSHFlags(cmd *cobra.Command, f *sshFlags) {
 func newShellCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
-		Use:   "shell <name|vmid>",
+		Use:   "shell [name|vmid]",
 		Short: "Open an interactive SSH session to a VM",
 		Long: `Open an interactive SSH shell on a pmox-managed VM. The argument
-may be a VM name (e.g. "web1") or numeric VMID (e.g. "104").
+may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If
+omitted, pmox auto-selects the only pmox VM when one exists, or
+shows an interactive picker when there are several.
 
 If the VM is stopped, shell auto-starts it and waits for SSH
 readiness before connecting.
@@ -51,9 +53,9 @@ readiness before connecting.
 The default login user is "pmox" (the cloud-init user). The default
 identity key is derived from the configured SSH public key by
 stripping the .pub suffix. Override with --user / --identity.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runShell(cmd, args[0], f)
+			return runShell(cmd, args, f)
 		},
 	}
 	addSSHFlags(cmd, f)
@@ -63,17 +65,21 @@ stripping the .pub suffix. Override with --user / --identity.`,
 func newExecCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
-		Use:   "exec <name|vmid> -- <command> [args...]",
+		Use:   "exec [name|vmid] -- <command> [args...]",
 		Short: "Run a command on a VM over SSH",
 		Long: `Run a single command on a pmox-managed VM over SSH and return its
 output and exit code. The -- separator is required between the VM
 argument and the remote command.
 
+The VM argument is optional: when omitted, pmox auto-selects the
+only pmox VM when one exists, or shows an interactive picker when
+there are several.
+
 If the VM is stopped, exec auto-starts it and waits for SSH
 readiness before running the command.
 
 The default login user is "pmox". Override with --user / --identity.`,
-		Args:               cobra.MinimumNArgs(1),
+		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExec(cmd, args, f)
@@ -97,7 +103,7 @@ var sshRunFn = func(sshPath string, args []string) error {
 	return c.Run()
 }
 
-func runShell(cmd *cobra.Command, arg string, f *sshFlags) error {
+func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		return fmt.Errorf("ssh binary not found on PATH; install OpenSSH to use pmox shell")
@@ -113,13 +119,18 @@ func runShell(cmd *cobra.Command, arg string, f *sshFlags) error {
 		return err
 	}
 
+	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+
 	target, err := resolveSSHTarget(ctx, cmd, client, arg, f, srv.User, srv.SSHPubkey)
 	if err != nil {
 		return err
 	}
 
-	args := buildSSHArgs(sshPath, target, nil)
-	return sshExecFn(sshPath, args, os.Environ())
+	sshArgs := buildSSHArgs(sshPath, target, nil)
+	return sshExecFn(sshPath, sshArgs, os.Environ())
 }
 
 func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
@@ -128,7 +139,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return fmt.Errorf("ssh binary not found on PATH; install OpenSSH to use pmox exec")
 	}
 
-	vmArg := args[0]
+	// Extract remote command via the literal "--" separator in os.Args.
 	var remoteArgs []string
 	for i, a := range os.Args {
 		if a == "--" {
@@ -137,7 +148,17 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		}
 	}
 	if len(remoteArgs) == 0 {
-		return fmt.Errorf("no command specified; use: pmox exec <name|vmid> -- <command> [args...]")
+		return fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
+	}
+
+	// Determine whether a VM positional was supplied before "--".
+	// cobra's ArgsLenAtDash() returns the number of positional args
+	// before "--". 0 = no VM arg, 1 = VM arg present.
+	var vmArgs []string
+	if n := cmd.ArgsLenAtDash(); n == 1 {
+		vmArgs = []string{args[0]}
+	} else if n > 1 {
+		return fmt.Errorf("exec takes at most one VM positional argument before `--`")
 	}
 
 	ctx := cmd.Context()
@@ -146,6 +167,11 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	client, srv, err := buildSSHClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+
+	vmArg, err := resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

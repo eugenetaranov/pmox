@@ -14,25 +14,32 @@ import (
 
 func newInfoCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "info <name|vmid>",
+		Use:   "info [name|vmid]",
 		Short: "Show detailed information about a single VM",
 		Long: `Print the configured and runtime state of a single VM: cpu, memory,
 primary disk, status, uptime, tags, and guest-agent-reported network
-interfaces. Use --output json for machine-readable output.`,
-		Args: cobra.ExactArgs(1),
+interfaces. Use --output json for machine-readable output.
+
+If the argument is omitted, pmox auto-selects the only pmox VM when
+one exists, or shows an interactive picker when there are several.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInfo(cmd, args[0])
+			return runInfo(cmd, args)
 		},
 	}
 	return cmd
 }
 
-func runInfo(cmd *cobra.Command, arg string) error {
+func runInfo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	client, err := buildDeleteClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

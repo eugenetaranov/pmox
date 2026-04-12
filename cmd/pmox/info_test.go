@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
@@ -64,6 +66,31 @@ func TestInfo_TextMode(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("output missing %q: %s", want, body)
 		}
+	}
+}
+
+// Task 3.3: zero-arg info auto-selects the only pmox VM via the
+// picker seam.
+func TestInfo_ZeroArgs_OneVMAutoSelect(t *testing.T) {
+	f := newInfoFake(t)
+	outputMode = "text"
+
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		return &vm.Ref{VMID: 104}, nil
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+
+	cmd, out, _ := newTestInfoCmd()
+	arg, err := resolveTargetArg(cmd.Context(), f.Client(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if err := executeInfo(cmd.Context(), cmd, f.Client(), arg); err != nil {
+		t.Fatalf("executeInfo: %v", err)
+	}
+	if !strings.Contains(out.String(), "Name:     web1") {
+		t.Errorf("stdout missing web1 header: %q", out.String())
 	}
 }
 

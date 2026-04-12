@@ -2,7 +2,7 @@
 
 pmox is a multipass-style CLI for Proxmox VE. This repo is under construction; see `openspec/changes/` for in-flight work.
 
-Working subcommands include `pmox configure`, `pmox launch`, `pmox delete`, `pmox list`, `pmox info`, `pmox start`, `pmox stop`, `pmox clone`, and `pmox create-template`.
+Working subcommands include `pmox configure`, `pmox launch`, `pmox delete`, `pmox list`, `pmox info`, `pmox start`, `pmox stop`, `pmox clone`, and `pmox create-template`. Single-target commands (`shell`, `exec`, `delete`, `start`, `stop`, `info`) accept an optional `[name|vmid]` — omit it to auto-select the only pmox VM or pick from an interactive list.
 
 ## Configuring a server
 
@@ -55,9 +55,10 @@ If `pmox configure` shows `no VMs visible on node …` or `could not list storag
 
 ### `pmox shell`
 
-`pmox shell <name|vmid>` opens an interactive SSH session to a pmox-managed VM. If the VM is stopped, it auto-starts and waits for SSH readiness before connecting.
+`pmox shell [name|vmid]` opens an interactive SSH session to a pmox-managed VM. If the VM is stopped, it auto-starts and waits for SSH readiness before connecting. If the argument is omitted, pmox auto-selects the only pmox VM when one exists, or shows an interactive picker when there are several.
 
 ```bash
+pmox shell                     # auto-select single VM / show picker
 pmox shell web1
 pmox shell --user ubuntu web1
 pmox shell --identity ~/.ssh/custom_key web1
@@ -65,9 +66,10 @@ pmox shell --identity ~/.ssh/custom_key web1
 
 ### `pmox exec`
 
-`pmox exec <name|vmid> -- <command> [args...]` runs a single command on a VM over SSH and returns its output and exit code.
+`pmox exec [name|vmid] -- <command> [args...]` runs a single command on a VM over SSH and returns its output and exit code. The VM argument is optional and falls back to the picker when omitted.
 
 ```bash
+pmox exec -- uname -a          # auto-select single VM / show picker
 pmox exec web1 -- uname -a
 pmox exec web1 -- cat /etc/hostname
 ```
@@ -78,7 +80,7 @@ Guest VM host keys are not verified (`StrictHostKeyChecking=no`) since VMs are e
 
 ## Deleting a VM
 
-`pmox delete <name|vmid>` stops and destroys a VM on the resolved cluster.
+`pmox delete [name|vmid]` stops and destroys a VM on the resolved cluster. If the argument is omitted, pmox auto-selects the only pmox VM when one exists, or shows an interactive picker when there are several; the y/N confirmation still runs against the picked VM.
 
 ### Confirmation
 

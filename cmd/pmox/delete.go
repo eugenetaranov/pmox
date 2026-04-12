@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,10 +30,12 @@ type deleteFlags struct {
 func newDeleteCmd() *cobra.Command {
 	f := &deleteFlags{}
 	cmd := &cobra.Command{
-		Use:   "delete <name|vmid>",
+		Use:   "delete [name|vmid]",
 		Short: "Stop and destroy a pmox-launched VM",
 		Long: `Delete a VM on the resolved Proxmox cluster. The argument may be
-either the VM name (e.g. "web1") or its numeric VMID (e.g. "104").
+either the VM name (e.g. "web1") or its numeric VMID (e.g. "104"). If
+omitted, pmox auto-selects the only pmox VM when one exists, or shows
+an interactive picker when there are several.
 
 Before issuing any destructive API call the command prints a summary of
 the resolved VM and requires an interactive y/N confirmation (default No).
@@ -53,9 +56,9 @@ the VM is hand-managed or when the guest is not responding to ACPI.
 
 If the VM has already been destroyed, delete exits 0 with a note on
 stderr so scripted loops are idempotent.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDelete(cmd, args[0], f)
+			return runDelete(cmd, args, f)
 		},
 	}
 	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check and use hard stop instead of graceful shutdown")
@@ -63,7 +66,7 @@ stderr so scripted loops are idempotent.`,
 	return cmd
 }
 
-func runDelete(cmd *cobra.Command, arg string, f *deleteFlags) error {
+func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -71,20 +74,52 @@ func runDelete(cmd *cobra.Command, arg string, f *deleteFlags) error {
 
 	assumeYes := f.yes || envBool("PMOX_ASSUME_YES")
 
+	var argDesc string
+	if len(args) == 1 {
+		argDesc = fmt.Sprintf("%q", args[0])
+	} else {
+		argDesc = "(picker)"
+	}
+
 	var confirmer tui.Confirmer
 	if assumeYes {
 		confirmer = tui.AlwaysConfirmer{}
 	} else if tui.StdinIsTerminal() {
 		confirmer = tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr())
 	} else {
-		return fmt.Errorf("refusing to delete VM %q: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use", arg)
+		return fmt.Errorf("refusing to delete VM %s: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use", argDesc)
 	}
 
 	client, err := buildDeleteClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+
+	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
 	return executeDelete(ctx, cmd, client, arg, f, confirmer)
+}
+
+// vmPickFn is the function used to resolve an implicit target when no
+// positional argument was passed. Tests override this to bypass the
+// real picker and drive deterministic behavior.
+var vmPickFn = vm.Pick
+
+// resolveTargetArg returns a concrete <name|vmid> string for commands
+// that accept an optional positional target. When args has one element
+// it's returned as-is; otherwise vmPickFn is consulted and the picked
+// VM's VMID is returned (as a string) for feeding back into vm.Resolve.
+func resolveTargetArg(ctx context.Context, client *pveclient.Client, args []string, stderr io.Writer) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	ref, err := vmPickFn(ctx, client, stderr)
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(ref.VMID), nil
 }
 
 func buildDeleteClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, error) {

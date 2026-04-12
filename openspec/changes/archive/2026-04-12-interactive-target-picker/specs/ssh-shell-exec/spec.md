@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: `pmox shell` command
 
@@ -110,42 +110,3 @@ Arguments after `--` are passed verbatim to `ssh`.
 #### Scenario: Tag check and force flag
 - **WHEN** `pmox exec legacy -- whoami` is invoked against an untagged VM
 - **THEN** the same tag check behavior as `pmox shell` SHALL apply
-
-### Requirement: Auto-start stopped VMs
-
-Both `pmox shell` and `pmox exec` SHALL auto-start a stopped VM before connecting. The auto-start sequence SHALL be: power on via PVE API, wait for the guest agent to report an IPv4 address, then wait for SSH readiness.
-
-Progress messages SHALL be printed to stderr during the auto-start sequence.
-
-#### Scenario: Shell into a stopped VM
-- **WHEN** `pmox shell web1` is invoked against a stopped pmox-tagged VM
-- **THEN** the command SHALL start the VM via the PVE API
-- **AND** wait for the guest agent to report an IPv4 address
-- **AND** wait for SSH readiness
-- **AND** then open the SSH session
-- **AND** print progress to stderr during the wait
-
-#### Scenario: Exec on a stopped VM
-- **WHEN** `pmox exec web1 -- hostname` is invoked against a stopped VM
-- **THEN** the same auto-start sequence SHALL apply before running the command
-
-#### Scenario: VM is already gone
-- **WHEN** `GetStatus` returns `ErrNotFound`
-- **THEN** the command SHALL exit non-zero with an error stating the VM was not found
-
-### Requirement: Guest agent IP discovery
-
-Both commands SHALL discover the VM's IPv4 address by querying the QEMU guest agent via the PVE API. If the guest agent does not respond or returns no usable IPv4 address, the command SHALL fail with an actionable error message.
-
-#### Scenario: Guest agent returns IP
-- **WHEN** the guest agent reports interfaces with a usable IPv4 address
-- **THEN** the command SHALL use that IP for the SSH connection
-
-#### Scenario: Guest agent not responding on a running VM
-- **WHEN** the VM is running but the guest agent does not respond
-- **THEN** the command SHALL exit non-zero
-- **AND** the error SHALL mention `qemu-guest-agent`
-
-#### Scenario: Guest agent returns no IPv4
-- **WHEN** the guest agent responds but no interface has a usable IPv4 address
-- **THEN** the command SHALL exit non-zero with an error about missing IP

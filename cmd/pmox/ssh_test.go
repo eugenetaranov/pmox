@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -388,6 +389,86 @@ func TestSSH_ResolveIdentityKey_NothingConfigured(t *testing.T) {
 	}
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// --- Picker integration tests (task 3.1) ---
+//
+// runShell and runExec both delegate zero-arg resolution to
+// resolveTargetArg, which consults vmPickFn. These tests drive that
+// seam directly, covering the three picker modes declared by the
+// interactive-target-picker change.
+
+func stubVMPick(t *testing.T, ref *vm.Ref, err error) {
+	t.Helper()
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		return ref, err
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+}
+
+func TestResolveTargetArg_ExplicitArgBypassesPicker(t *testing.T) {
+	called := false
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		called = true
+		return nil, nil
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+
+	got, err := resolveTargetArg(context.Background(), nil, []string{"web1"}, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if got != "web1" {
+		t.Errorf("arg = %q, want web1", got)
+	}
+	if called {
+		t.Error("picker should not run when positional was supplied")
+	}
+}
+
+func TestResolveTargetArg_ZeroArgs_OneVMAutoSelect(t *testing.T) {
+	stubVMPick(t, &vm.Ref{VMID: 100, Name: "smoke", Node: "pve1"}, nil)
+
+	got, err := resolveTargetArg(context.Background(), nil, nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if got != "100" {
+		t.Errorf("arg = %q, want 100 (vmid-as-string)", got)
+	}
+}
+
+func TestResolveTargetArg_ZeroArgs_MultiTTYPickerSelection(t *testing.T) {
+	// Simulates the picker returning the user-selected VM.
+	stubVMPick(t, &vm.Ref{VMID: 200, Name: "beta", Node: "pve2"}, nil)
+
+	got, err := resolveTargetArg(context.Background(), nil, []string{}, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if got != "200" {
+		t.Errorf("arg = %q, want 200", got)
+	}
+}
+
+func TestResolveTargetArg_ZeroArgs_NonTTYErrors(t *testing.T) {
+	stubVMPick(t, nil, vm.ErrPickerNonTTY)
+
+	_, err := resolveTargetArg(context.Background(), nil, nil, io.Discard)
+	if !errors.Is(err, vm.ErrPickerNonTTY) {
+		t.Fatalf("err = %v, want ErrPickerNonTTY", err)
+	}
+}
+
+func TestResolveTargetArg_ZeroArgs_NoVMsErrors(t *testing.T) {
+	stubVMPick(t, nil, vm.ErrNoPMOXVMs)
+
+	_, err := resolveTargetArg(context.Background(), nil, nil, io.Discard)
+	if !errors.Is(err, vm.ErrNoPMOXVMs) {
+		t.Fatalf("err = %v, want ErrNoPMOXVMs", err)
 	}
 }
 

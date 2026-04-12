@@ -16,6 +16,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tui"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 // fakePVE is a minimal httptest-backed PVE server for the delete
@@ -467,6 +468,79 @@ func TestDelete_AlreadyGoneShortCircuitsBeforePrompt(t *testing.T) {
 	if f.shutdownHits+f.stopHits+f.deleteHits != 0 {
 		t.Errorf("destructive calls fired: shutdown=%d stop=%d delete=%d",
 			f.shutdownHits, f.stopHits, f.deleteHits)
+	}
+}
+
+// --- Picker integration tests (task 3.2) ---
+
+func stubDeletePick(t *testing.T, ref *vm.Ref, err error) {
+	t.Helper()
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		return ref, err
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+}
+
+// Picker runs before the confirmation prompt: with zero positional
+// args, runDelete's pipeline resolves the target via vmPickFn first,
+// then passes the picked vmid to executeDelete. The confirmer should
+// end up prompting about the picked VM's name/vmid, not about the
+// (absent) positional.
+func TestDelete_ZeroArgs_PickerRunsBeforeConfirmation(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	stubDeletePick(t, &vm.Ref{VMID: 100}, nil)
+
+	arg, err := resolveTargetArg(context.Background(), f.client(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+	if arg != "100" {
+		t.Fatalf("arg = %q, want 100", arg)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: false}
+	err = executeDelete(cmd.Context(), cmd, f.client(), arg, &deleteFlags{}, fc)
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !fc.called {
+		t.Fatal("confirmer was not called after picker")
+	}
+	// Prompt should describe the picked VM, not "(picker)".
+	for _, want := range []string{"web1", "100", "pve1"} {
+		if !strings.Contains(fc.gotPrompt, want) {
+			t.Errorf("prompt missing %q: %q", want, fc.gotPrompt)
+		}
+	}
+	if f.deleteHits != 0 {
+		t.Errorf("delete fired despite cancellation: %d", f.deleteHits)
+	}
+}
+
+// With --yes + zero positional + exactly one pmox VM, the picker
+// auto-selects silently and the delete runs to completion without
+// ever invoking a confirmer.
+func TestDelete_ZeroArgs_YesAutoDeletesAfterAutoSelect(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	stubDeletePick(t, &vm.Ref{VMID: 100}, nil)
+
+	arg, err := resolveTargetArg(context.Background(), f.client(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArg: %v", err)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	if err := executeDelete(cmd.Context(), cmd, f.client(), arg, &deleteFlags{yes: true}, failConfirmer{}); err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.deleteHits != 1 {
+		t.Errorf("delete hits = %d, want 1", f.deleteHits)
 	}
 }
 

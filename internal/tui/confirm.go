@@ -45,3 +45,7 @@ func (AlwaysConfirmer) Confirm(context.Context, string) (bool, error) {
 var StdinIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
+
+var StderrIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stderr.Fd()))
+}
