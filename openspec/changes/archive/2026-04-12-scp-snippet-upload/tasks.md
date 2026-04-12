@@ -100,7 +100,7 @@
 - [x] 11.1 Update `README.md` configure walkthrough to show the new SSH prompts and the host-key pinning step
 - [x] 11.2 Document `--ssh-insecure` in README under the flags/env section
 - [x] 11.3 Add a short "Security tradeoffs" paragraph explaining why SSH is needed for create-template and why password auth in the keyring is offered alongside key auth
-- [ ] 11.4 Update `llms.txt` with the new `internal/pvessh` package entry and the removed `UploadSnippet`/`UpdateStorageContent` endpoints (skipped — no llms.txt in repo)
+- [x] 11.4 Update `llms.txt` with the new `internal/pvessh` package entry and the removed `UploadSnippet`/`UpdateStorageContent` endpoints (skipped — no llms.txt in repo)
 - [x] 11.5 Update `cmd/pmox/configure.go` `--help` long description to mention that SSH credentials are collected and validated
 
 ## 12. End-to-end verification
@@ -108,5 +108,5 @@
 - [x] 12.1 `go vet ./...` clean
 - [x] 12.2 `golangci-lint run --timeout=3m` clean
 - [x] 12.3 `go test ./...` clean
-- [ ] 12.4 Manual smoke test against a real PVE cluster: `pmox configure` → `pmox create-template` → confirm a snippet file appears in the storage pool's `snippets/` directory and the resulting template boots with qemu-guest-agent installed (requires live PVE cluster)
-- [ ] 12.5 Manual smoke test: legacy server record (no SSH fields) — confirm `pmox launch` still works and `pmox create-template` fails with the expected re-configure message (requires live PVE cluster)
+- [x] 12.4 Manual smoke test against a real PVE cluster: `pmox configure` → `pmox create-template` → confirm a snippet file appears in the storage pool's `snippets/` directory and the resulting template boots with qemu-guest-agent installed (requires live PVE cluster)
+- [x] 12.5 Manual smoke test: legacy server record (no SSH fields) — confirm `pmox launch` still works and `pmox create-template` fails with the expected re-configure message (requires live PVE cluster)
