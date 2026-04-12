@@ -142,7 +142,7 @@ func TestSSH_ResolveTaggedRunningVM(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
-		&sshFlags{user: "pmox"}, "")
+		&sshFlags{user: "pmox"}, "", "")
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}
@@ -154,13 +154,61 @@ func TestSSH_ResolveTaggedRunningVM(t *testing.T) {
 	}
 }
 
+func TestSSH_ResolveUser_FlagWinsOverConfig(t *testing.T) {
+	f := newFakeSSHPVE(t)
+	f.clusterBody = sshTaggedRunningVM
+	f.agentBody = agentWithIP
+
+	cmd, _, _ := newTestSSHCmd()
+	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
+		&sshFlags{user: "root"}, "ubuntu", "")
+	if err != nil {
+		t.Fatalf("resolveSSHTarget: %v", err)
+	}
+	if target.User != "root" {
+		t.Errorf("user = %q, want root (flag overrides config)", target.User)
+	}
+}
+
+func TestSSH_ResolveUser_ConfigWhenFlagEmpty(t *testing.T) {
+	f := newFakeSSHPVE(t)
+	f.clusterBody = sshTaggedRunningVM
+	f.agentBody = agentWithIP
+
+	cmd, _, _ := newTestSSHCmd()
+	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
+		&sshFlags{}, "ubuntu", "")
+	if err != nil {
+		t.Fatalf("resolveSSHTarget: %v", err)
+	}
+	if target.User != "ubuntu" {
+		t.Errorf("user = %q, want ubuntu (from config)", target.User)
+	}
+}
+
+func TestSSH_ResolveUser_DefaultWhenNothingSet(t *testing.T) {
+	f := newFakeSSHPVE(t)
+	f.clusterBody = sshTaggedRunningVM
+	f.agentBody = agentWithIP
+
+	cmd, _, _ := newTestSSHCmd()
+	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
+		&sshFlags{}, "", "")
+	if err != nil {
+		t.Fatalf("resolveSSHTarget: %v", err)
+	}
+	if target.User != defaultUser {
+		t.Errorf("user = %q, want %q", target.User, defaultUser)
+	}
+}
+
 func TestSSH_ResolveUntaggedWithoutForce(t *testing.T) {
 	f := newFakeSSHPVE(t)
 	f.clusterBody = sshUntaggedRunningVM
 
 	cmd, _, _ := newTestSSHCmd()
 	_, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "legacy",
-		&sshFlags{user: "pmox"}, "")
+		&sshFlags{user: "pmox"}, "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -179,7 +227,7 @@ func TestSSH_ResolveUntaggedWithForce(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "legacy",
-		&sshFlags{user: "pmox", force: true}, "")
+		&sshFlags{user: "pmox", force: true}, "", "")
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}

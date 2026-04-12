@@ -32,7 +32,7 @@ type sshFlags struct {
 }
 
 func addSSHFlags(cmd *cobra.Command, f *sshFlags) {
-	cmd.Flags().StringVarP(&f.user, "user", "u", "pmox", "SSH login user")
+	cmd.Flags().StringVarP(&f.user, "user", "u", "", "SSH login user (defaults to server config 'user', then 'pmox')")
 	cmd.Flags().StringVarP(&f.identity, "identity", "i", "", "path to SSH private key")
 	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check")
 }
@@ -113,7 +113,7 @@ func runShell(cmd *cobra.Command, arg string, f *sshFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, arg, f, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, arg, f, srv.User, srv.SSHPubkey)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, vmArg, f, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, vmArg, f, srv.User, srv.SSHPubkey)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ type sshTarget struct {
 	Key  string
 }
 
-func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, configPubkey string) (*sshTarget, error) {
+func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, configUser, configPubkey string) (*sshTarget, error) {
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return nil, err
@@ -187,7 +187,7 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 
 	return &sshTarget{
 		IP:   ip,
-		User: f.user,
+		User: firstNonEmpty(f.user, configUser, defaultUser),
 		Key:  key,
 	}, nil
 }
