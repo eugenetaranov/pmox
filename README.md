@@ -2,7 +2,7 @@
 
 pmox is a multipass-style CLI for Proxmox VE. This repo is under construction; see `openspec/changes/` for in-flight work.
 
-Working subcommands include `pmox configure`, `pmox launch`, `pmox delete`, `pmox list`, `pmox info`, `pmox start`, `pmox stop`, `pmox clone`, and `pmox create-template`. Single-target commands (`shell`, `exec`, `delete`, `start`, `stop`, `info`) accept an optional `[name|vmid]` — omit it to auto-select the only pmox VM or pick from an interactive list.
+Working subcommands include `pmox configure`, `pmox launch`, `pmox delete`, `pmox list`, `pmox info`, `pmox start`, `pmox stop`, `pmox clone`, and `pmox create-template`. Single-target commands (`shell`, `exec`, `delete`, `start`, `stop`, `info`) accept an optional `[name|vmid]` — omit it to auto-select the only pmox VM or pick from an interactive list. `pmox mount` makes the `<name|vmid>:` prefix on the destination optional (e.g. `pmox mount ./src /opt/app`) and falls back to the same picker, and `pmox umount` with no arguments resolves a VM via the picker and stops every mount for it.
 
 ## Configuring a server
 

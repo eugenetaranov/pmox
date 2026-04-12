@@ -1,14 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 func TestBuildMountRsyncArgs(t *testing.T) {
@@ -269,4 +276,126 @@ func TestDefaultMountExcludes(t *testing.T) {
 		"*.swp", "*.swo", "*~",
 	}
 	assert.Equal(t, expected, defaultMountExcludes)
+}
+
+// --- Optional-target picker coverage ---
+
+func newTestUmountCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "umount"}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetContext(context.Background())
+	return cmd
+}
+
+// Task 3.1: `runMount` with a bare remote path routes through the
+// picker helper and forwards the raw arg as the remote path. The
+// returned ref must be the picked VM's canonical *name* so log
+// lines, PID files, and daemon child args match the identifier an
+// explicit `<name>:<path>` invocation would use.
+func TestMountResolveDest_BareArgInvokesPicker(t *testing.T) {
+	called := false
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		called = true
+		return &vm.Ref{VMID: 104, Name: "web1"}, nil
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+
+	ref, remotePath, err := mountResolveDestFn(context.Background(), nil, io.Discard, "/opt/app")
+	require.NoError(t, err)
+	assert.True(t, called, "picker must run for bare remote path")
+	assert.Equal(t, "web1", ref, "picker must return VM name, not vmid")
+	assert.Equal(t, "/opt/app", remotePath)
+}
+
+// Task 3.2: `runMount` with an explicit <name>:<path> must not consult
+// the picker at all.
+func TestMountResolveDest_ExplicitArgBypassesPicker(t *testing.T) {
+	orig := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+		t.Fatalf("picker must not run for explicit <name>:<path>")
+		return nil, nil
+	}
+	t.Cleanup(func() { vmPickFn = orig })
+
+	ref, remotePath, err := mountResolveDestFn(context.Background(), nil, io.Discard, "web1:/opt/app")
+	require.NoError(t, err)
+	assert.Equal(t, "web1", ref)
+	assert.Equal(t, "/opt/app", remotePath)
+}
+
+// Task 3.3: zero-arg `pmox umount` runs the picker, then delegates to
+// the umountAll code path for the resolved VM. When nothing matches,
+// it reports friendly info to stderr and exits 0 (not an error).
+func TestRunUmount_ZeroArgs_PickerThenUmountAll(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	called := false
+	orig := umountResolveVMFn
+	umountResolveVMFn = func(*cobra.Command) (string, error) {
+		called = true
+		return "web1", nil
+	}
+	t.Cleanup(func() { umountResolveVMFn = orig })
+
+	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+
+	err := runUmount(cmd, nil, false)
+	require.NoError(t, err, "zero-arg umount with no active mounts is not an error")
+	assert.True(t, called, "picker must run for zero-arg umount")
+	assert.Contains(t, errbuf.String(), "No active mounts for web1")
+}
+
+// Task 3.4: explicit `pmox umount web1:/opt/app` still routes to
+// umountByRemote — recognizable by its "no mount found for <vm>:<path>"
+// error message — and must not consult the picker.
+func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	orig := umountResolveVMFn
+	umountResolveVMFn = func(*cobra.Command) (string, error) {
+		t.Fatalf("picker must not run when an explicit arg is supplied")
+		return "", nil
+	}
+	t.Cleanup(func() { umountResolveVMFn = orig })
+
+	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+
+	err := runUmount(newTestUmountCmd(), []string{"web1:/opt/app"}, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no mount found for web1:/opt/app")
+}
+
+// Task 3.5: `pmox umount --all web1` still routes to umountAll.
+func TestRunUmount_AllFlag_RoutesToUmountAll(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	orig := umountResolveVMFn
+	umountResolveVMFn = func(*cobra.Command) (string, error) {
+		t.Fatalf("picker must not run when --all is used with an explicit VM")
+		return "", nil
+	}
+	t.Cleanup(func() { umountResolveVMFn = orig })
+
+	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+
+	err := runUmount(newTestUmountCmd(), []string{"web1"}, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no mounts found for web1")
+}
+
+// Task 3.6: help-text includes the new bare-form examples for both
+// mount and umount.
+func TestMountUmountHelpIncludesBareExamples(t *testing.T) {
+	mountHelp := newMountCmd().Long
+	assert.Contains(t, mountHelp, "pmox mount ./src /opt/app", "mount --help must show bare-path example")
+
+	umountHelp := newUmountCmd().Long
+	assert.Contains(t, umountHelp, "pmox umount\n", "umount --help must show zero-arg example")
 }

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -15,6 +18,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 var defaultMountExcludes = []string{
@@ -39,6 +45,25 @@ type mountFlags struct {
 	excludes    []string
 }
 
+// mountResolveDestFn resolves a mount destination argument. If the
+// arg has an explicit <name|vmid>:<remote_path> form it returns
+// (ref, path) directly; otherwise it delegates VM resolution to the
+// shared target picker and returns the picked VM's canonical name
+// plus the raw arg as the remote path. Using the name (not vmid)
+// keeps log lines, PID files, and daemon child args consistent with
+// an explicit `<name>:<path>` invocation. Tests override this to
+// bypass the picker/client plumbing.
+var mountResolveDestFn = func(ctx context.Context, client *pveclient.Client, stderr io.Writer, dest string) (ref, remotePath string, err error) {
+	if r, p, isRemote := parseRemoteArg(dest); isRemote {
+		return r, p, nil
+	}
+	picked, err := vmPickFn(ctx, client, stderr)
+	if err != nil {
+		return "", "", err
+	}
+	return picked.Name, dest, nil
+}
+
 // mountRsyncRunFn runs rsync for mount. Tests override this.
 var mountRsyncRunFn = func(bin string, args []string, stderr *os.File) error {
 	c := exec.Command(bin, args[1:]...)
@@ -50,13 +75,16 @@ var mountRsyncRunFn = func(bin string, args []string, stderr *os.File) error {
 func newMountCmd() *cobra.Command {
 	f := &mountFlags{}
 	cmd := &cobra.Command{
-		Use:   "mount <local_path> <name|vmid>:<remote_path>",
+		Use:   "mount <local_path> [<name|vmid>:]<remote_path>",
 		Short: "Watch a local directory and continuously sync to a VM",
 		Long: `Watch a local directory for filesystem changes and continuously
 synchronize them to a pmox-managed VM using rsync over SSH.
 
-The source is always a local directory. The destination uses
-<name>:<path> syntax to identify the VM and remote path.
+The source is always a local directory. The destination may use
+<name>:<path> syntax to pin a specific VM, or a bare <remote_path>
+in which case pmox resolves the VM via the shared target picker
+(auto-selecting when exactly one pmox VM exists, or prompting when
+several do).
 
 Default rsync flags: -az --partial --delete --filter=':- .gitignore'
 plus built-in excludes (.git, node_modules, .venv, etc.).
@@ -66,6 +94,7 @@ Built-in default excludes (replaced by --exclude or config mount_excludes):
   __pycache__  .DS_Store  *.swp  *.swo  *~
 
 Examples:
+  pmox mount ./src /opt/app
   pmox mount ./src web1:/opt/app
   pmox mount -D ./src web1:/opt/app
   pmox mount --no-delete --no-gitignore ./src web1:/opt/app
@@ -88,17 +117,23 @@ Examples:
 func newUmountCmd() *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
-		Use:   "umount <name|vmid>:<remote_path>",
-		Short: "Stop a running daemon-mode mount",
-		Long: `Stop a running daemon-mode mount by finding its PID file and
-sending SIGTERM to the process.
+		Use:   "umount [<name|vmid>:<remote_path>]",
+		Short: "Stop running daemon-mode mounts",
+		Long: `Stop running daemon-mode mounts by finding their PID files and
+sending SIGTERM to each process.
+
+Called with no arguments, umount resolves the target VM via the
+shared target picker (auto-selecting when exactly one pmox VM
+exists, or prompting when several do) and stops every mount
+associated with that VM — equivalent to pmox umount --all <vm>.
 
 Examples:
+  pmox umount
   pmox umount web1:/opt/app
   pmox umount --all web1`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUmount(cmd, args[0], all)
+			return runUmount(cmd, args, all)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "stop all mounts for the given VM")
@@ -123,13 +158,13 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 		return fmt.Errorf("source %q is not a directory; pmox mount requires a directory", localPath)
 	}
 
-	ref, remotePath, isRemote := parseRemoteArg(args[1])
-	if !isRemote {
-		return fmt.Errorf("destination must use <name>:<path> syntax (e.g. web1:/opt/app)")
-	}
-
 	ctx := cmd.Context()
 	client, srv, err := buildSSHClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+
+	ref, remotePath, err := mountResolveDestFn(ctx, client, cmd.ErrOrStderr(), args[1])
 	if err != nil {
 		return err
 	}
@@ -462,7 +497,41 @@ func cleanPIDFileOnShutdown(localPath, vmName, remotePath string) {
 
 // --- Umount command ---
 
-func runUmount(cmd *cobra.Command, arg string, all bool) error {
+// umountResolveVMFn resolves the target VM when umount is invoked with
+// no positional arguments. It builds the SSH client and picks a VM,
+// returning the canonical VM name so umountAll's PID-file prefix
+// lookup matches the names mount uses. Tests override this to return
+// a fixed VM name and skip the client/config plumbing.
+var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
+	ctx := cmd.Context()
+	client, _, err := buildSSHClient(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+	if err != nil {
+		return "", err
+	}
+	return picked.Name, nil
+}
+
+func runUmount(cmd *cobra.Command, args []string, all bool) error {
+	if len(args) == 0 {
+		vmName, err := umountResolveVMFn(cmd)
+		if err != nil {
+			return err
+		}
+		if err := umountAll(cmd, vmName); err != nil {
+			if errors.Is(err, errNoMountsFound) {
+				fmt.Fprintln(cmd.ErrOrStderr(), colorize(fmt.Sprintf("No active mounts for %s", vmName), colorGreen))
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+
+	arg := args[0]
 	if all {
 		vmName := strings.TrimSuffix(arg, ":")
 		ref, _, isRemote := parseRemoteArg(arg)
@@ -576,11 +645,30 @@ func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
 	return nil
 }
 
+const colorGreen = "\033[32m"
+
+// colorize wraps s in an ANSI color escape when stderr is a TTY.
+// Non-TTY output stays plain so scripts and log files see clean text.
+func colorize(s, color string) string {
+	if !tui.StderrIsTerminal() {
+		return s
+	}
+	return color + s + "\033[0m"
+}
+
+// errNoMountsFound signals an empty umountAll — the state dir exists
+// but nothing matched the VM prefix (or the state dir does not exist
+// yet). It is a "nothing to do" outcome, not a real failure, so the
+// zero-arg `pmox umount` branch surfaces it as friendly info instead
+// of an error. The `--all <vm>` branch still propagates it as a
+// regular error to preserve scripted behavior.
+var errNoMountsFound = errors.New("no mounts found")
+
 func umountAll(cmd *cobra.Command, vmName string) error {
 	stateDir := mountStateDir()
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
-		return fmt.Errorf("no mounts found for %s", vmName)
+		return fmt.Errorf("%w for %s", errNoMountsFound, vmName)
 	}
 
 	prefix := vmName + "-"
@@ -634,7 +722,7 @@ func umountAll(cmd *cobra.Command, vmName string) error {
 	}
 
 	if stopped == 0 {
-		return fmt.Errorf("no mounts found for %s", vmName)
+		return fmt.Errorf("%w for %s", errNoMountsFound, vmName)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "stopped %d mount(s) for %s\n", stopped, vmName)
 	return nil
