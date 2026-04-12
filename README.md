@@ -51,6 +51,31 @@ Quick path (if you're happy using `root@pam`): in **Datacenter → Permissions �
 
 If `pmox configure` shows `no VMs visible on node …` or `could not list storage …`, it means the token is missing `VM.Audit` or `Datastore.Audit` respectively — fix the role or disable privilege separation on the token.
 
+## Connecting to a VM
+
+### `pmox shell`
+
+`pmox shell <name|vmid>` opens an interactive SSH session to a pmox-managed VM. If the VM is stopped, it auto-starts and waits for SSH readiness before connecting.
+
+```bash
+pmox shell web1
+pmox shell --user ubuntu web1
+pmox shell --identity ~/.ssh/custom_key web1
+```
+
+### `pmox exec`
+
+`pmox exec <name|vmid> -- <command> [args...]` runs a single command on a VM over SSH and returns its output and exit code.
+
+```bash
+pmox exec web1 -- uname -a
+pmox exec web1 -- cat /etc/hostname
+```
+
+Both commands default to user `pmox` and derive the private key from the configured SSH public key (stripping `.pub`). Use `--user` / `-u` and `--identity` / `-i` to override. Both enforce the pmox tag check; pass `--force` to connect to untagged VMs.
+
+Guest VM host keys are not verified (`StrictHostKeyChecking=no`) since VMs are ephemeral and keys change on every launch.
+
 ## Deleting a VM
 
 `pmox delete <name|vmid>` stops and destroys a VM on the resolved cluster.
