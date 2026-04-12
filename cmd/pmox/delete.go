@@ -13,6 +13,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -22,6 +23,7 @@ const deleteTaskTimeout = 120 * time.Second
 
 type deleteFlags struct {
 	force bool
+	yes   bool
 }
 
 func newDeleteCmd() *cobra.Command {
@@ -32,6 +34,12 @@ func newDeleteCmd() *cobra.Command {
 		Long: `Delete a VM on the resolved Proxmox cluster. The argument may be
 either the VM name (e.g. "web1") or its numeric VMID (e.g. "104").
 
+Before issuing any destructive API call the command prints a summary of
+the resolved VM and requires an interactive y/N confirmation (default No).
+Pass --yes / -y or set PMOX_ASSUME_YES=1 to skip the prompt for scripted
+and CI use. When stdin is not a TTY and no bypass is set, the command
+refuses to proceed.
+
 By default, delete refuses to act on VMs that are not tagged "pmox".
 Since pmox launch tags every VM it creates, this rule means delete
 will only touch VMs pmox launched — hand-managed VMs are protected
@@ -41,6 +49,7 @@ from accidental destruction.
 allowing delete on untagged VMs, and (2) it uses hard "stop" (power
 off) instead of graceful "shutdown" (ACPI). Reach for --force when
 the VM is hand-managed or when the guest is not responding to ACPI.
+--force is orthogonal to --yes: using --force alone still prompts.
 
 If the VM has already been destroyed, delete exits 0 with a note on
 stderr so scripted loops are idempotent.`,
@@ -50,6 +59,7 @@ stderr so scripted loops are idempotent.`,
 		},
 	}
 	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check and use hard stop instead of graceful shutdown")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt (env: PMOX_ASSUME_YES)")
 	return cmd
 }
 
@@ -59,11 +69,22 @@ func runDelete(cmd *cobra.Command, arg string, f *deleteFlags) error {
 		ctx = context.Background()
 	}
 
+	assumeYes := f.yes || envBool("PMOX_ASSUME_YES")
+
+	var confirmer tui.Confirmer
+	if assumeYes {
+		confirmer = tui.AlwaysConfirmer{}
+	} else if tui.StdinIsTerminal() {
+		confirmer = tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr())
+	} else {
+		return fmt.Errorf("refusing to delete VM %q: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use", arg)
+	}
+
 	client, err := buildDeleteClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
-	return executeDelete(ctx, cmd, client, arg, f)
+	return executeDelete(ctx, cmd, client, arg, f, confirmer)
 }
 
 func buildDeleteClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, error) {
@@ -91,7 +112,7 @@ func buildDeleteClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Clie
 
 // executeDelete holds the command logic without server/config wiring
 // so tests can drive it with a fake client directly.
-func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *deleteFlags) error {
+func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *deleteFlags, confirmer tui.Confirmer) error {
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return err
@@ -99,6 +120,26 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 
 	if !f.force && !vm.HasPMOXTag(ref.Tags) {
 		return fmt.Errorf("refusing to delete VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	}
+
+	if !f.yes {
+		tags := ref.Tags
+		if tags == "" {
+			tags = "<none>"
+		}
+		var prompt string
+		if f.force {
+			prompt = fmt.Sprintf("About to FORCE-delete VM %q (vmid %d, node %s, tags %s)\nThis will use hard stop (no graceful shutdown) and bypasses the pmox tag check.\nContinue? [y/N]: ", ref.Name, ref.VMID, ref.Node, tags)
+		} else {
+			prompt = fmt.Sprintf("About to delete VM %q (vmid %d, node %s, tags %s)\nContinue? [y/N]: ", ref.Name, ref.VMID, ref.Node, tags)
+		}
+		ok, err := confirmer.Confirm(ctx, prompt)
+		if err != nil {
+			return fmt.Errorf("confirmation: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("delete cancelled")
+		}
 	}
 
 	status, err := client.GetStatus(ctx, ref.Node, ref.VMID)

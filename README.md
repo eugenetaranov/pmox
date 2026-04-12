@@ -2,7 +2,7 @@
 
 pmox is a multipass-style CLI for Proxmox VE. This repo is under construction; see `openspec/changes/` for in-flight work.
 
-Currently the only working subcommand is `pmox configure`.
+Working subcommands include `pmox configure`, `pmox launch`, `pmox delete`, `pmox list`, `pmox info`, `pmox start`, `pmox stop`, `pmox clone`, and `pmox create-template`.
 
 ## Configuring a server
 
@@ -18,6 +18,7 @@ Run `pmox configure` and answer the prompts. You'll need:
 | Flag | Env var | Effect |
 | --- | --- | --- |
 | `--ssh-insecure` | `PMOX_SSH_INSECURE=1` | Skip SSH host-key verification for the process. Intended for scripted / first-bootstrap use; emits a stderr warning on first use. |
+| `--yes` / `-y` | `PMOX_ASSUME_YES=1` | Skip interactive confirmation prompts (currently used by `pmox delete`). Required for non-interactive / scripted use. |
 
 ### Security tradeoffs
 
@@ -49,6 +50,28 @@ The token needs to see nodes, VMs, storage pools, and network bridges during `co
 Quick path (if you're happy using `root@pam`): in **Datacenter → Permissions → API Tokens**, click **Add**, pick `root@pam`, name the token, and **uncheck Privilege Separation**. The token then inherits root's full rights and no extra role assignment is needed.
 
 If `pmox configure` shows `no VMs visible on node …` or `could not list storage …`, it means the token is missing `VM.Audit` or `Datastore.Audit` respectively — fix the role or disable privilege separation on the token.
+
+## Deleting a VM
+
+`pmox delete <name|vmid>` stops and destroys a VM on the resolved cluster.
+
+### Confirmation
+
+Before issuing any destructive API call, `pmox delete` prints a summary of the resolved VM and asks for an interactive `y/N` confirmation (default No). This prevents accidental deletion from a typo or a scripted loop targeting the wrong server.
+
+To skip the prompt for scripted or CI use, pass `--yes` / `-y` or set `PMOX_ASSUME_YES=1`:
+
+```bash
+pmox delete --yes web1
+# or
+PMOX_ASSUME_YES=1 pmox delete web1
+```
+
+When stdin is not a TTY and neither `--yes` nor `PMOX_ASSUME_YES` is set, the command refuses to proceed and exits non-zero. This prevents the prompt from being silently swallowed by a pipe or cron job.
+
+**Migration note for scripted callers:** if you have scripts that call `pmox delete` without user interaction, add `--yes` or set `PMOX_ASSUME_YES=1` — they will now fail without it.
+
+`--force` and `--yes` are orthogonal: `--force` bypasses the tag check and uses hard stop; `--yes` skips the confirmation prompt. Use `--yes --force` for fully non-interactive force-delete.
 
 ## Creating a template
 

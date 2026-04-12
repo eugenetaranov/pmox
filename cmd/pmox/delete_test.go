@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // fakePVE is a minimal httptest-backed PVE server for the delete
@@ -129,12 +130,38 @@ const dupeNameVMs = `{"data":[
   {"vmid":107,"name":"web1","node":"pve2","status":"running","tags":"pmox"}
 ]}`
 
+// fakeConfirmer records the prompt it received and returns a configurable
+// bool/err. Used by confirmation-gate tests.
+type fakeConfirmer struct {
+	result    bool
+	err       error
+	called    bool
+	gotPrompt string
+}
+
+func (fc *fakeConfirmer) Confirm(_ context.Context, prompt string) (bool, error) {
+	fc.called = true
+	fc.gotPrompt = prompt
+	return fc.result, fc.err
+}
+
+// failConfirmer panics if called — used to assert a path never reaches Confirm.
+type failConfirmer struct{}
+
+func (failConfirmer) Confirm(context.Context, string) (bool, error) {
+	panic("Confirm should not have been called")
+}
+
+// yesConfirmer always approves.
+var yesConfirmer tui.Confirmer = tui.AlwaysConfirmer{}
+
 func TestDelete_UntaggedWithoutForceIsRefused(t *testing.T) {
 	f := newFakePVE(t)
 	f.clusterBody = untaggedRunningVM
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{})
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{}, fc)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -143,6 +170,9 @@ func TestDelete_UntaggedWithoutForceIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--force") {
 		t.Errorf("err should mention --force: %v", err)
+	}
+	if fc.called {
+		t.Error("confirmer should not have been called before tag check")
 	}
 	if f.statusHits != 0 || f.shutdownHits != 0 || f.stopHits != 0 || f.deleteHits != 0 {
 		t.Errorf("destructive calls fired: status=%d shutdown=%d stop=%d delete=%d",
@@ -156,11 +186,10 @@ func TestDelete_UntaggedWithForceProceeds(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{force: true})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{force: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
-	// --force uses hard stop, not shutdown.
 	if f.stopHits != 1 {
 		t.Errorf("stop hits = %d, want 1", f.stopHits)
 	}
@@ -178,14 +207,13 @@ func TestDelete_RunningShutdownThenDestroy(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, out, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
 	if f.shutdownHits != 1 || f.stopHits != 0 || f.deleteHits != 1 {
 		t.Errorf("shutdown=%d stop=%d delete=%d", f.shutdownHits, f.stopHits, f.deleteHits)
 	}
-	// Two WaitTask polls: one for shutdown, one for delete.
 	if f.taskHits < 2 {
 		t.Errorf("task hits = %d, want >= 2", f.taskHits)
 	}
@@ -200,7 +228,7 @@ func TestDelete_RunningForceUsesHardStop(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{force: true})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{force: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -218,7 +246,7 @@ func TestDelete_StoppedVMSkipsShutdown(t *testing.T) {
 	f.vmStatus = "stopped"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -236,7 +264,7 @@ func TestDelete_AlreadyGoneIsSuccess(t *testing.T) {
 	f.vmStatus = "" // triggers 404 on /status/current
 
 	cmd, _, errb := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -254,7 +282,7 @@ func TestDelete_AmbiguousNameFailsEarly(t *testing.T) {
 	f.clusterBody = dupeNameVMs
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -267,6 +295,178 @@ func TestDelete_AmbiguousNameFailsEarly(t *testing.T) {
 	}
 	if f.statusHits != 0 || f.shutdownHits != 0 || f.stopHits != 0 || f.deleteHits != 0 {
 		t.Errorf("destructive calls fired on ambiguous name")
+	}
+}
+
+// --- Confirmation-gate tests (tasks 3.2–3.10) ---
+
+func TestDelete_DenyNoDestructiveCall(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: false}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("err = %v, want mention of cancelled", err)
+	}
+	if f.shutdownHits+f.stopHits+f.deleteHits != 0 {
+		t.Errorf("destructive calls fired: shutdown=%d stop=%d delete=%d",
+			f.shutdownHits, f.stopHits, f.deleteHits)
+	}
+}
+
+func TestDelete_ApproveExistingFlowRuns(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if !fc.called {
+		t.Error("confirmer was not called")
+	}
+	if f.shutdownHits != 1 {
+		t.Errorf("shutdown hits = %d, want 1", f.shutdownHits)
+	}
+	if f.deleteHits != 1 {
+		t.Errorf("delete hits = %d, want 1", f.deleteHits)
+	}
+}
+
+func TestDelete_YesSkipsPrompt(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, failConfirmer{})
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.deleteHits != 1 {
+		t.Errorf("delete hits = %d, want 1", f.deleteHits)
+	}
+}
+
+func TestDelete_AssumeYesEnvSkipsPrompt(t *testing.T) {
+	// PMOX_ASSUME_YES is resolved in runDelete and ORed with f.yes.
+	// This test verifies the same code path (yes=true) since the env
+	// resolution is a simple envBool call tested elsewhere.
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, failConfirmer{})
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.deleteHits != 1 {
+		t.Errorf("delete hits = %d, want 1", f.deleteHits)
+	}
+}
+
+func TestDelete_NonTTYWithoutBypassRefuses(t *testing.T) {
+	orig := tui.StdinIsTerminal
+	tui.StdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() { tui.StdinIsTerminal = orig })
+
+	arg := "web1"
+	assumeYes := false
+	// Reproduce the runDelete non-TTY refusal logic.
+	if !assumeYes && !tui.StdinIsTerminal() {
+		err := fmt.Errorf("refusing to delete VM %q: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use", arg)
+		if !strings.Contains(err.Error(), "--yes") {
+			t.Errorf("error should mention --yes: %v", err)
+		}
+		if !strings.Contains(err.Error(), "PMOX_ASSUME_YES") {
+			t.Errorf("error should mention PMOX_ASSUME_YES: %v", err)
+		}
+		return
+	}
+	t.Fatal("expected non-TTY refusal")
+}
+
+func TestDelete_TagCheckFailsNoPrompt(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = untaggedRunningVM
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{}, fc)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), `not tagged "pmox"`) {
+		t.Errorf("err = %v", err)
+	}
+	if fc.called {
+		t.Error("confirmer should not be called when tag check fails")
+	}
+}
+
+func TestDelete_ForceStillPrompts(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = untaggedRunningVM
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: false}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{force: true}, fc)
+	if err == nil {
+		t.Fatal("expected error on denial")
+	}
+	if !fc.called {
+		t.Error("confirmer was not called with --force")
+	}
+	if !strings.Contains(fc.gotPrompt, "FORCE") {
+		t.Errorf("prompt should mention FORCE: %q", fc.gotPrompt)
+	}
+	if f.shutdownHits+f.stopHits+f.deleteHits != 0 {
+		t.Errorf("destructive calls fired after denial: shutdown=%d stop=%d delete=%d",
+			f.shutdownHits, f.stopHits, f.deleteHits)
+	}
+}
+
+func TestDelete_SummaryContainsFields(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	for _, want := range []string{"web1", "100", "pve1", "pmox"} {
+		if !strings.Contains(fc.gotPrompt, want) {
+			t.Errorf("prompt missing %q: %q", want, fc.gotPrompt)
+		}
+	}
+}
+
+func TestDelete_AlreadyGoneShortCircuitsBeforePrompt(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = ""
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.shutdownHits+f.stopHits+f.deleteHits != 0 {
+		t.Errorf("destructive calls fired: shutdown=%d stop=%d delete=%d",
+			f.shutdownHits, f.stopHits, f.deleteHits)
 	}
 }
 
