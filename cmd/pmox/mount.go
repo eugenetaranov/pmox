@@ -38,7 +38,7 @@ var defaultMountExcludes = []string{
 
 type mountFlags struct {
 	sshFlags
-	daemon      bool
+	foreground  bool
 	debounce    time.Duration
 	noGitignore bool
 	noDelete    bool
@@ -86,6 +86,11 @@ in which case pmox resolves the VM via the shared target picker
 (auto-selecting when exactly one pmox VM exists, or prompting when
 several do).
 
+By default, pmox mount runs in the background, writes a PID file,
+and streams sync activity to a log file. Pass --foreground / -F to
+run attached to the terminal instead; stop background mounts with
+pmox umount.
+
 Default rsync flags: -az --partial --delete --filter=':- .gitignore'
 plus built-in excludes (.git, node_modules, .venv, etc.).
 
@@ -96,7 +101,7 @@ Built-in default excludes (replaced by --exclude or config mount_excludes):
 Examples:
   pmox mount ./src /opt/app
   pmox mount ./src web1:/opt/app
-  pmox mount -D ./src web1:/opt/app
+  pmox mount -F ./src web1:/opt/app
   pmox mount --no-delete --no-gitignore ./src web1:/opt/app
   pmox mount --exclude=.git --exclude='*.log' ./src web1:/opt/app
   pmox mount ./src web1:/opt/app -- --bwlimit=1000`,
@@ -106,7 +111,7 @@ Examples:
 		},
 	}
 	addSSHFlags(cmd, &f.sshFlags)
-	cmd.Flags().BoolVarP(&f.daemon, "daemon", "D", false, "run in background and write PID file")
+	cmd.Flags().BoolVarP(&f.foreground, "foreground", "F", false, "run attached to the terminal instead of in the background")
 	cmd.Flags().DurationVar(&f.debounce, "debounce", 300*time.Millisecond, "debounce duration for filesystem events")
 	cmd.Flags().BoolVar(&f.noGitignore, "no-gitignore", false, "disable .gitignore filtering")
 	cmd.Flags().BoolVar(&f.noDelete, "no-delete", false, "disable --delete from rsync")
@@ -179,7 +184,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 
 	stderr := os.Stderr
 
-	if f.daemon {
+	if !f.foreground {
 		return runMountDaemon(cmd, rsyncPath, rsyncArgs, localPath, ref, remotePath, f, target, excludes)
 	}
 
@@ -418,8 +423,9 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	// Build the child command args (without --daemon)
-	childArgs := []string{exe, "mount"}
+	// Build the child command args — the child runs in foreground
+	// so the parent can daemonize it via StartProcess + Setsid.
+	childArgs := []string{exe, "mount", "--foreground"}
 	if f.user != "pmox" {
 		childArgs = append(childArgs, "--user", f.user)
 	}

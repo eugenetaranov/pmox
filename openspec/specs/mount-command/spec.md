@@ -6,7 +6,7 @@ The CLI SHALL expose `pmox mount <local_path> <name|vmid>:<remote_path>` which w
 
 The command SHALL accept `--user` / `-u` (default `"pmox"`), `--identity` / `-i`, and `--force` flags with identical behavior to `pmox shell`.
 
-The command SHALL accept `--daemon` / `-d` to run in the background and write a PID file.
+The command SHALL run in the background by default, writing a PID file, and SHALL accept `--foreground` / `-F` to instead run attached to the invoking terminal.
 
 The command SHALL accept `--debounce` (default `300ms`) to control the delay between a filesystem event and the rsync invocation.
 
@@ -65,28 +65,34 @@ Additional rsync flags MAY be passed after `--` and SHALL be appended verbatim t
 - **WHEN** `pmox mount --user ubuntu --identity ~/.ssh/custom ./src web1:/opt/app` is invoked
 - **THEN** the rsync `-e` flag SHALL reference `-i ~/.ssh/custom` and the remote path SHALL use `ubuntu@<ip>`
 
-### Requirement: Daemon mode
+### Requirement: Daemon mode (default)
 
-The command SHALL accept `--daemon` / `-d` to run in the background. In daemon mode, the command SHALL fork, write a PID file to `$XDG_STATE_HOME/pmox/mounts/<vm>-<hash>.pid`, and exit immediately. The hash SHALL be derived from the local and remote path combination to allow multiple mounts to coexist.
+The command SHALL run in daemon mode by default. In daemon mode, the command SHALL fork, write a PID file to `$XDG_STATE_HOME/pmox/mounts/<vm>-<hash>.pid`, and exit immediately. The hash SHALL be derived from the local and remote path combination to allow multiple mounts to coexist. Passing `--foreground` / `-F` SHALL skip daemonization and run the watcher attached to the invoking terminal.
 
-#### Scenario: Daemon mode starts and writes PID
-- **WHEN** `pmox mount -d ./src web1:/opt/app` is invoked
+#### Scenario: Default invocation starts a daemon
+- **WHEN** `pmox mount ./src web1:/opt/app` is invoked
 - **THEN** the command SHALL start the mount process in the background
 - **AND** write a PID file containing the process ID
 - **AND** exit 0 immediately
 - **AND** print the PID and mount paths to stderr
+
+#### Scenario: Foreground flag skips daemonization
+- **WHEN** `pmox mount --foreground ./src web1:/opt/app` is invoked
+- **THEN** the command SHALL NOT fork
+- **AND** SHALL run the initial rsync and fsnotify watcher in the invoking process
+- **AND** SHALL NOT write a PID file
 
 #### Scenario: Daemon mode detects stale PID
 - **WHEN** a PID file exists but the referenced process is not running
 - **THEN** the command SHALL remove the stale PID file and proceed normally
 
 #### Scenario: Duplicate daemon mount
-- **WHEN** `pmox mount -d ./src web1:/opt/app` is invoked and a mount for the same paths is already running
+- **WHEN** `pmox mount ./src web1:/opt/app` is invoked and a mount for the same paths is already running
 - **THEN** the command SHALL exit non-zero with an error stating the mount is already active
 
 ### Requirement: Clean shutdown
 
-On SIGINT or SIGTERM, the command SHALL cancel the filesystem watcher, run one final rsync to flush pending changes, remove the PID file (if daemon mode), and exit 0.
+On SIGINT or SIGTERM, the command SHALL cancel the filesystem watcher, run one final rsync to flush pending changes, remove the PID file (if running as a daemon), and exit 0.
 
 #### Scenario: Ctrl-C during watch
 - **WHEN** the user presses Ctrl-C while `pmox mount` is watching
