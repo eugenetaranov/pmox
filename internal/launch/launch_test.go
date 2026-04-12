@@ -3,144 +3,92 @@ package launch
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvetest"
 )
 
-// fakePVE is a stateful httptest-backed PVE stub. It records every
-// request and dispatches by URL path, tracking enough state to walk
-// the launch state machine end-to-end without a real cluster.
-type fakePVE struct {
-	t         *testing.T
-	srv       *httptest.Server
-	client    *pveclient.Client
-	mu        sync.Mutex
-	hits      []hit
+// launchFake wraps a pvetest.Server with the behavior-toggle flags the
+// launch state-machine tests need. It centralizes the PVE route wiring
+// so each test just flips the failure flags it cares about.
+type launchFake struct {
+	srv *pvetest.Server
+
 	agentHits int32
 	deleteHit int32
-	// Behavior toggles for failure-path tests.
+
 	failTagCfg   bool
 	failStart    bool
 	agentTimeout bool
 }
 
-type hit struct {
-	method string
-	path   string
-	body   string
-}
-
-func newFakePVE(t *testing.T) *fakePVE {
+func newLaunchFake(t *testing.T) *launchFake {
 	t.Helper()
-	f := &fakePVE{t: t}
-	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
-	f.client = pveclient.New(f.srv.URL, "tok@pam!x", "secret", false)
-	f.client.HTTPClient = f.srv.Client()
-	t.Cleanup(f.srv.Close)
-	return f
-}
+	f := &launchFake{srv: pvetest.New(t)}
 
-func (f *fakePVE) record(r *http.Request) string {
-	body, _ := io.ReadAll(r.Body)
-	s := string(body)
-	f.mu.Lock()
-	f.hits = append(f.hits, hit{method: r.Method, path: r.URL.Path, body: s})
-	f.mu.Unlock()
-	return s
-}
+	f.srv.Handle("GET", "/cluster/nextid", pvetest.JSON(`{"data":"101"}`))
 
-// orderedPaths returns path fragments describing each hit in order,
-// using short labels so tests can assert against a sequence.
-func (f *fakePVE) orderedPaths() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]string, 0, len(f.hits))
-	for _, h := range f.hits {
-		label := h.method + " " + h.path
-		out = append(out, label)
-	}
-	return out
-}
+	f.srv.Handle("POST", "/clone", pvetest.JSON(`{"data":"UPID:pve:clone"}`))
 
-// configBodies returns every POST config body in order.
-func (f *fakePVE) configBodies() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var out []string
-	for _, h := range f.hits {
-		if h.method == "POST" && strings.HasSuffix(h.path, "/config") {
-			out = append(out, h.body)
-		}
-	}
-	return out
-}
-
-func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
-	body := f.record(r)
-	p := r.URL.Path
-
-	switch {
-	case r.Method == "GET" && strings.HasSuffix(p, "/cluster/nextid"):
-		fmt.Fprint(w, `{"data":"101"}`)
-
-	case r.Method == "POST" && strings.Contains(p, "/qemu/") && strings.HasSuffix(p, "/clone"):
-		fmt.Fprint(w, `{"data":"UPID:pve:clone"}`)
-
-	case r.Method == "POST" && strings.Contains(p, "/qemu/") && strings.HasSuffix(p, "/status/start"):
+	f.srv.Handle("POST", "/status/start", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		if f.failStart {
 			w.WriteHeader(500)
 			fmt.Fprint(w, `{"errors":"start failed"}`)
 			return
 		}
 		fmt.Fprint(w, `{"data":"UPID:pve:start"}`)
+	})
 
-	case r.Method == "GET" && strings.Contains(p, "/tasks/") && strings.HasSuffix(p, "/status"):
-		fmt.Fprint(w, `{"data":{"status":"stopped","exitstatus":"OK"}}`)
+	f.srv.Handle("GET", "/tasks/", pvetest.TaskOK)
 
-	case r.Method == "POST" && strings.HasSuffix(p, "/config"):
-		// First /config call is the tag; the second is the full kv map.
+	f.srv.Handle("POST", "/config", func(w http.ResponseWriter, _ *http.Request, body string) {
 		if f.failTagCfg && strings.Contains(body, "tags=pmox") {
 			w.WriteHeader(500)
 			fmt.Fprint(w, `{"errors":"cannot set tags"}`)
 			return
 		}
 		fmt.Fprint(w, `{"data":null}`)
+	})
 
-	case r.Method == "PUT" && strings.HasSuffix(p, "/resize"):
-		fmt.Fprint(w, `{"data":null}`)
+	f.srv.Handle("PUT", "/resize", pvetest.JSON(`{"data":null}`))
 
-	case r.Method == "GET" && strings.HasSuffix(p, "/agent/network-get-interfaces"):
+	f.srv.Handle("GET", "/agent/network-get-interfaces", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		n := atomic.AddInt32(&f.agentHits, 1)
 		if f.agentTimeout {
 			w.WriteHeader(500)
 			fmt.Fprint(w, `{"errors":"agent not running"}`)
 			return
 		}
-		// Return agent-not-running once, then a real interface.
 		if n < 2 {
 			w.WriteHeader(500)
 			fmt.Fprint(w, `{"errors":"agent not running"}`)
 			return
 		}
 		fmt.Fprint(w, `{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"10.9.8.7"}]}]}}`)
+	})
 
-	case r.Method == "DELETE" && strings.Contains(p, "/qemu/"):
+	f.srv.Handle("DELETE", "/qemu/", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		atomic.AddInt32(&f.deleteHit, 1)
 		fmt.Fprint(w, `{"data":"UPID:pve:delete"}`)
+	})
 
-	default:
-		http.NotFound(w, r)
-	}
+	return f
 }
+
+func (f *launchFake) client() *pveclient.Client { return f.srv.Client() }
+
+// orderedPaths proxies through to the underlying server, keeping the
+// existing test assertions unchanged.
+func (f *launchFake) orderedPaths() []string { return f.srv.OrderedPaths() }
+
+// configBodies returns every POST /config body in order.
+func (f *launchFake) configBodies() []string { return f.srv.Bodies("POST", "/config") }
 
 func baseOpts(c *pveclient.Client) Options {
 	return Options{
@@ -159,10 +107,10 @@ func baseOpts(c *pveclient.Client) Options {
 }
 
 func TestRun_HappyPath(t *testing.T) {
-	f := newFakePVE(t)
+	f := newLaunchFake(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	r, err := Run(ctx, baseOpts(f.client))
+	r, err := Run(ctx, baseOpts(f.client()))
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -170,8 +118,6 @@ func TestRun_HappyPath(t *testing.T) {
 		t.Fatalf("Result = %+v, want VMID=101 IP=10.9.8.7", r)
 	}
 
-	// Expected call sequence (a prefix-match is enough because we
-	// allow repeated task-status polls and agent polls).
 	expected := []string{
 		"GET /cluster/nextid",
 		"POST /nodes/pve/qemu/9000/clone",
@@ -192,7 +138,6 @@ func TestRun_HappyPath(t *testing.T) {
 		}
 	}
 
-	// The first config body must be the tag-only call.
 	bodies := f.configBodies()
 	if len(bodies) < 2 {
 		t.Fatalf("want 2 config bodies, got %d", len(bodies))
@@ -204,7 +149,6 @@ func TestRun_HappyPath(t *testing.T) {
 		t.Error("first config body should be tag-only, not include ciuser")
 	}
 
-	// The second config body must carry the cloud-init kv map.
 	parsed, _ := url.ParseQuery(bodies[1])
 	for _, k := range []string{"ciuser", "sshkeys", "ipconfig0", "agent", "memory", "cores", "name"} {
 		if parsed.Get(k) == "" {
@@ -220,12 +164,11 @@ func TestRun_HappyPath(t *testing.T) {
 }
 
 func TestRun_TagBeforeResize(t *testing.T) {
-	f := newFakePVE(t)
-	_, err := Run(context.Background(), baseOpts(f.client))
+	f := newLaunchFake(t)
+	_, err := Run(context.Background(), baseOpts(f.client()))
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
-	// Find the index of the first /config call and the first /resize call.
 	var tagIdx, resizeIdx = -1, -1
 	for i, h := range f.orderedPaths() {
 		if tagIdx == -1 && strings.HasSuffix(h, "/config") {
@@ -244,9 +187,9 @@ func TestRun_TagBeforeResize(t *testing.T) {
 }
 
 func TestRun_TagErrorMentionsCleanup(t *testing.T) {
-	f := newFakePVE(t)
+	f := newLaunchFake(t)
 	f.failTagCfg = true
-	_, err := Run(context.Background(), baseOpts(f.client))
+	_, err := Run(context.Background(), baseOpts(f.client()))
 	if err == nil {
 		t.Fatal("Run err=nil, want tag failure error")
 	}
@@ -256,9 +199,9 @@ func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 }
 
 func TestRun_StartFailsNoRollback(t *testing.T) {
-	f := newFakePVE(t)
+	f := newLaunchFake(t)
 	f.failStart = true
-	_, err := Run(context.Background(), baseOpts(f.client))
+	_, err := Run(context.Background(), baseOpts(f.client()))
 	if err == nil {
 		t.Fatal("Run err=nil, want start failure")
 	}
@@ -268,9 +211,9 @@ func TestRun_StartFailsNoRollback(t *testing.T) {
 }
 
 func TestRun_WaitIPTimeout(t *testing.T) {
-	f := newFakePVE(t)
+	f := newLaunchFake(t)
 	f.agentTimeout = true
-	opts := baseOpts(f.client)
+	opts := baseOpts(f.client())
 	opts.Wait = 1500 * time.Millisecond
 	_, err := Run(context.Background(), opts)
 	if err == nil {
