@@ -11,6 +11,7 @@ func TestBakeSnippetContent(t *testing.T) {
 		"qemu-guest-agent",
 		"cloud-init clean",
 		"truncate -s 0 /etc/machine-id",
+		"rm -f /etc/netplan/50-cloud-init.yaml",
 		"poweroff",
 	} {
 		if !strings.Contains(body, want) {

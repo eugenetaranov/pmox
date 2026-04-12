@@ -29,7 +29,7 @@ func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
 	key := writeTempSSHKey(t)
 	resolved := &server.Resolved{
 		URL:    "https://pve.example:8006/api2/json",
-		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHKey: key},
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm"},
 		Secret: "s",
 		Source: "single configured",
 	}
@@ -57,7 +57,7 @@ func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
 	resolved := &server.Resolved{
 		URL: "https://pve.example:8006/api2/json",
 		Server: &config.Server{
-			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHKey: key,
+			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm",
 			User: "ubuntu",
 		},
 		Secret: "s",
@@ -83,7 +83,7 @@ func TestResolveLaunchOptions_ConfiguredDefault(t *testing.T) {
 	resolved := &server.Resolved{
 		URL: "https://pve.example:8006/api2/json",
 		Server: &config.Server{
-			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHKey: key,
+			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm",
 			User: "ubuntu",
 		},
 		Secret: "s",
@@ -99,7 +99,7 @@ func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
 	key := writeTempSSHKey(t)
 	resolved := &server.Resolved{
 		URL:    "https://pve.example:8006/api2/json",
-		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", SSHKey: key},
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", SSHPubkey: key},
 		Secret: "s",
 	}
 	_, err := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved)

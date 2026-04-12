@@ -77,9 +77,9 @@ func TestPickIPv4(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := pickIPv4(tc.ifaces)
+			got := PickIPv4(tc.ifaces)
 			if got != tc.want {
-				t.Errorf("pickIPv4 = %q, want %q", got, tc.want)
+				t.Errorf("PickIPv4 = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -140,6 +140,27 @@ func TestWaitForIP_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "qemu-guest-agent not responding on VM") {
 		t.Errorf("err = %v, want qemu-guest-agent not responding message", err)
+	}
+}
+
+func TestWaitForIP_TimeoutNoIP(t *testing.T) {
+	// Agent answers successfully, but the interface list never carries
+	// a usable IPv4 (classic DHCP/netplan failure in the guest). The
+	// timeout error must blame the guest network, not the agent.
+	c, stop := agentNetworkServer(t, func(hit int) (int, string) {
+		return 200, `{"data":{"result":[{"name":"lo","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"127.0.0.1"}]},{"name":"ens18"}]}}`
+	})
+	defer stop()
+
+	ip, err := WaitForIP(context.Background(), c, "pve", 111, 2*time.Second)
+	if err == nil {
+		t.Fatalf("WaitForIP ip=%q err=nil, want timeout error", ip)
+	}
+	if strings.Contains(err.Error(), "qemu-guest-agent not responding") {
+		t.Errorf("err = %v, expected guest-network message, got agent-not-responding", err)
+	}
+	if !strings.Contains(err.Error(), "no usable IPv4") {
+		t.Errorf("err = %v, want 'no usable IPv4' message", err)
 	}
 }
 

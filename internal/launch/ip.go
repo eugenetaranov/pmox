@@ -12,7 +12,7 @@ import (
 
 const pollInterval = 1 * time.Second
 
-// skipPrefixes are interface name prefixes that pickIPv4 filters out
+// skipPrefixes are interface name prefixes that PickIPv4 filters out
 // on the first pass. They correspond to loopback, container runtimes,
 // bridge-veth pairs, CNI, libvirt, and tun/tap — none of which are
 // the VM's "real" network interface from an SSH-reachability standpoint.
@@ -22,19 +22,26 @@ var skipPrefixes = []string{"lo", "docker", "br-", "veth", "cni", "virbr", "tun"
 // until it reports an interface with a usable IPv4, the context is
 // cancelled, or the timeout elapses.
 //
-// Any error from AgentNetwork is treated as "agent not up yet" and
-// triggers a retry. The API does not distinguish "agent not running"
-// from "interfaces empty", and the caller does not need to.
+// The timeout error distinguishes between "agent never answered" (no
+// successful AgentNetwork call) and "agent answered but no usable
+// IPv4" (typically DHCP/netplan trouble inside the guest), so the
+// caller can tell a missing guest-agent install apart from a guest
+// networking failure.
 func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
+	var agentAnswered bool
 	for {
 		ifaces, err := c.AgentNetwork(ctx, node, vmid)
 		if err == nil {
-			if ip := pickIPv4(ifaces); ip != "" {
+			agentAnswered = true
+			if ip := PickIPv4(ifaces); ip != "" {
 				return ip, nil
 			}
 		}
 		if time.Now().After(deadline) {
+			if agentAnswered {
+				return "", fmt.Errorf("VM %d has no usable IPv4 address after %s; guest agent is running but DHCP/network configuration in the guest did not come up (check /etc/netplan and systemd-networkd on the VM)", vmid, timeout)
+			}
 			return "", fmt.Errorf("qemu-guest-agent not responding on VM %d; install qemu-guest-agent in your template and re-run launch", vmid)
 		}
 		select {
@@ -45,12 +52,13 @@ func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, 
 	}
 }
 
-// pickIPv4 implements the D-T3 heuristic: skip virtual / container /
-// loopback interfaces, exclude loopback and link-local addresses, and
-// fall back to any non-loopback non-link-local IPv4 if nothing survived
-// the prefix filter. Returns the empty string when no IPv4 is usable
-// so the caller can keep polling.
-func pickIPv4(ifaces []pveclient.AgentIface) string {
+// PickIPv4 implements the D-T3 heuristic shared between launch and
+// list: skip virtual / container / loopback interfaces, exclude
+// loopback and link-local addresses, and fall back to any non-loopback
+// non-link-local IPv4 if nothing survived the prefix filter. Returns
+// the empty string when no IPv4 is usable so the caller can keep
+// polling.
+func PickIPv4(ifaces []pveclient.AgentIface) string {
 	if ip := firstUsableIPv4(ifaces, true); ip != "" {
 		return ip
 	}

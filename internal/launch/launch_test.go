@@ -101,6 +101,7 @@ func baseOpts(c *pveclient.Client) Options {
 		CPU:        2,
 		MemMB:      2048,
 		DiskSize:   "20G",
+		Storage:    "local-lvm",
 		Wait:       5 * time.Second,
 		NoWaitSSH:  true,
 	}

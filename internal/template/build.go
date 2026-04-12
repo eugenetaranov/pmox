@@ -225,9 +225,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("wait for vm %d to stop: %w (run pmox delete %d)", vmid, err, vmid)
 	}
 
-	// Phase 11 — detach the cloud-init drive so clones regenerate.
+	// Phase 11 — detach the cloud-init drive AND drop the bake-time
+	// cicustom so clones start with a clean slate. If cicustom survived,
+	// the clone would re-run the bake snippet (whose runcmd ends in
+	// `poweroff`) instead of PVE's built-in cloud-init template.
 	opts.pStart("Detaching cloud-init drive")
-	err = opts.Client.SetConfig(ctx, opts.Node, vmid, map[string]string{"delete": "ide2"})
+	err = opts.Client.SetConfig(ctx, opts.Node, vmid, map[string]string{"delete": "ide2,cicustom"})
 	opts.pDone(err)
 	if err != nil {
 		return nil, fmt.Errorf("detach cloud-init drive from vm %d: %w (run pmox delete %d)", vmid, err, vmid)

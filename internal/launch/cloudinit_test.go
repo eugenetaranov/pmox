@@ -14,6 +14,7 @@ func TestBuildBuiltinKV(t *testing.T) {
 			opts: Options{
 				Name: "web1", CPU: 2, MemMB: 2048,
 				User: "pmox", SSHPubKey: "ssh-ed25519 AAAA test@host",
+				Storage: "local-lvm",
 			},
 			wantUser:   "pmox",
 			wantSSHKey: "ssh-ed25519 AAAA test@host",
@@ -23,6 +24,7 @@ func TestBuildBuiltinKV(t *testing.T) {
 			opts: Options{
 				Name: "db1", CPU: 4, MemMB: 4096,
 				User: "ubuntu", SSHPubKey: "ssh-rsa XYZ me@box",
+				Storage: "local-lvm",
 			},
 			wantUser:   "ubuntu",
 			wantSSHKey: "ssh-rsa XYZ me@box",
@@ -32,6 +34,7 @@ func TestBuildBuiltinKV(t *testing.T) {
 			opts: Options{
 				Name: "trim", CPU: 1, MemMB: 512,
 				User: "pmox", SSHPubKey: "ssh-ed25519 AAAA test\n",
+				Storage: "local-lvm",
 			},
 			wantUser:   "pmox",
 			wantSSHKey: "ssh-ed25519 AAAA test",
@@ -56,10 +59,13 @@ func TestBuildBuiltinKV(t *testing.T) {
 				t.Errorf("name = %q, want %q", kv["name"], tc.opts.Name)
 			}
 			// Required keys.
-			for _, k := range []string{"name", "memory", "cores", "agent", "ciuser", "sshkeys", "ipconfig0"} {
+			for _, k := range []string{"name", "memory", "cores", "agent", "ciuser", "sshkeys", "ipconfig0", "ide2"} {
 				if _, ok := kv[k]; !ok {
 					t.Errorf("missing required key %q", k)
 				}
+			}
+			if got := kv["ide2"]; got != "local-lvm:cloudinit" {
+				t.Errorf("ide2 = %q, want local-lvm:cloudinit", got)
 			}
 		})
 	}

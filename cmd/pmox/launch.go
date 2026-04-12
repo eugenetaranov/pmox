@@ -148,13 +148,18 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		return launch.Options{}, err
 	}
 
-	sshKeyPath := firstNonEmpty(f.sshKey, srv.SSHKey)
+	sshKeyPath := firstNonEmpty(f.sshKey, srv.SSHPubkey)
 	if sshKeyPath == "" {
 		return launch.Options{}, fmt.Errorf("%w: no ssh key configured; pass --ssh-key or run 'pmox configure'", exitcode.ErrNotFound)
 	}
 	sshKey, err := readSSHKey(sshKeyPath)
 	if err != nil {
 		return launch.Options{}, err
+	}
+
+	storage := firstNonEmpty(f.storage, srv.Storage)
+	if storage == "" {
+		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox configure' (required for the cloud-init drive)", exitcode.ErrNotFound)
 	}
 
 	user := firstNonEmpty(f.user, srv.User, defaultUser)
@@ -184,7 +189,7 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		CPU:          cpu,
 		MemMB:        mem,
 		DiskSize:     disk,
-		Storage:      firstNonEmpty(f.storage, srv.Storage),
+		Storage:      storage,
 		Bridge:       firstNonEmpty(f.bridge, srv.Bridge),
 		Wait:         wait,
 		NoWaitSSH:    f.noWaitSSH,
