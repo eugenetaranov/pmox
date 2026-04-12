@@ -352,6 +352,11 @@ func pidFilePath(vmName, localPath, remotePath string) string {
 	return filepath.Join(mountStateDir(), fmt.Sprintf("%s-%x.pid", vmName, h[:8]))
 }
 
+func logFilePath(vmName, localPath, remotePath string) string {
+	h := sha256.Sum256([]byte(localPath + "\x00" + remotePath))
+	return filepath.Join(mountStateDir(), fmt.Sprintf("%s-%x.log", vmName, h[:8]))
+}
+
 func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, localPath, vmName, remotePath string, f *mountFlags, target *sshTarget, excludes []string) error {
 	stateDir := mountStateDir()
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -412,15 +417,30 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 		childArgs = append(childArgs, "--server", serverFlag)
 	}
 
+	logPath := logFilePath(vmName, localPath, remotePath)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer logFile.Close()
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
 	proc, err := os.StartProcess(exe, childArgs, &os.ProcAttr{
 		Env:   os.Environ(),
-		Files: []*os.File{os.Stdin, os.Stderr, os.Stderr},
+		Files: []*os.File{devNull, logFile, logFile},
+		Sys:   &syscall.SysProcAttr{Setsid: true},
 	})
 	if err != nil {
 		return fmt.Errorf("start background process: %w", err)
 	}
+	pid := proc.Pid
 
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(proc.Pid)), 0o644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o644); err != nil {
 		return fmt.Errorf("write PID file: %w", err)
 	}
 
@@ -428,8 +448,9 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 		return fmt.Errorf("release process: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "mount started in background (pid %d)\n", proc.Pid)
+	fmt.Fprintf(os.Stderr, "mount started in background (pid %d)\n", pid)
 	fmt.Fprintf(os.Stderr, "  %s → %s:%s\n", localPath, vmName, remotePath)
+	fmt.Fprintf(os.Stderr, "  logs: %s\n", logPath)
 	fmt.Fprintf(os.Stderr, "  stop with: pmox umount %s:%s\n", vmName, remotePath)
 	return nil
 }
