@@ -169,10 +169,7 @@ func appendKnownHost(knownHostsPath, host string, key ssh.PublicKey) error {
 
 	// knownhosts.Normalize keeps the host:port form; strip default :22
 	// so entries match both "host" and "host:22" lookups.
-	h := host
-	if strings.HasSuffix(h, ":22") {
-		h = strings.TrimSuffix(h, ":22")
-	}
+	h := strings.TrimSuffix(host, ":22")
 
 	line := fmt.Sprintf("%s %s %s\n", h, key.Type(), keyBase64(key))
 	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)

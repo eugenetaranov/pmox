@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -37,8 +39,10 @@ var configureCmd = &cobra.Command{
 	Long: `Interactively configure credentials and defaults for a Proxmox VE server.
 
 Walks through API URL, token, credential validation against /version, and
-auto-discovery of node, template, storage, and bridge. The token secret is
-stored in the system keychain; everything else is written to
+auto-discovery of node, template, storage, and bridge, then collects SSH
+credentials for the PVE node (used by 'pmox create-template' to upload
+cloud-init snippets via SFTP) and validates them with a live handshake.
+Secrets are stored in the system keychain; everything else is written to
 $XDG_CONFIG_HOME/pmox/config.yaml (or ~/.config/pmox/config.yaml).
 
 Prompts:
@@ -48,7 +52,12 @@ Prompts:
   API token ID      in the form 'user@realm!tokenname', e.g. 'root@pam!pmox'
                     or 'pmox@pve!mytoken'. Create one in the PVE web UI under
                     Datacenter → Permissions → API Tokens → Add.
-  API token secret  the UUID shown once when the token is created.`,
+  API token secret  the UUID shown once when the token is created.
+  Node SSH user     Linux user pmox SSHs into on the PVE node (default: root).
+  Node SSH auth     'p' for password or 'k' for a private key file.
+  Node SSH secret   password or key passphrase, stored in the OS keyring.
+                    First-time connections prompt to pin the host key into
+                    ~/.config/pmox/known_hosts (bypass with --ssh-insecure).`,
 	RunE: runConfigure,
 }
 
@@ -271,16 +280,23 @@ func runInteractive(ctx context.Context, p prompter) error {
 		user = "ubuntu"
 	}
 
+	// Step 12.5: node SSH credentials for snippet upload.
+	nodeSSH, sshPassword, sshKeyPass, err := promptNodeSSH(ctx, p, canonical)
+	if err != nil {
+		return err
+	}
+
 	// Step 13: save
 	srv := &config.Server{
-		TokenID:  tokenID,
-		Node:     node,
-		Template: template,
-		Storage:  storage,
-		Bridge:   bridge,
+		TokenID:   tokenID,
+		Node:      node,
+		Template:  template,
+		Storage:   storage,
+		Bridge:    bridge,
 		SSHPubkey: sshKey,
-		User:     user,
-		Insecure: insecure,
+		User:      user,
+		Insecure:  insecure,
+		NodeSSH:   nodeSSH,
 	}
 	cfg.AddServer(canonical, srv)
 	if err := cfg.Save(); err != nil {
@@ -291,6 +307,20 @@ func runInteractive(ctx context.Context, p prompter) error {
 		cfg.RemoveServer(canonical)
 		_ = cfg.Save()
 		return fmt.Errorf("save secret to keychain: %w", err)
+	}
+	if sshPassword != "" {
+		if err := credstore.SetNodeSSHPassword(canonical, sshPassword); err != nil {
+			return fmt.Errorf("save node ssh password to keychain: %w", err)
+		}
+	} else {
+		_ = credstore.RemoveNodeSSHPassword(canonical)
+	}
+	if sshKeyPass != "" {
+		if err := credstore.SetNodeSSHKeyPassphrase(canonical, sshKeyPass); err != nil {
+			return fmt.Errorf("save node ssh key passphrase to keychain: %w", err)
+		}
+	} else {
+		_ = credstore.RemoveNodeSSHKeyPassphrase(canonical)
 	}
 
 	// Step 14
@@ -519,6 +549,207 @@ func findPubKeys(root string) []string {
 		return nil
 	})
 	return out
+}
+
+// Test seams for SSH validation and host-key pinning. In production
+// these delegate to pvessh; tests replace them with in-process stubs.
+var (
+	sshValidateFn = func(ctx context.Context, cfg pvessh.Config) error {
+		c, err := pvessh.Dial(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		return c.Ping(ctx)
+	}
+	sshPinHostKeyFn = func(ctx context.Context, host, knownHosts string, w io.Writer, r io.Reader) error {
+		return pvessh.PromptAndPinHostKey(ctx, host, w, r, knownHosts)
+	}
+	sshKnownHostsPathFn = pvessh.KnownHostsPath
+)
+
+// promptNodeSSH collects SSH user, auth mode and secret, pins the host
+// key on first use (unless --ssh-insecure), then validates via dial+ping
+// before returning. Returns (NodeSSH block for YAML, password secret,
+// key passphrase secret).
+func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*config.NodeSSH, string, string, error) {
+	host, err := sshHostFromURL(canonicalURL)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	// Host-key pin (skipped under --ssh-insecure).
+	if !SSHInsecure() {
+		kh, err := sshKnownHostsPathFn()
+		if err != nil {
+			return nil, "", "", err
+		}
+		if need, err := needsHostKeyPin(kh, host); err != nil {
+			return nil, "", "", err
+		} else if need {
+			if std, ok := p.(*stdPrompter); ok {
+				if err := sshPinHostKeyFn(ctx, host, kh, std.out, std.in); err != nil {
+					return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
+				}
+			} else {
+				// Non-TTY prompter (tests): fall back to the seam with
+				// a throwaway reader/writer. Real tests stub the seam.
+				if err := sshPinHostKeyFn(ctx, host, kh, io.Discard, strings.NewReader("yes\n")); err != nil {
+					return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
+				}
+			}
+		}
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		userAns, err := p.Prompt("Proxmox node SSH username [root]: ")
+		if err != nil {
+			return nil, "", "", err
+		}
+		userAns = strings.TrimSpace(userAns)
+		if userAns == "" {
+			userAns = "root"
+		}
+
+		authAns, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
+		if err != nil {
+			return nil, "", "", err
+		}
+		authAns = strings.ToLower(strings.TrimSpace(authAns))
+		if authAns == "" {
+			authAns = "p"
+		}
+
+		cfg := pvessh.Config{
+			Host:     host,
+			User:     userAns,
+			Insecure: SSHInsecure(),
+		}
+		if !cfg.Insecure {
+			kh, kerr := sshKnownHostsPathFn()
+			if kerr != nil {
+				return nil, "", "", kerr
+			}
+			cfg.KnownHosts = kh
+		}
+
+		var (
+			password string
+			keyPath  string
+			keyPass  string
+		)
+		switch authAns {
+		case "p", "password":
+			pw, err := p.PromptSecret("Password: ")
+			if err != nil {
+				return nil, "", "", err
+			}
+			if pw == "" {
+				p.Errf("password cannot be empty\n")
+				continue
+			}
+			password = pw
+			cfg.Password = pw
+		case "k", "key":
+			kp, err := p.Prompt("Path to SSH private key: ")
+			if err != nil {
+				return nil, "", "", err
+			}
+			kp = strings.TrimSpace(expandHome(kp))
+			if kp == "" {
+				p.Errf("key path cannot be empty\n")
+				continue
+			}
+			keyPath = kp
+			cfg.KeyPath = kp
+
+			yn, err := p.Prompt("Key is passphrase-protected? [y/N]: ")
+			if err != nil {
+				return nil, "", "", err
+			}
+			if strings.ToLower(strings.TrimSpace(yn)) == "y" {
+				kpass, err := p.PromptSecret("Key passphrase: ")
+				if err != nil {
+					return nil, "", "", err
+				}
+				keyPass = kpass
+				cfg.KeyPass = kpass
+			}
+		default:
+			p.Errf("answer 'p' for password or 'k' for key file\n")
+			continue
+		}
+
+		p.Printf("Verifying SSH connectivity to %s... ", host)
+		if err := sshValidateFn(ctx, cfg); err != nil {
+			p.Printf("failed\n")
+			p.Errf("%v\n", err)
+			continue
+		}
+		p.Printf("ok\n")
+
+		ns := &config.NodeSSH{User: userAns}
+		if password != "" {
+			ns.Auth = "password"
+		} else {
+			ns.Auth = "key"
+			ns.KeyPath = keyPath
+		}
+		return ns, password, keyPass, nil
+	}
+	return nil, "", "", fmt.Errorf("%w: too many failed SSH credential attempts", exitcode.ErrUserInput)
+}
+
+// sshHostFromURL extracts host:22 from a canonical PVE API URL.
+func sshHostFromURL(canonicalURL string) (string, error) {
+	u, err := url.Parse(canonicalURL)
+	if err != nil {
+		return "", fmt.Errorf("parse server url: %w", err)
+	}
+	h := u.Hostname()
+	if h == "" {
+		return "", fmt.Errorf("server url has no host: %s", canonicalURL)
+	}
+	return h + ":22", nil
+}
+
+// needsHostKeyPin reports whether the known_hosts file is missing an
+// entry for host. A missing file counts as needing a pin.
+func needsHostKeyPin(knownHostsPath, host string) (bool, error) {
+	data, err := os.ReadFile(knownHostsPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("read %s: %w", knownHostsPath, err)
+	}
+	h := strings.TrimSuffix(host, ":22")
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// known_hosts lines start with "host[,host2] type base64".
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		for _, n := range strings.Split(fields[0], ",") {
+			if n == h || n == host {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 func promptSSHKey(p prompter) (string, error) {

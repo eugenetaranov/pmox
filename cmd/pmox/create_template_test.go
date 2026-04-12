@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
+
+	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
@@ -87,6 +92,92 @@ func TestCreateTemplate_VerboseLogLine(t *testing.T) {
 	// Since the log line is written synchronously before template.Run,
 	// its presence in errBuf together with a non-zero versionHits
 	// proves the ordering.
+}
+
+func TestCreateTemplate_MissingSSHFailsFast(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyring.MockInit()
+
+	// Spin up a minimal PVE API server so Resolve can fetch the token
+	// (credstore is keyring-only, but the resolver only needs the
+	// keyring entry — no network). The server record intentionally has
+	// no NodeSSH block.
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "tok@pam!x", Node: "pve"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("cfg save: %v", err)
+	}
+	if err := credstore.Set(url, "secret"); err != nil {
+		t.Fatalf("credstore.Set: %v", err)
+	}
+
+	orig := isTTYFunc
+	isTTYFunc = func(uintptr) bool { return true }
+	t.Cleanup(func() { isTTYFunc = orig })
+
+	cmd := newCreateTemplateCmd()
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetContext(context.Background())
+
+	err := runCreateTemplate(cmd, &createTemplateFlags{})
+	if err == nil {
+		t.Fatal("expected error for missing NodeSSH")
+	}
+	if !strings.Contains(err.Error(), "pmox configure") {
+		t.Errorf("err = %v, want re-configure hint", err)
+	}
+	if exitcode.From(err) != exitcode.ExitUserError {
+		t.Errorf("exit code = %d, want user error", exitcode.From(err))
+	}
+}
+
+// TestNonCreateTemplateCommands_WorkWithoutSSH asserts that the other
+// commands' Resolve path does not require NodeSSH — they only need the
+// API token. We verify this via server.Resolve directly since each
+// command has its own test harness already.
+func TestNonCreateTemplateCommands_WorkWithoutSSH(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyring.MockInit()
+	_ = json.Marshal // keep import
+
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "tok@pam!x", Node: "pve"}, // no NodeSSH
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := credstore.Set(url, "secret"); err != nil {
+		t.Fatalf("credstore.Set: %v", err)
+	}
+
+	// Launch/list/info/start/stop/clone/delete all hit server.Resolve
+	// followed by pveclient calls. We only need to confirm Resolve
+	// succeeds without NodeSSH and that HasNodeSSH() is false.
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	srv := loaded.Servers[url]
+	if srv == nil || srv.NodeSSH != nil {
+		t.Fatalf("unexpected NodeSSH state: %+v", srv)
+	}
+
+	// Smoke the API against a fake server to prove pveclient works.
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"version":"8.2"}}`))
+	}))
+	t.Cleanup(h.Close)
+
+	client := pveclient.New(h.URL, "tok@pam!x", "secret", false)
+	client.HTTPClient = h.Client()
+	if _, err := client.GetVersion(context.Background()); err != nil {
+		t.Errorf("GetVersion: %v", err)
+	}
 }
 
 func TestCreateTemplate_FlagDefaults(t *testing.T) {

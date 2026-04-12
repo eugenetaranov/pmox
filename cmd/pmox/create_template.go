@@ -150,12 +150,13 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 	}
 
 	opts := template.Options{
-		Client:  client,
-		Node:    node,
-		Bridge:  bridge,
-		Wait:    wait,
-		Stderr:  cmd.ErrOrStderr(),
-		Verbose: verbose,
+		Client:   client,
+		Node:     node,
+		Bridge:   bridge,
+		Wait:     wait,
+		Stderr:   cmd.ErrOrStderr(),
+		Verbose:  verbose,
+		Progress: newTemplateProgress(cmd.ErrOrStderr()),
 		PickImage: func(entries []template.ImageEntry) int {
 			options := make([]huh.Option[string], 0, len(entries))
 			for i, e := range entries {

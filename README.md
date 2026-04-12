@@ -11,6 +11,17 @@ Run `pmox configure` and answer the prompts. You'll need:
 - **API URL** — the base URL of your Proxmox VE host, e.g. `https://192.168.0.185:8006`. You can also paste the web UI URL (`https://host:8006/#v1:0:...`); everything after the port is stripped.
 - **API token ID** — in the form `user@realm!tokenname`, e.g. `root@pam!pmox` or `pmox@pve!mytoken`.
 - **API token secret** — the UUID shown once when the token is created.
+- **Node SSH credentials** — pmox also prompts for an SSH username (default `root`) and either a password or private key. These are required by `pmox create-template`, which uploads a cloud-init snippet directly into the storage pool's `snippets/` directory via SFTP. The secret is stored in the OS keyring alongside the API token; the YAML config only records the username, auth mode, and (for key mode) the key file path. On first contact, pmox prints the host's SSH fingerprint and asks you to confirm (TOFU), then pins it to `~/.config/pmox/known_hosts` — pmox never reads or writes `~/.ssh/known_hosts`.
+
+### Flags / environment
+
+| Flag | Env var | Effect |
+| --- | --- | --- |
+| `--ssh-insecure` | `PMOX_SSH_INSECURE=1` | Skip SSH host-key verification for the process. Intended for scripted / first-bootstrap use; emits a stderr warning on first use. |
+
+### Security tradeoffs
+
+`create-template` requires SSH because the Proxmox API's upload endpoint rejects `content=snippets` on stock PVE 8.x, and the alternative (mutating the cluster-wide storage `content=` list) is a worse side effect. pmox offers both password and key-file auth. Password auth keeps the cleartext root password in the OS keyring — noticeably weaker than a scoped API token, but matches the "I don't manage SSH keys on my PVE host" workflow many home-lab users asked for. Prefer key auth when you can; pmox will read an unencrypted or passphrase-protected private key from disk and only the passphrase (not the key material) ever touches the keyring.
 
 ### Creating an API token in Proxmox
 

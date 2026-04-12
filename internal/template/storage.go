@@ -23,7 +23,9 @@ func dirCapable(s pveclient.Storage) bool {
 // NOT mutate the pool's content list — pmox writes the snippet file
 // directly via SFTP, so the PVE `content=` whitelist is irrelevant.
 func pickSnippetsStorage(ctx context.Context, opts Options) (string, error) {
+	opts.pStart("Listing dir-capable storage for snippets")
 	pools, err := opts.Client.ListStorage(ctx, opts.Node)
+	opts.pDone(err)
 	if err != nil {
 		return "", fmt.Errorf("pick snippets storage: %w", err)
 	}

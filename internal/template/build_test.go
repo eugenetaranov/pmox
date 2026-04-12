@@ -180,6 +180,32 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRun_UploadReceivesResolvedStoragePath(t *testing.T) {
+	f := newFakePVE(t)
+	var gotPath, gotFile string
+	var gotContent []byte
+	opts := baseOpts(f)
+	opts.UploadSnippet = func(ctx context.Context, storagePath, filename string, content []byte) error {
+		gotPath = storagePath
+		gotFile = filename
+		gotContent = content
+		return nil
+	}
+	_, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotPath != "/var/lib/vz" {
+		t.Errorf("storagePath = %q, want /var/lib/vz", gotPath)
+	}
+	if gotFile != bakeSnippetFilename {
+		t.Errorf("filename = %q", gotFile)
+	}
+	if len(gotContent) == 0 {
+		t.Error("content empty")
+	}
+}
+
 func TestRun_PVE7xRejected(t *testing.T) {
 	f := newFakePVE(t)
 	f.pveVersion = "7.4"

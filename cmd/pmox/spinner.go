@@ -10,6 +10,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/launch"
+	"github.com/eugenetaranov/pmox/internal/template"
 )
 
 // stepSpinner renders a single-line braille spinner for launch phases
@@ -92,6 +93,25 @@ func (s *stepSpinner) Done(err error) {
 // -v is NOT set (verbose output would interleave badly with the
 // redrawn spinner line). Otherwise it returns a no-op.
 func newLaunchProgress(stderr io.Writer) launch.Progress {
+	if s := newTTYSpinner(stderr); s != nil {
+		return s
+	}
+	return nil
+}
+
+// newTemplateProgress returns a template.Progress suitable for the
+// current invocation, following the same TTY/verbose rules as
+// newLaunchProgress.
+func newTemplateProgress(stderr io.Writer) template.Progress {
+	if s := newTTYSpinner(stderr); s != nil {
+		return s
+	}
+	return nil
+}
+
+// newTTYSpinner returns a stepSpinner when stderr is a TTY and verbose
+// is off; otherwise nil. Shared by launch and create-template.
+func newTTYSpinner(stderr io.Writer) *stepSpinner {
 	if verbose {
 		return nil
 	}

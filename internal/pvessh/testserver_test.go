@@ -22,7 +22,6 @@ type testServer struct {
 	addr       string
 	rootDir    string
 	hostKey    ssh.Signer
-	hostPubB64 string // for known_hosts
 	cfg        *ssh.ServerConfig
 	listener   net.Listener
 	wg         sync.WaitGroup
