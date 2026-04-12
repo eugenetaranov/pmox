@@ -42,7 +42,8 @@ type NodeSSH struct {
 
 // Config is the top-level YAML shape on disk.
 type Config struct {
-	Servers map[string]*Server `yaml:"servers"`
+	Servers       map[string]*Server `yaml:"servers"`
+	MountExcludes []string           `yaml:"mount_excludes,omitempty"`
 }
 
 // Path returns the absolute path to the pmox config file.
