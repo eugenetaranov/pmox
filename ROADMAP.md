@@ -10,94 +10,68 @@ slices under `openspec/changes/`.
 
 ## Status
 
-| # | Slice                    | State     | Notes |
-|---|--------------------------|-----------|-------|
-| 1 | `project-skeleton`       | ✅ Shipped | `cmd/pmox`, exit codes, Makefile, goreleaser, CI, release workflow, license, placeholder README |
-| 2 | `configure-and-credstore`| ✅ Shipped | `pmox configure` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
-| 3 | `server-resolution`      | ✅ Shipped | `internal/server.Resolve` + `--server` root flag + `PMOX_SERVER`; unit-tested, first real caller in slice 5 |
-| 4 | `pveclient-core`         | ✅ Shipped | `NextID`, `Clone`, `Resize`, `SetConfig`, `Start`, `GetStatus`, `Delete`, `AgentNetwork`, `WaitTask`; form-body helper; no-retry client |
-| 5 | `launch-default`         | 📋 Planned | Happy-path launch with built-in cloud-init |
-| 6 | `list-info-lifecycle`    | 📋 Planned | `list`, `info`, `start`, `stop`, `delete`, `clone` |
-| 7 | `cloud-init-custom`      | 📋 Planned | `--cloud-init` (full replace only) |
-| 8 | `post-create-hooks`      | 📋 Planned | `--post-create`, `--tack`, `--ansible`, `--strict-hooks` |
-| 9 | `docs-and-llms-txt`      | 📋 Planned | Real README, llms.txt, examples/ |
-| 10 | `create-template`       | 📋 Planned | `pmox create-template` — builds an Ubuntu cloud-image template in the 9000–9099 range |
+| #  | Slice                         | State       | Notes |
+|----|-------------------------------|-------------|-------|
+| 1  | `project-skeleton`            | ✅ Shipped  | `cmd/pmox`, exit codes, Makefile, goreleaser, CI, release workflow, license, placeholder README |
+| 2  | `configure-and-credstore`     | ✅ Shipped  | `pmox configure` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
+| 3  | `server-resolution`           | ✅ Shipped  | `internal/server.Resolve` + `--server` root flag + `PMOX_SERVER` |
+| 4  | `pveclient-core`              | ✅ Shipped  | Launch/lifecycle endpoints, `WaitTask`, form-body helper, no-retry client |
+| 5  | `launch-default`              | ✅ Shipped  | Happy-path `pmox launch` with built-in cloud-init (`ef5e375`) |
+| 6  | `list-info-lifecycle`         | ✅ Shipped  | `list`, `info`, `start`, `stop`, `delete`, `clone` (`fef837d`) |
+| 10 | `create-template`             | ✅ Shipped  | `pmox create-template` builds an Ubuntu cloud-image template in the 9000–9099 range (`c32ade3`, PVE 9 fix `78ee16e`) |
+| 7  | `cloud-init-custom`           | 📋 Planned  | `--cloud-init <file>` full-replace semantics; proposal at `openspec/changes/cloud-init-custom/` |
+| 8  | `post-create-hooks`           | 📋 Planned  | `--post-create`, `--tack`, `--ansible`, `--strict-hooks`; proposal at `openspec/changes/post-create-hooks/` |
+| 9  | `docs-and-llms-txt`           | 📋 Planned  | Real README, `llms.txt`, `examples/`; proposal at `openspec/changes/docs-and-llms-txt/` |
+
+### Shipped outside the original roadmap
+
+Scope that was originally parked under "Out of scope for v1" but landed as
+part of real user flows:
+
+| Slice                              | Notes |
+|------------------------------------|-------|
+| `ssh-shell-exec`                   | `pmox shell`, `pmox exec` — SSH into / run commands on VMs |
+| `cp-sync-commands`                 | `pmox cp`, `pmox sync` — file transfer to/from VMs |
+| `mount-unmount`                    | `pmox mount`, `pmox umount` — rsync+fsnotify continuous sync |
+| `scp-snippet-upload`               | Move snippet upload from PVE HTTP API to SSH/SFTP via `internal/pvessh` |
+| `interactive-target-picker`        | Optional VM argument + picker for single-target commands |
+| `confirm-destructive-commands`     | y/N prompt before `pmox delete` |
+| `enforce-full-clone`               | Tighten `Clone` spec / behavior to always pass `full=1` |
+| `mount-daemon-logs`                | Daemonized mount writes log file, proper pid display |
+| `mount-umount-optional-target`     | Mount/umount accept a bare remote path and route through the picker |
+| `mount-daemon-default`             | Background mode is now the default for `pmox mount`; `--foreground`/`-F` opts out |
+| `ssh-user-precedence`              | Honor `server.user` from config in shell/exec/cp/sync/mount |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
 
-## Shipped
-
-### 1. `project-skeleton`
-
-Buildable `pmox --version` binary with the full release pipeline in place.
-Cobra root command, persistent flags (`--debug`, `--verbose`, `--no-color`,
-`--output`), `internal/exitcode` with typed exit codes, Makefile mirroring
-tack (`build`, `test`, `lint`, `release`, `release-dry-run`), goreleaser v2
-config for linux+darwin × amd64+arm64, GitHub Actions CI + release workflows,
-MIT license, placeholder README.
-
-### 2. `configure-and-credstore`
-
-`pmox configure` subcommand — interactively walks through API URL, token,
-credential validation against `/version`, TLS fallback on self-signed certs,
-and auto-discovery of node, template, storage, and bridge. The token secret
-is stored in the system keychain via `go-keyring`; everything else is written
-to `$XDG_CONFIG_HOME/pmox/config.yaml` (mode 0600, parent dir 0700).
-Supports `--list` and `--remove <url>`. SSH key picker scans `~/.ssh`
-recursively for `.pub` files.
-
-## Shipped (continued)
-
-### 3. `server-resolution`
-
-`internal/server.Resolve(ctx, opts) (*Resolved, error)` implements a
-five-rung precedence ladder: `--server` flag → `PMOX_SERVER` env →
-single configured server → interactive picker (TTY only) → error. Input
-via flag or env is canonicalized (with `https://` auto-prepend) and
-exact-matched against the config map — no prefix magic. The returned
-`Resolved` bundles canonical URL, `*config.Server`, and the token
-secret pulled from `credstore`; a missing keychain entry is a hard
-error with a "re-run `pmox configure`" hint. `selectOne` was extracted
-from `configure.go` into a shared `internal/tui` package so both
-callers reuse it. `--server` is a persistent root flag; `configure`
-ignores it. Dead code until slice 5 — shipped now so slice 5 stays
-small.
-
 ## Next up
 
-### 4. `pveclient-core`
+### 7. `cloud-init-custom`
 
-Shipped. Extended `internal/pveclient` with every launch/lifecycle
-endpoint (`NextID`, `Clone`, `Resize`, `SetConfig`, `Start`,
-`GetStatus`, `Delete`, `AgentNetwork`) plus `WaitTask` for polling
-async PVE task completion. Added `requestForm` helper so write-path
-calls can POST/PUT form bodies without widening the existing
-`request` signature. `SetConfig` handles the PVE `sshkeys` double-
-encoding quirk. No client-level retries — the CLI is human-driven,
-errors surface immediately. Pure library — no CLI surface yet.
+`--cloud-init <path>` with full-replace semantics on `pmox launch` and
+`pmox clone`. Adds a launch-time snippet-storage validator and snippet
+cleanup on `pmox delete`. Proposal and tasks live at
+`openspec/changes/cloud-init-custom/`.
 
-### 5. `launch-default`
+### 8. `post-create-hooks`
 
-The first slice where all five cross-slice decisions (D-T1..D-T5) cash out.
-Happy-path `pmox launch` with built-in cloud-init only. Should not be drafted
-until slice 4 is solid.
+Post-SSH-ready hooks: `--post-create <script>`, `--tack`, `--ansible`,
+and `--strict-hooks` to upgrade hook failure from warning to error.
+Adds `ExitHook` to `internal/exitcode`. Proposal and tasks live at
+`openspec/changes/post-create-hooks/`.
 
-## Later
+### 9. `docs-and-llms-txt`
 
-- **6. `list-info-lifecycle`** — `list`, `info`, `start`, `stop`, `delete`, `clone`
-- **7. `cloud-init-custom`** — `--cloud-init` (full replace, per D-T5)
-- **8. `post-create-hooks`** — `--post-create`, `--tack`, `--ansible`, `--strict-hooks`
-- **9. `docs-and-llms-txt`** — real README, `llms.txt`, `examples/`
-- **10. `create-template`** — `pmox create-template` builds an Ubuntu cloud-image Proxmox template from Canonical's simplestreams catalogue. Interactive picker for image and target storage, downloads via PVE's `download-url`, boots a throw-away VM with a `qemu-guest-agent`-installing cloud-init snippet, waits for shutdown, detaches cloud-init, and converts to a template in the 9000–9099 VMID range. Requires PVE 8.0+.
+Pure-documentation slice: replace the placeholder README with a full
+user guide, ship `llms.txt`, and populate `examples/`. Should ship
+last so it can document 7 and 8 accurately.
 
 ## Out of scope for v1
 
 - LXC containers
 - Snapshots
 - Multi-VM launch (`--count`)
-- `pmox shell` / `pmox exec`
-- Host directory mounts
 - Networking beyond DHCP on the default bridge
 - Windows builds
 
@@ -105,12 +79,15 @@ until slice 4 is solid.
 
 Questions flagged during exploration that don't block progress:
 
-- `--strict-hooks` exit code semantics
+- `--strict-hooks` exit code semantics (to be resolved as part of slice 8)
 - Interrupt behavior of `pmox delete` between stop and destroy
 - Keychain account-key collision when two pmox installs on one host
   configure the same URL with different credentials
-- Whether the picker helper should be abstracted and shared between
-  configure's auto-discovery and server-resolution's multi-server prompt
+- `openspec/specs/` directory uses `## ADDED Requirements` / `## REMOVED
+  Requirements` format but `openspec validate --specs` expects canonical
+  `## Purpose` / `## Requirements` sections, so 12 of 15 existing specs
+  fail validation. Cosmetic; artifacts in `openspec/changes/archive/` are
+  the source of truth. Worth a dedicated cleanup pass.
 
 ## Prereqs for the first real release
 
