@@ -305,6 +305,35 @@ func TestGetStatus_ParsesFixture(t *testing.T) {
 	}
 }
 
+// --- GetConfig ---
+
+func TestGetConfig_StringifiesMixedValues(t *testing.T) {
+	var gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"cores":2,"memory":2048,"net0":"virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0","scsi0":"local-lvm:vm-104-disk-0,size=20G","template":1}}`))
+	})
+	cfg, err := c.GetConfig(context.Background(), "pve1", 104)
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if gotPath != "/nodes/pve1/qemu/104/config" {
+		t.Errorf("path = %q", gotPath)
+	}
+	wants := map[string]string{
+		"cores":    "2",
+		"memory":   "2048",
+		"net0":     "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0",
+		"scsi0":    "local-lvm:vm-104-disk-0,size=20G",
+		"template": "1",
+	}
+	for k, want := range wants {
+		if got := cfg[k]; got != want {
+			t.Errorf("cfg[%q] = %q, want %q", k, got, want)
+		}
+	}
+}
+
 // --- Delete ---
 
 func TestDelete(t *testing.T) {
