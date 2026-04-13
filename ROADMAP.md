@@ -19,7 +19,7 @@ slices under `openspec/changes/`.
 | 5  | `launch-default`              | ✅ Shipped  | Happy-path `pmox launch` with built-in cloud-init (`ef5e375`) |
 | 6  | `list-info-lifecycle`         | ✅ Shipped  | `list`, `info`, `start`, `stop`, `delete`, `clone` (`fef837d`) |
 | 10 | `create-template`             | ✅ Shipped  | `pmox create-template` builds an Ubuntu cloud-image template in the 9000–9099 range (`c32ade3`, PVE 9 fix `78ee16e`) |
-| 7  | `cloud-init-custom`           | 📋 Planned  | `--cloud-init <file>` full-replace semantics; proposal at `openspec/changes/cloud-init-custom/` |
+| 7  | `cloud-init-custom`           | ✅ Shipped  | Per-server cloud-init file at `<UserConfigDir>/pmox/cloud-init/<slug>.yaml`; full-replace snippet semantics; `configure --regen-cloud-init`; snippet cleanup on delete |
 | 8  | `post-create-hooks`           | 📋 Planned  | `--post-create`, `--tack`, `--ansible`, `--strict-hooks`; proposal at `openspec/changes/post-create-hooks/` |
 | 9  | `docs-and-llms-txt`           | 📋 Planned  | Real README, `llms.txt`, `examples/`; proposal at `openspec/changes/docs-and-llms-txt/` |
 
@@ -46,13 +46,6 @@ Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
 
 ## Next up
-
-### 7. `cloud-init-custom`
-
-`--cloud-init <path>` with full-replace semantics on `pmox launch` and
-`pmox clone`. Adds a launch-time snippet-storage validator and snippet
-cleanup on `pmox delete`. Proposal and tasks live at
-`openspec/changes/cloud-init-custom/`.
 
 ### 8. `post-create-hooks`
 
