@@ -158,60 +158,6 @@ func TestDownloadURL_HappyPath(t *testing.T) {
 	}
 }
 
-// --- PostSnippet ---
-
-func TestPostSnippet_HappyPath(t *testing.T) {
-	var gotMethod, gotPath, gotContentField, gotFilenameField, gotFileBody string
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Errorf("ParseMultipartForm: %v", err)
-		}
-		gotContentField = r.FormValue("content")
-		gotFilenameField = r.FormValue("filename")
-		fh := r.MultipartForm.File["file"]
-		if len(fh) != 1 {
-			t.Errorf("file parts = %d, want 1", len(fh))
-		} else {
-			f, _ := fh[0].Open()
-			defer f.Close()
-			b, _ := io.ReadAll(f)
-			gotFileBody = string(b)
-		}
-		_, _ = w.Write([]byte(`{"data":null}`))
-	})
-	err := c.PostSnippet(context.Background(), "pve1", "local", "pmox-104-user-data.yaml", []byte("#cloud-config\nhello"))
-	if err != nil {
-		t.Fatalf("PostSnippet: %v", err)
-	}
-	if gotMethod != "POST" {
-		t.Errorf("method = %q", gotMethod)
-	}
-	if gotPath != "/nodes/pve1/storage/local/upload" {
-		t.Errorf("path = %q", gotPath)
-	}
-	if gotContentField != "snippets" {
-		t.Errorf("content field = %q, want snippets", gotContentField)
-	}
-	if gotFilenameField != "pmox-104-user-data.yaml" {
-		t.Errorf("filename field = %q", gotFilenameField)
-	}
-	if gotFileBody != "#cloud-config\nhello" {
-		t.Errorf("file body = %q", gotFileBody)
-	}
-}
-
-func TestPostSnippet_ServerError(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	err := c.PostSnippet(context.Background(), "pve1", "local", "pmox-104-user-data.yaml", []byte("x"))
-	if !errors.Is(err, ErrAPIError) {
-		t.Errorf("err = %v, want ErrAPIError", err)
-	}
-}
-
 // --- DeleteSnippet ---
 
 func TestDeleteSnippet_HappyPath(t *testing.T) {
@@ -238,6 +184,47 @@ func TestDeleteSnippet_NotFound(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 	err := c.DeleteSnippet(context.Background(), "pve1", "local", "missing.yaml")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// --- UpdateStorageContent ---
+
+func TestUpdateStorageContent_HappyPath(t *testing.T) {
+	var gotMethod, gotPath, gotBody, gotCT string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"data":null}`))
+	})
+	err := c.UpdateStorageContent(context.Background(), "local", []string{"iso", "vztmpl", "snippets"})
+	if err != nil {
+		t.Fatalf("UpdateStorageContent: %v", err)
+	}
+	if gotMethod != "PUT" {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/storage/local" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotCT != "application/x-www-form-urlencoded" {
+		t.Errorf("Content-Type = %q", gotCT)
+	}
+	form, _ := url.ParseQuery(gotBody)
+	if got := form.Get("content"); got != "iso,vztmpl,snippets" {
+		t.Errorf("content = %q, want iso,vztmpl,snippets", got)
+	}
+}
+
+func TestUpdateStorageContent_NotFound(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	err := c.UpdateStorageContent(context.Background(), "nope", []string{"snippets"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}

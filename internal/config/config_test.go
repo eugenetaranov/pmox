@@ -96,6 +96,77 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	}
 }
 
+func TestSnippetStorageRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg := &Config{Servers: map[string]*Server{}}
+	cfg.AddServer("https://pve.home.lan:8006/api2/json", &Server{
+		TokenID:        "x@y!z",
+		Storage:        "vm-data",
+		SnippetStorage: "local",
+	})
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	p, _ := Path()
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(raw), "snippet_storage: local") {
+		t.Errorf("yaml missing snippet_storage key:\n%s", raw)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	srv := loaded.Servers["https://pve.home.lan:8006/api2/json"]
+	if srv == nil {
+		t.Fatal("server missing after roundtrip")
+	}
+	if srv.SnippetStorage != "local" {
+		t.Errorf("SnippetStorage = %q, want local", srv.SnippetStorage)
+	}
+	if srv.Storage != "vm-data" {
+		t.Errorf("Storage = %q, want vm-data", srv.Storage)
+	}
+}
+
+func TestSnippetStorageBackCompatMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p, _ := Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A pre-split config with no snippet_storage key.
+	yaml := "servers:\n" +
+		"  https://pve.home.lan:8006/api2/json:\n" +
+		"    token_id: x@y!z\n" +
+		"    storage: vm-data\n" +
+		"    insecure: false\n"
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	srv := loaded.Servers["https://pve.home.lan:8006/api2/json"]
+	if srv == nil {
+		t.Fatal("server missing after load")
+	}
+	if srv.SnippetStorage != "" {
+		t.Errorf("SnippetStorage = %q, want empty for back-compat", srv.SnippetStorage)
+	}
+	if srv.Storage != "vm-data" {
+		t.Errorf("Storage = %q, want vm-data", srv.Storage)
+	}
+}
+
 func TestNodeSSHRoundtrip(t *testing.T) {
 	cases := []struct {
 		name string

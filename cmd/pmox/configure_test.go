@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/huh"
 	"github.com/zalando/go-keyring"
 
 	"github.com/eugenetaranov/pmox/internal/config"
@@ -420,5 +421,127 @@ func TestRegenCloudInit_Abort(t *testing.T) {
 	}
 	if !strings.Contains(p.out.String(), "aborted") {
 		t.Errorf("out missing abort message: %q", p.out.String())
+	}
+}
+
+// fakeSnippetClient is a minimal in-memory snippetStoragePicker for the
+// pickSnippetStorage tests. It records UpdateStorageContent calls so
+// tests can assert the sent content list.
+type fakeSnippetClient struct {
+	pools     []pveclient.Storage
+	listErr   error
+	updateErr error
+
+	updatedStorage string
+	updatedContent []string
+}
+
+func (f *fakeSnippetClient) ListStorage(_ context.Context, _ string) ([]pveclient.Storage, error) {
+	return f.pools, f.listErr
+}
+
+func (f *fakeSnippetClient) UpdateStorageContent(_ context.Context, storage string, content []string) error {
+	f.updatedStorage = storage
+	f.updatedContent = content
+	return f.updateErr
+}
+
+func TestPickSnippetStorage_SingleMatch(t *testing.T) {
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
+		{Storage: "local", Type: "dir", Content: "iso,vztmpl,snippets"},
+	}}
+	p := &fakePrompter{}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "local" {
+		t.Errorf("got %q, want local", got)
+	}
+	if fc.updatedStorage != "" {
+		t.Errorf("unexpected UpdateStorageContent call: %s", fc.updatedStorage)
+	}
+}
+
+func TestPickSnippetStorage_MultiMatchUsesPicker(t *testing.T) {
+	prev := selectSnippetStorageFn
+	defer func() { selectSnippetStorageFn = prev }()
+	var gotTitle string
+	selectSnippetStorageFn = func(title string, _ []huh.Option[string], _ string) string {
+		gotTitle = title
+		return "nfs-shared"
+	}
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "local", Type: "dir", Content: "iso,snippets"},
+		{Storage: "nfs-shared", Type: "nfs", Content: "snippets,backup"},
+	}}
+	p := &fakePrompter{}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "nfs-shared" {
+		t.Errorf("got %q, want nfs-shared", got)
+	}
+	if gotTitle != "Snippet storage" {
+		t.Errorf("title = %q", gotTitle)
+	}
+}
+
+func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
+		{Storage: "local", Type: "dir", Content: "iso,vztmpl"},
+	}}
+	p := &fakePrompter{inputs: []string{"y"}}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "local" {
+		t.Errorf("got %q, want local", got)
+	}
+	if fc.updatedStorage != "local" {
+		t.Errorf("UpdateStorageContent storage = %q, want local", fc.updatedStorage)
+	}
+	if !containsString(fc.updatedContent, "snippets") || !containsString(fc.updatedContent, "iso") || !containsString(fc.updatedContent, "vztmpl") {
+		t.Errorf("updatedContent = %v, want includes iso, vztmpl, snippets", fc.updatedContent)
+	}
+}
+
+func TestPickSnippetStorage_ZeroMatchEnableEnterDefaultsYes(t *testing.T) {
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "local", Type: "dir", Content: "iso"},
+	}}
+	p := &fakePrompter{inputs: []string{""}}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "local" {
+		t.Errorf("got %q, want local (Enter defaults to yes)", got)
+	}
+	if fc.updatedStorage != "local" {
+		t.Errorf("UpdateStorageContent storage = %q, want local", fc.updatedStorage)
+	}
+}
+
+func TestPickSnippetStorage_ZeroMatchEnableNo(t *testing.T) {
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "local", Type: "dir", Content: "iso"},
+	}}
+	p := &fakePrompter{inputs: []string{"n"}}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "" {
+		t.Errorf("got %q, want empty (declined)", got)
+	}
+	if fc.updatedStorage != "" {
+		t.Errorf("unexpected update call after decline: %s", fc.updatedStorage)
+	}
+	if !strings.Contains(p.err.String(), "/etc/pve/storage.cfg") {
+		t.Errorf("missing manual remediation in stderr: %q", p.err.String())
+	}
+}
+
+func TestPickSnippetStorage_ZeroMatchNoCapableStorage(t *testing.T) {
+	fc := &fakeSnippetClient{pools: []pveclient.Storage{
+		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
+	}}
+	p := &fakePrompter{}
+	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+	if !strings.Contains(p.err.String(), "/etc/pve/storage.cfg") {
+		t.Errorf("missing manual remediation in stderr: %q", p.err.String())
 	}
 }

@@ -5,7 +5,8 @@ import "testing"
 func TestBuildCustomKV(t *testing.T) {
 	opts := Options{
 		Name: "web1", CPU: 2, MemMB: 2048,
-		Storage: "local-lvm",
+		Storage:        "vm-data",
+		SnippetStorage: "local",
 	}
 	kv := BuildCustomKV(opts, 104)
 	if _, ok := kv["ciuser"]; ok {
@@ -22,11 +23,11 @@ func TestBuildCustomKV(t *testing.T) {
 			t.Errorf("missing required key %q", k)
 		}
 	}
-	if got, want := kv["cicustom"], "user=local-lvm:snippets/pmox-104-user-data.yaml"; got != want {
+	if got, want := kv["cicustom"], "user=local:snippets/pmox-104-user-data.yaml"; got != want {
 		t.Errorf("cicustom = %q, want %q", got, want)
 	}
-	if got := kv["ide2"]; got != "local-lvm:cloudinit" {
-		t.Errorf("ide2 = %q, want local-lvm:cloudinit", got)
+	if got := kv["ide2"]; got != "vm-data:cloudinit" {
+		t.Errorf("ide2 = %q, want vm-data:cloudinit", got)
 	}
 	if got := kv["agent"]; got != "1" {
 		t.Errorf("agent = %q, want 1", got)

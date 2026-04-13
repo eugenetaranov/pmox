@@ -20,15 +20,16 @@ import (
 // relation to the NodeSSH block — that one is the *private* key used to
 // SSH into the Proxmox node itself for snippet upload.
 type Server struct {
-	TokenID   string   `yaml:"token_id"`
-	Node      string   `yaml:"node,omitempty"`
-	Template  string   `yaml:"template,omitempty"`
-	Storage   string   `yaml:"storage,omitempty"`
-	Bridge    string   `yaml:"bridge,omitempty"`
-	SSHPubkey string   `yaml:"ssh_pubkey,omitempty"`
-	User      string   `yaml:"user,omitempty"`
-	Insecure  bool     `yaml:"insecure"`
-	NodeSSH   *NodeSSH `yaml:"node_ssh,omitempty"`
+	TokenID        string   `yaml:"token_id"`
+	Node           string   `yaml:"node,omitempty"`
+	Template       string   `yaml:"template,omitempty"`
+	Storage        string   `yaml:"storage,omitempty"`
+	SnippetStorage string   `yaml:"snippet_storage,omitempty"`
+	Bridge         string   `yaml:"bridge,omitempty"`
+	SSHPubkey      string   `yaml:"ssh_pubkey,omitempty"`
+	User           string   `yaml:"user,omitempty"`
+	Insecure       bool     `yaml:"insecure"`
+	NodeSSH        *NodeSSH `yaml:"node_ssh,omitempty"`
 }
 
 // NodeSSH holds the SSH credentials pmox uses to reach the PVE node

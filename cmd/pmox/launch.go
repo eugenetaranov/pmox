@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
 )
 
@@ -32,15 +34,16 @@ const (
 // Using a struct avoids package-level state that would break parallel
 // test runs.
 type launchFlags struct {
-	cpu       int
-	memMB     int
-	disk      string
-	template  string
-	storage   string
-	node      string
-	bridge    string
-	wait      time.Duration
-	noWaitSSH bool
+	cpu            int
+	memMB          int
+	disk           string
+	template       string
+	storage        string
+	snippetStorage string
+	node           string
+	bridge         string
+	wait           time.Duration
+	noWaitSSH      bool
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -59,6 +62,13 @@ The cloud-init user-data is read from
 writes on first run. Edit that file to customize packages, users,
 runcmd, or anything else cloud-init supports. To regenerate a fresh
 default, run 'pmox configure --regen-cloud-init'.
+
+The VM disk and the cloud-init snippet may live on different storage
+pools. --storage targets the disk; --snippet-storage targets the
+snippet (which must support the 'snippets' content type). Either
+falls back to the matching configured default; --snippet-storage
+additionally falls back to --storage with a one-shot warning when
+no snippet_storage is configured.
 
 The VM is tagged with 'pmox' immediately after clone so that any
 later failure leaves a cleanable VM on the cluster — there is no
@@ -82,6 +92,7 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
 	cmd.Flags().StringVar(&f.template, "template", "", "template VMID or name (falls back to configured default)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
+	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
 	cmd.Flags().StringVar(&f.node, "node", "", "cluster node to launch on (falls back to configured default)")
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
@@ -116,11 +127,19 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
 
-	opts, err := resolveLaunchOptions(ctx, name, f, resolved)
+	if !resolved.HasNodeSSH() {
+		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+	}
+
+	opts, err := resolveLaunchOptions(ctx, name, f, resolved, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
+
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
+	opts.UploadSnippet = upload
 
 	r, err := launch.Run(ctx, opts)
 	if err != nil {
@@ -130,9 +149,34 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	return nil
 }
 
+// newSnippetUploader returns a closure that lazily dials pvessh on
+// first use and writes a snippet via SFTP, plus a cleanup func that
+// closes the underlying SSH session if it was opened. Lazy so the
+// SSH handshake cost (and its failure modes) are only paid when the
+// upload phase actually runs.
+func newSnippetUploader(resolved *server.Resolved) (func(ctx context.Context, storagePath, filename string, content []byte) error, func()) {
+	var sshClient *pvessh.Client
+	upload := func(ctx context.Context, storagePath, filename string, content []byte) error {
+		if sshClient == nil {
+			c, err := dialPvessh(ctx, resolved)
+			if err != nil {
+				return fmt.Errorf("ssh to %s: %w", resolved.URL, err)
+			}
+			sshClient = c
+		}
+		return sshClient.UploadSnippet(ctx, storagePath, filename, content)
+	}
+	cleanup := func() {
+		if sshClient != nil {
+			_ = sshClient.Close()
+		}
+	}
+	return upload, cleanup
+}
+
 // resolveLaunchOptions layers flag > configured-default > built-in and
 // produces the launch.Options the state machine consumes.
-func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, resolved *server.Resolved) (launch.Options, error) {
+func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
 	srv := resolved.Server
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
@@ -154,6 +198,7 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	if storage == "" {
 		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox configure' (required for the cloud-init drive)", exitcode.ErrNotFound)
 	}
+	snippetStorage := resolveSnippetStorage(f.snippetStorage, srv.SnippetStorage, storage, stderr)
 
 	cloudInitPath, err := config.CloudInitPath(resolved.URL)
 	if err != nil {
@@ -175,22 +220,40 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	}
 
 	return launch.Options{
-		Client:        client,
-		Node:          node,
-		Name:          name,
-		TemplateName:  templateName,
-		TemplateID:    templateID,
-		CPU:           cpu,
-		MemMB:         mem,
-		DiskSize:      disk,
-		Storage:       storage,
-		Bridge:        firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:          wait,
-		NoWaitSSH:     f.noWaitSSH,
-		CloudInitPath: cloudInitPath,
-		Stderr:        os.Stderr,
-		Verbose:       verbose,
+		Client:         client,
+		Node:           node,
+		Name:           name,
+		TemplateName:   templateName,
+		TemplateID:     templateID,
+		CPU:            cpu,
+		MemMB:          mem,
+		DiskSize:       disk,
+		Storage:        storage,
+		SnippetStorage: snippetStorage,
+		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
+		Wait:           wait,
+		NoWaitSSH:      f.noWaitSSH,
+		CloudInitPath:  cloudInitPath,
+		Stderr:         stderr,
+		Verbose:        verbose,
 	}, nil
+}
+
+// resolveSnippetStorage layers --snippet-storage > server.SnippetStorage
+// > VM disk storage. When the final fallback to disk storage kicks in
+// (no flag, no config), it emits a one-shot stderr warning pointing the
+// user at `pmox configure` for a permanent fix.
+func resolveSnippetStorage(flag, configured, diskStorage string, stderr io.Writer) string {
+	if flag != "" {
+		return flag
+	}
+	if configured != "" {
+		return configured
+	}
+	if stderr != nil {
+		fmt.Fprintf(stderr, "warning: no snippet_storage configured; falling back to %q. run 'pmox configure' to set it permanently\n", diskStorage)
+	}
+	return diskStorage
 }
 
 // resolveTemplate accepts either a VMID (all digits) or a template

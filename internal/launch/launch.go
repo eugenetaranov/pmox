@@ -28,19 +28,25 @@ type Progress interface {
 
 // Options bundles everything Run needs to launch a VM.
 type Options struct {
-	Client        *pveclient.Client
-	Node          string
-	Name          string
-	TemplateName  string
-	TemplateID    int
-	CPU           int
-	MemMB         int
-	DiskSize      string
-	Storage       string
-	Bridge        string
-	Wait          time.Duration
-	NoWaitSSH     bool
-	CloudInitPath string
+	Client         *pveclient.Client
+	Node           string
+	Name           string
+	TemplateName   string
+	TemplateID     int
+	CPU            int
+	MemMB          int
+	DiskSize       string
+	Storage        string
+	SnippetStorage string
+	Bridge         string
+	Wait           time.Duration
+	NoWaitSSH      bool
+	CloudInitPath  string
+	// UploadSnippet writes the cloud-init snippet to the PVE node's
+	// snippets/ directory via SFTP. PVE's HTTP /upload endpoint
+	// rejects content=snippets, so the launcher cannot use the API
+	// path. The CLI layer injects a closure that lazily dials pvessh.
+	UploadSnippet func(ctx context.Context, storagePath, filename string, content []byte) error
 	Stderr        io.Writer
 	Verbose       bool
 	Progress      Progress
@@ -84,8 +90,15 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := snippet.ValidateContent(cloudInitBytes); err != nil {
 		return nil, fmt.Errorf("validate cloud-init file %s: %w", opts.CloudInitPath, err)
 	}
-	if err := snippet.ValidateStorage(ctx, opts.Client, opts.Node, opts.Storage); err != nil {
+	if opts.UploadSnippet == nil {
+		return nil, errors.New("UploadSnippet is nil; this is a programming bug — the CLI layer must inject an SFTP upload closure")
+	}
+	if err := snippet.ValidateStorage(ctx, opts.Client, opts.Node, opts.SnippetStorage); err != nil {
 		return nil, err
+	}
+	snippetStoragePath, err := opts.Client.GetStoragePath(ctx, opts.SnippetStorage)
+	if err != nil {
+		return nil, fmt.Errorf("resolve snippet storage path for %q: %w", opts.SnippetStorage, err)
 	}
 	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
@@ -129,9 +142,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	opts.pDone(nil)
 
-	// Phase 5 — upload snippet, push cloud-init + resource config.
+	// Phase 5 — upload snippet via SFTP, push cloud-init + resource
+	// config. SFTP (not the PVE HTTP upload endpoint) because PVE's
+	// /upload rejects content=snippets with a hardcoded 400.
 	opts.pStart("Pushing cloud-init config")
-	if err := opts.Client.PostSnippet(ctx, opts.Node, opts.Storage, snippet.Filename(vmid), cloudInitBytes); err != nil {
+	if err := opts.UploadSnippet(ctx, snippetStoragePath, snippet.Filename(vmid), cloudInitBytes); err != nil {
 		opts.pDone(err)
 		return nil, fmt.Errorf("upload cloud-init snippet for vm %d: %w (run pmox delete %d)", vmid, err, vmid)
 	}

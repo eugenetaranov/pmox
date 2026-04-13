@@ -11,9 +11,9 @@ import (
 // phase 5. Every pmox-launched VM gets its user-data from a snippet on
 // disk, so the map never contains ciuser, sshkeys, or cipassword — the
 // uploaded file owns those. The cicustom value follows the frozen
-// `pmox-<vmid>-user-data.yaml` convention on opts.Storage. An ide2
-// cloud-init drive is still needed so PVE has somewhere to serialize
-// the cicustom reference.
+// `pmox-<vmid>-user-data.yaml` convention on opts.SnippetStorage; the
+// ide2 cloud-init drive lives on the VM disk storage (opts.Storage),
+// since it has to share a backend with scsi0.
 func BuildCustomKV(opts Options, vmid int) map[string]string {
 	return map[string]string{
 		"name":      opts.Name,
@@ -22,6 +22,6 @@ func BuildCustomKV(opts Options, vmid int) map[string]string {
 		"agent":     "1",
 		"ipconfig0": "ip=dhcp",
 		"ide2":      fmt.Sprintf("%s:cloudinit", opts.Storage),
-		"cicustom":  fmt.Sprintf("user=%s:snippets/%s", opts.Storage, snippet.Filename(vmid)),
+		"cicustom":  fmt.Sprintf("user=%s:snippets/%s", opts.SnippetStorage, snippet.Filename(vmid)),
 	}
 }

@@ -85,11 +85,32 @@ func newLaunchFake(t *testing.T) *launchFake {
 		fmt.Fprint(w, `{"data":[{"storage":"local-lvm","content":"snippets,images","active":1,"enabled":1}]}`)
 	})
 
-	f.srv.Handle("POST", "/storage/local-lvm/upload", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		fmt.Fprint(w, `{"data":null}`)
+	// Cluster-wide storage record for GetStoragePath. Returns a fake
+	// on-disk path so the SFTP upload phase has somewhere to target.
+	f.srv.Handle("GET", "/storage/local-lvm", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		fmt.Fprint(w, `{"data":{"path":"/var/lib/vz"}}`)
 	})
 
 	return f
+}
+
+// stubUpload is an in-memory UploadSnippet that records the args. The
+// launch state-machine tests only care that it was called with the
+// resolved storage path; SFTP integration is covered in pvessh tests.
+type stubUpload struct {
+	storagePath string
+	filename    string
+	content     []byte
+	err         error
+	called      int32
+}
+
+func (s *stubUpload) fn(_ context.Context, storagePath, filename string, content []byte) error {
+	atomic.AddInt32(&s.called, 1)
+	s.storagePath = storagePath
+	s.filename = filename
+	s.content = append([]byte(nil), content...)
+	return s.err
 }
 
 func (f *launchFake) client() *pveclient.Client { return f.srv.Client() }
@@ -111,27 +132,31 @@ func writeCI(t *testing.T) string {
 	return path
 }
 
-func baseOpts(t *testing.T, c *pveclient.Client) Options {
+func baseOpts(t *testing.T, c *pveclient.Client) (Options, *stubUpload) {
+	stub := &stubUpload{}
 	return Options{
-		Client:        c,
-		Node:          "pve",
-		Name:          "web1",
-		TemplateID:    9000,
-		CPU:           2,
-		MemMB:         2048,
-		DiskSize:      "20G",
-		Storage:       "local-lvm",
-		Wait:          5 * time.Second,
-		NoWaitSSH:     true,
-		CloudInitPath: writeCI(t),
-	}
+		Client:         c,
+		Node:           "pve",
+		Name:           "web1",
+		TemplateID:     9000,
+		CPU:            2,
+		MemMB:          2048,
+		DiskSize:       "20G",
+		Storage:        "local-lvm",
+		SnippetStorage: "local-lvm",
+		Wait:           5 * time.Second,
+		NoWaitSSH:      true,
+		CloudInitPath:  writeCI(t),
+		UploadSnippet:  stub.fn,
+	}, stub
 }
 
 func TestRun_HappyPath(t *testing.T) {
 	f := newLaunchFake(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	r, err := Run(ctx, baseOpts(t, f.client()))
+	opts, stub := baseOpts(t, f.client())
+	r, err := Run(ctx, opts)
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -139,25 +164,17 @@ func TestRun_HappyPath(t *testing.T) {
 		t.Fatalf("Result = %+v, want VMID=101 IP=10.9.8.7", r)
 	}
 
-	paths := f.orderedPaths()
-	var uploadIdx, secondCfgIdx = -1, -1
-	cfgSeen := 0
-	for i, p := range paths {
-		if strings.Contains(p, "/storage/local-lvm/upload") {
-			uploadIdx = i
-		}
-		if strings.HasSuffix(p, "/config") && strings.HasPrefix(p, "POST ") {
-			cfgSeen++
-			if cfgSeen == 2 {
-				secondCfgIdx = i
-			}
-		}
+	if atomic.LoadInt32(&stub.called) != 1 {
+		t.Fatalf("UploadSnippet calls = %d, want 1", stub.called)
 	}
-	if uploadIdx == -1 {
-		t.Fatalf("upload not called: %v", paths)
+	if stub.storagePath != "/var/lib/vz" {
+		t.Errorf("upload storagePath = %q, want /var/lib/vz", stub.storagePath)
 	}
-	if secondCfgIdx == -1 || uploadIdx >= secondCfgIdx {
-		t.Errorf("upload (idx %d) must precede full SetConfig (idx %d)", uploadIdx, secondCfgIdx)
+	if stub.filename != "pmox-101-user-data.yaml" {
+		t.Errorf("upload filename = %q, want pmox-101-user-data.yaml", stub.filename)
+	}
+	if !bytes.Contains(stub.content, []byte("#cloud-config")) {
+		t.Errorf("upload content missing #cloud-config: %q", stub.content)
 	}
 
 	bodies := f.configBodies()
@@ -187,7 +204,8 @@ func TestRun_HappyPath(t *testing.T) {
 
 func TestRun_TagBeforeResize(t *testing.T) {
 	f := newLaunchFake(t)
-	_, err := Run(context.Background(), baseOpts(t, f.client()))
+	opts, _ := baseOpts(t, f.client())
+	_, err := Run(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -211,7 +229,8 @@ func TestRun_TagBeforeResize(t *testing.T) {
 func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 	f := newLaunchFake(t)
 	f.failTagCfg = true
-	_, err := Run(context.Background(), baseOpts(t, f.client()))
+	opts, _ := baseOpts(t, f.client())
+	_, err := Run(context.Background(), opts)
 	if err == nil {
 		t.Fatal("Run err=nil, want tag failure error")
 	}
@@ -223,7 +242,8 @@ func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 func TestRun_StartFailsNoRollback(t *testing.T) {
 	f := newLaunchFake(t)
 	f.failStart = true
-	_, err := Run(context.Background(), baseOpts(t, f.client()))
+	opts, _ := baseOpts(t, f.client())
+	_, err := Run(context.Background(), opts)
 	if err == nil {
 		t.Fatal("Run err=nil, want start failure")
 	}
@@ -234,7 +254,7 @@ func TestRun_StartFailsNoRollback(t *testing.T) {
 
 func TestRun_MissingCloudInitFile(t *testing.T) {
 	f := newLaunchFake(t)
-	opts := baseOpts(t, f.client())
+	opts, _ := baseOpts(t, f.client())
 	opts.CloudInitPath = filepath.Join(t.TempDir(), "nope.yaml")
 	_, err := Run(context.Background(), opts)
 	if err == nil {
@@ -255,7 +275,7 @@ func TestRun_InvalidCloudInitFile(t *testing.T) {
 	if err := os.WriteFile(ciPath, []byte{0xff, 0xfe, 0xfd}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	opts := baseOpts(t, f.client())
+	opts, _ := baseOpts(t, f.client())
 	opts.CloudInitPath = ciPath
 
 	_, err := Run(context.Background(), opts)
@@ -278,7 +298,7 @@ func TestRun_SSHWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	opts := baseOpts(t, f.client())
+	opts, _ := baseOpts(t, f.client())
 	opts.CloudInitPath = ciPath
 	opts.Stderr = &stderr
 
@@ -293,7 +313,7 @@ func TestRun_SSHWarning(t *testing.T) {
 func TestRun_WaitIPTimeout(t *testing.T) {
 	f := newLaunchFake(t)
 	f.agentTimeout = true
-	opts := baseOpts(t, f.client())
+	opts, _ := baseOpts(t, f.client())
 	opts.Wait = 1500 * time.Millisecond
 	_, err := Run(context.Background(), opts)
 	if err == nil {

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
@@ -30,7 +31,12 @@ back to the configured defaults, same as launch.
 Cloud-init user-data comes from
 ~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox configure'
 writes on first run. Edit that file to customize the new VM, or run
-'pmox configure --regen-cloud-init' to rewrite it.`,
+'pmox configure --regen-cloud-init' to rewrite it.
+
+--storage and --snippet-storage are independent: the first targets
+the new VM's disk, the second targets the cloud-init snippet upload
+(must support 'snippets'). --snippet-storage falls back to the
+configured snippet_storage, then to --storage with a warning.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClone(cmd, args[0], args[1], f)
@@ -40,6 +46,7 @@ writes on first run. Edit that file to customize the new VM, or run
 	cmd.Flags().IntVar(&f.memMB, "mem", 0, "memory in MB (default 2048 if not configured)")
 	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
+	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
@@ -69,6 +76,9 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	if verbose {
 		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
+	if !resolved.HasNodeSSH() {
+		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+	}
 	srv := resolved.Server
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
@@ -90,18 +100,26 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 		wait = defaultWait
 	}
 
+	storage := firstNonEmpty(f.storage, srv.Storage)
+	snippetStorage := resolveSnippetStorage(f.snippetStorage, srv.SnippetStorage, storage, cmd.ErrOrStderr())
+
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
+
 	partial := launch.Options{
-		CPU:           cpu,
-		MemMB:         mem,
-		DiskSize:      disk,
-		Storage:       firstNonEmpty(f.storage, srv.Storage),
-		Bridge:        firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:          wait,
-		NoWaitSSH:     f.noWaitSSH,
-		CloudInitPath: cloudInitPath,
-		Stderr:        os.Stderr,
-		Verbose:       verbose,
-		Progress:      newLaunchProgress(cmd.ErrOrStderr()),
+		CPU:            cpu,
+		MemMB:          mem,
+		DiskSize:       disk,
+		Storage:        storage,
+		SnippetStorage: snippetStorage,
+		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
+		Wait:           wait,
+		NoWaitSSH:      f.noWaitSSH,
+		CloudInitPath:  cloudInitPath,
+		UploadSnippet:  upload,
+		Stderr:         cmd.ErrOrStderr(),
+		Verbose:        verbose,
+		Progress:       newLaunchProgress(cmd.ErrOrStderr()),
 	}
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }

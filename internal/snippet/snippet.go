@@ -80,18 +80,6 @@ see https://pve.proxmox.com/wiki/Storage for content-type details.`, storage, s.
 	return fmt.Errorf("storage %q not found on node %s", storage, node)
 }
 
-// Upload validates the target storage, validates the content, and
-// uploads it as a snippet named per the filename convention.
-func Upload(ctx context.Context, client *pveclient.Client, node, storage string, vmid int, content []byte) error {
-	if err := ValidateStorage(ctx, client, node, storage); err != nil {
-		return err
-	}
-	if err := ValidateContent(content); err != nil {
-		return err
-	}
-	return client.PostSnippet(ctx, node, storage, Filename(vmid), content)
-}
-
 // Cleanup removes the snippet referenced by a VM's cicustom config
 // value. An already-missing file (ErrNotFound) is swallowed as
 // success; other errors are returned verbatim for the caller to

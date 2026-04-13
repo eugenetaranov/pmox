@@ -20,7 +20,7 @@ func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
 		Source: "single configured",
 	}
 	f := &launchFlags{}
-	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved)
+	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
 		Secret: "s",
 	}
 	f := &launchFlags{cpu: 8, memMB: 16384, disk: "80G", wait: 2 * time.Minute}
-	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved)
+	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
 		Server: &config.Server{TokenID: "t@pam!x", Node: "pve"},
 		Secret: "s",
 	}
-	_, err := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved)
+	_, err := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("resolveLaunchOptions err=nil, want missing template error")
 	}
@@ -77,6 +77,35 @@ func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pmox configure") {
 		t.Errorf("err = %v, want suggestion to run pmox configure", err)
+	}
+}
+
+func TestResolveSnippetStorage(t *testing.T) {
+	cases := []struct {
+		name       string
+		flag       string
+		configured string
+		disk       string
+		want       string
+		wantWarn   bool
+	}{
+		{"flag wins", "nfs", "local", "vm-data", "nfs", false},
+		{"flag wins over empty config", "nfs", "", "vm-data", "nfs", false},
+		{"configured used when no flag", "", "local", "vm-data", "local", false},
+		{"fallback to disk warns", "", "", "vm-data", "vm-data", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			got := resolveSnippetStorage(tc.flag, tc.configured, tc.disk, &buf)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			hasWarn := strings.Contains(buf.String(), "no snippet_storage configured")
+			if hasWarn != tc.wantWarn {
+				t.Errorf("warn = %v, want %v (stderr=%q)", hasWarn, tc.wantWarn, buf.String())
+			}
+		})
 	}
 }
 

@@ -40,9 +40,12 @@ var configureCmd = &cobra.Command{
 	Long: `Interactively configure credentials and defaults for a Proxmox VE server.
 
 Walks through API URL, token, credential validation against /version, and
-auto-discovery of node, template, storage, and bridge, then collects SSH
-credentials for the PVE node (used by 'pmox create-template' to upload
-cloud-init snippets via SFTP) and validates them with a live handshake.
+auto-discovery of node, template, storage, snippet storage, and bridge,
+then collects SSH credentials for the PVE node (used by 'pmox create-template'
+to upload cloud-init snippets via SFTP) and validates them with a live
+handshake. Snippet storage is picked separately from VM disk storage —
+if no storage on the cluster has the 'snippets' content type, configure
+offers to enable it on an existing directory-backed storage.
 Secrets are stored in the system keychain; everything else is written to
 $XDG_CONFIG_HOME/pmox/config.yaml (or ~/.config/pmox/config.yaml).
 
@@ -274,6 +277,10 @@ func runInteractive(ctx context.Context, p prompter) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
 	}
+	snippetStorage := pickSnippetStorage(ctx, p, client, node)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
+	}
 	bridge := pickBridge(ctx, p, client, node)
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
@@ -303,15 +310,16 @@ func runInteractive(ctx context.Context, p prompter) error {
 
 	// Step 13: save
 	srv := &config.Server{
-		TokenID:   tokenID,
-		Node:      node,
-		Template:  template,
-		Storage:   storage,
-		Bridge:    bridge,
-		SSHPubkey: sshKey,
-		User:      user,
-		Insecure:  insecure,
-		NodeSSH:   nodeSSH,
+		TokenID:        tokenID,
+		Node:           node,
+		Template:       template,
+		Storage:        storage,
+		SnippetStorage: snippetStorage,
+		Bridge:         bridge,
+		SSHPubkey:      sshKey,
+		User:           user,
+		Insecure:       insecure,
+		NodeSSH:        nodeSSH,
 	}
 	cfg.AddServer(canonical, srv)
 	if err := cfg.Save(); err != nil {
@@ -615,6 +623,150 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
 	return tui.SelectOne("Default storage", opts, usable[0].Storage)
+}
+
+// snippetCapableTypes lists the PVE storage backends that can host the
+// `snippets` content type. dir is the common case; nfs/cifs/cephfs are
+// the other directory-shaped backends PVE accepts snippets on.
+var snippetCapableTypes = map[string]bool{
+	"dir": true, "nfs": true, "cifs": true, "cephfs": true,
+}
+
+// snippetStoragePicker abstracts the storage list and update calls
+// pickSnippetStorage needs. Tests stub this with an in-memory fake to
+// avoid spinning up an httptest server just for two endpoints.
+type snippetStoragePicker interface {
+	ListStorage(ctx context.Context, node string) ([]pveclient.Storage, error)
+	UpdateStorageContent(ctx context.Context, storage string, content []string) error
+}
+
+// selectSnippetStorageFn is a test seam over tui.SelectOne so the
+// multi-match branch can be driven without a real terminal.
+var selectSnippetStorageFn = func(title string, opts []huh.Option[string], fallback string) string {
+	return tui.SelectOne(title, opts, fallback)
+}
+
+func hasSnippets(s pveclient.Storage) bool {
+	for _, c := range strings.Split(s.Content, ",") {
+		if strings.TrimSpace(c) == "snippets" {
+			return true
+		}
+	}
+	return false
+}
+
+// pickSnippetStorage resolves the storage that pmox will use for
+// cloud-init snippets. Decision tree: exactly one snippet-capable
+// storage → silent; multiple → TUI picker; zero → offer to enable
+// snippets on an existing dir-backed storage.
+func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePicker, node string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
+	dctx, cancel := discoveryCtx(ctx)
+	defer cancel()
+	pools, err := client.ListStorage(dctx, node)
+	if err != nil {
+		p.Errf("could not list storage on node %s: %v\n", node, err)
+		return ""
+	}
+
+	var matches []pveclient.Storage
+	for _, s := range pools {
+		if hasSnippets(s) {
+			matches = append(matches, s)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		p.Printf("Snippet storage: %s\n", matches[0].Storage)
+		return matches[0].Storage
+	case 0:
+		return offerEnableSnippets(ctx, p, client, pools)
+	}
+	opts := make([]huh.Option[string], 0, len(matches))
+	for _, s := range matches {
+		label := fmt.Sprintf("%s (%s)", s.Storage, s.Type)
+		opts = append(opts, huh.NewOption(label, s.Storage))
+	}
+	return selectSnippetStorageFn("Snippet storage", opts, matches[0].Storage)
+}
+
+// offerEnableSnippets is the zero-match branch of pickSnippetStorage.
+// It looks for a dir-backed storage to enable `snippets` on, defaults
+// to "local" when present, and on confirmation issues
+// UpdateStorageContent. Decline or absence prints the manual remediation
+// and returns "" so credentials still save.
+func offerEnableSnippets(ctx context.Context, p prompter, client snippetStoragePicker, pools []pveclient.Storage) string {
+	var capable []pveclient.Storage
+	for _, s := range pools {
+		if snippetCapableTypes[s.Type] {
+			capable = append(capable, s)
+		}
+	}
+	if len(capable) == 0 {
+		printSnippetManualRemediation(p)
+		return ""
+	}
+	target := capable[0]
+	for _, s := range capable {
+		if s.Storage == "local" {
+			target = s
+			break
+		}
+	}
+	ans, err := p.Prompt(fmt.Sprintf("no storage supports snippets. enable snippets on %q? [Y/n]: ", target.Storage))
+	if err != nil {
+		return ""
+	}
+	ans = strings.ToLower(strings.TrimSpace(ans))
+	if ans != "" && ans != "y" && ans != "yes" {
+		printSnippetManualRemediation(p)
+		return ""
+	}
+
+	newContent := splitContent(target.Content)
+	if !containsString(newContent, "snippets") {
+		newContent = append(newContent, "snippets")
+	}
+	if err := client.UpdateStorageContent(ctx, target.Storage, newContent); err != nil {
+		p.Errf("could not enable snippets on %q: %v\n", target.Storage, err)
+		printSnippetManualRemediation(p)
+		return ""
+	}
+	p.Printf("enabled snippets on %s\n", target.Storage)
+	return target.Storage
+}
+
+func splitContent(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func printSnippetManualRemediation(p prompter) {
+	p.Errf("no snippet storage configured.\n")
+	p.Errf("  Fix: edit /etc/pve/storage.cfg on the PVE host and add 'snippets' to\n")
+	p.Errf("       the content= line of a directory-backed storage, then re-run\n")
+	p.Errf("       'pmox configure' to record it.\n")
 }
 
 func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node string) string {

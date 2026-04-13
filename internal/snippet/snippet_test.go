@@ -176,6 +176,30 @@ func TestCleanup_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCleanup_RoutesToCicustomStorage locks in the split-snippet-storage
+// invariant: when the disk storage and snippet storage differ, delete
+// must read the storage out of the cicustom value and not from any
+// server.Storage field. This test exists so a future refactor that
+// passes server.Storage into Cleanup would fail loudly here.
+func TestCleanup_RoutesToCicustomStorage(t *testing.T) {
+	var gotPath string
+	c := storageClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"data":null}`)
+	})
+	// VM disk lives on vm-data; snippet on local. Cleanup must hit local.
+	err := Cleanup(context.Background(), c, "pve1", "user=local:snippets/pmox-104-user-data.yaml")
+	if err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if !strings.Contains(gotPath, "/storage/local/") {
+		t.Errorf("DELETE routed to %q, want path under /storage/local/", gotPath)
+	}
+	if strings.Contains(gotPath, "/storage/vm-data/") {
+		t.Errorf("DELETE must not touch vm-data: %q", gotPath)
+	}
+}
+
 func TestCleanup_NotFoundSwallowed(t *testing.T) {
 	c := storageClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -207,43 +231,6 @@ func TestCleanup_ParseErrorReturned(t *testing.T) {
 	err := Cleanup(context.Background(), c, "pve1", "meta=local:snippets/x.yaml")
 	if err == nil {
 		t.Fatal("expected parse error")
-	}
-}
-
-// --- Upload end-to-end ---
-
-func TestUpload_HappyPath(t *testing.T) {
-	var paths []string
-	var uploadBody string
-	c := storageClient(t, func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.Method+" "+r.URL.Path)
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/storage"):
-			_, _ = io.WriteString(w, `{"data":[{"storage":"local","content":"snippets,iso"}]}`)
-		case strings.HasSuffix(r.URL.Path, "/upload"):
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
-				t.Errorf("parse multipart: %v", err)
-			}
-			fh := r.MultipartForm.File["file"]
-			if len(fh) == 1 {
-				f, _ := fh[0].Open()
-				defer f.Close()
-				b, _ := io.ReadAll(f)
-				uploadBody = string(b)
-			}
-			_, _ = io.WriteString(w, `{"data":null}`)
-		}
-	})
-	content := []byte("#cloud-config\nssh_authorized_keys:\n  - ssh-ed25519 AAA\n")
-	if err := Upload(context.Background(), c, "pve1", "local", 104, content); err != nil {
-		t.Fatalf("Upload: %v", err)
-	}
-	if uploadBody != string(content) {
-		t.Errorf("upload body = %q", uploadBody)
-	}
-	// Order: ListStorage (for ValidateStorage) then /upload.
-	if len(paths) < 2 || !strings.HasSuffix(paths[0], "/nodes/pve1/storage") || !strings.HasSuffix(paths[1], "/upload") {
-		t.Errorf("paths = %v", paths)
 	}
 }
 

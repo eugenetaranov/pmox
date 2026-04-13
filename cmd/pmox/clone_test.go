@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -51,7 +52,7 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 	f.Handle("PUT", "/resize", pvetest.JSON(`{"data":null}`))
 	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
 	f.Handle("GET", "/nodes/pve1/storage", pvetest.JSON(`{"data":[{"storage":"local-lvm","content":"snippets,images","active":1,"enabled":1}]}`))
-	f.Handle("POST", "/storage/local-lvm/upload", pvetest.JSON(`{"data":null}`))
+	f.Handle("GET", "/storage/local-lvm", pvetest.JSON(`{"data":{"path":"/var/lib/vz"}}`))
 
 	var agentHits int32
 	f.Handle("GET", "/agent/network-get-interfaces", func(w http.ResponseWriter, _ *http.Request, _ string) {
@@ -61,13 +62,17 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 
 	cmd, out, _ := newTestInfoCmd()
 	partial := launch.Options{
-		CPU:           2,
-		MemMB:         2048,
-		DiskSize:      "20G",
-		Storage:       "local-lvm",
-		Wait:          5 * time.Second,
-		NoWaitSSH:     true,
-		CloudInitPath: writeCloneCI(t),
+		CPU:            2,
+		MemMB:          2048,
+		DiskSize:       "20G",
+		Storage:        "local-lvm",
+		SnippetStorage: "local-lvm",
+		Wait:           5 * time.Second,
+		NoWaitSSH:      true,
+		CloudInitPath:  writeCloneCI(t),
+		UploadSnippet: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
 	}
 	if err := executeClone(cmd.Context(), cmd, f.Client(), "web1", "web1-copy", partial); err != nil {
 		t.Fatalf("executeClone: %v", err)
