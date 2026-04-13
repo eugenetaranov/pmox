@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +13,19 @@ import (
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 )
+
+// writeCloneCI drops a valid cloud-init file in a tempdir so launch.Run
+// can read it during the clone test.
+func writeCloneCI(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cloud-init.yaml")
+	content := []byte("#cloud-config\nusers:\n  - name: ubuntu\n    ssh_authorized_keys:\n      - ssh-ed25519 AAAA test\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 // cloneSourceVM is the source that clone_test resolves against. VMID
 // 500 lets us assert the launch state-machine targets the resolved
@@ -35,6 +50,8 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 	f.Handle("POST", "/config", pvetest.JSON(`{"data":null}`))
 	f.Handle("PUT", "/resize", pvetest.JSON(`{"data":null}`))
 	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/nodes/pve1/storage", pvetest.JSON(`{"data":[{"storage":"local-lvm","content":"snippets,images","active":1,"enabled":1}]}`))
+	f.Handle("POST", "/storage/local-lvm/upload", pvetest.JSON(`{"data":null}`))
 
 	var agentHits int32
 	f.Handle("GET", "/agent/network-get-interfaces", func(w http.ResponseWriter, _ *http.Request, _ string) {
@@ -44,13 +61,13 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 
 	cmd, out, _ := newTestInfoCmd()
 	partial := launch.Options{
-		User:      "pmox",
-		SSHPubKey: "ssh-ed25519 AAAA test@host",
-		CPU:       2,
-		MemMB:     2048,
-		DiskSize:  "20G",
-		Wait:      5 * time.Second,
-		NoWaitSSH: true,
+		CPU:           2,
+		MemMB:         2048,
+		DiskSize:      "20G",
+		Storage:       "local-lvm",
+		Wait:          5 * time.Second,
+		NoWaitSSH:     true,
+		CloudInitPath: writeCloneCI(t),
 	}
 	if err := executeClone(cmd.Context(), cmd, f.Client(), "web1", "web1-copy", partial); err != nil {
 		t.Fatalf("executeClone: %v", err)

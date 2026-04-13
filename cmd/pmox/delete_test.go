@@ -29,13 +29,19 @@ type fakePVE struct {
 	clusterBody string
 	// vmStatus controls what GetStatus returns; empty string triggers 404.
 	vmStatus string
+	// vmCicustom, when non-empty, is returned as the `cicustom` key
+	// from GET /config; empty means no cicustom on the VM.
+	vmCicustom string
 
-	clusterHits  int32
-	statusHits   int32
-	shutdownHits int32
-	stopHits     int32
-	deleteHits   int32
-	taskHits     int32
+	clusterHits        int32
+	statusHits         int32
+	shutdownHits       int32
+	stopHits           int32
+	deleteHits         int32
+	taskHits           int32
+	configHits         int32
+	snippetDeleteHits  int32
+	snippetDeletePath  string
 }
 
 func newFakePVE(t *testing.T) *fakePVE {
@@ -52,6 +58,19 @@ func newFakePVE(t *testing.T) *fakePVE {
 				return
 			}
 			_, _ = io.WriteString(w, f.clusterBody)
+
+		case strings.HasSuffix(p, "/config") && r.Method == "GET":
+			atomic.AddInt32(&f.configHits, 1)
+			out := map[string]any{"data": map[string]any{"name": "web1"}}
+			if f.vmCicustom != "" {
+				out["data"].(map[string]any)["cicustom"] = f.vmCicustom
+			}
+			_ = json.NewEncoder(w).Encode(out)
+
+		case r.Method == "DELETE" && strings.Contains(p, "/storage/") && strings.Contains(p, "/content/"):
+			atomic.AddInt32(&f.snippetDeleteHits, 1)
+			f.snippetDeletePath = p
+			_, _ = io.WriteString(w, `{"data":null}`)
 
 		case strings.HasSuffix(p, "/status/current"):
 			atomic.AddInt32(&f.statusHits, 1)
@@ -541,6 +560,41 @@ func TestDelete_ZeroArgs_YesAutoDeletesAfterAutoSelect(t *testing.T) {
 	}
 	if f.deleteHits != 1 {
 		t.Errorf("delete hits = %d, want 1", f.deleteHits)
+	}
+}
+
+func TestDelete_CustomCloudInitRemovesSnippet(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	f.vmCicustom = "user=local:snippets/pmox-100-user-data.yaml"
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.snippetDeleteHits != 1 {
+		t.Errorf("snippet delete hits = %d, want 1", f.snippetDeleteHits)
+	}
+	if !strings.Contains(f.snippetDeletePath, "local:snippets/pmox-100-user-data.yaml") {
+		t.Errorf("snippet delete path = %q", f.snippetDeletePath)
+	}
+}
+
+func TestDelete_BuiltinCloudInitNoSnippetCleanup(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	// vmCicustom left empty — simulates a built-in cloud-init VM.
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if f.snippetDeleteHits != 0 {
+		t.Errorf("snippet delete hits = %d, want 0", f.snippetDeleteHits)
 	}
 }
 

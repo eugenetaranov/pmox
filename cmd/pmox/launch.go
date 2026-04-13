@@ -32,17 +32,15 @@ const (
 // Using a struct avoids package-level state that would break parallel
 // test runs.
 type launchFlags struct {
-	cpu        int
-	memMB      int
-	disk       string
-	template   string
-	storage    string
-	node       string
-	bridge     string
-	user       string
-	sshKey     string
-	wait       time.Duration
-	noWaitSSH  bool
+	cpu       int
+	memMB     int
+	disk      string
+	template  string
+	storage   string
+	node      string
+	bridge    string
+	wait      time.Duration
+	noWaitSSH bool
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -52,9 +50,15 @@ func newLaunchCmd() *cobra.Command {
 		Short: "Launch a VM from a configured Proxmox template",
 		Long: `Launch a new VM on the resolved Proxmox cluster from a cloud-init-
 enabled template. Clones the template, tags the new VM, resizes its
-disk, pushes built-in cloud-init config, starts it, waits for the
-qemu-guest-agent to report an IP, then runs an SSH handshake to
-confirm the VM is reachable.
+disk, uploads the per-server cloud-init snippet, starts the VM, waits
+for the qemu-guest-agent to report an IP, then runs an SSH handshake
+to confirm the VM is reachable.
+
+The cloud-init user-data is read from
+~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox configure'
+writes on first run. Edit that file to customize packages, users,
+runcmd, or anything else cloud-init supports. To regenerate a fresh
+default, run 'pmox configure --regen-cloud-init'.
 
 The VM is tagged with 'pmox' immediately after clone so that any
 later failure leaves a cleanable VM on the cluster — there is no
@@ -80,8 +84,6 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.node, "node", "", "cluster node to launch on (falls back to configured default)")
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
-	cmd.Flags().StringVar(&f.user, "user", "", "default cloud-init user (default pmox)")
-	cmd.Flags().StringVar(&f.sshKey, "ssh-key", "", "path to SSH public key (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	return cmd
@@ -148,21 +150,15 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		return launch.Options{}, err
 	}
 
-	sshKeyPath := firstNonEmpty(f.sshKey, srv.SSHPubkey)
-	if sshKeyPath == "" {
-		return launch.Options{}, fmt.Errorf("%w: no ssh key configured; pass --ssh-key or run 'pmox configure'", exitcode.ErrNotFound)
-	}
-	sshKey, err := readSSHKey(sshKeyPath)
-	if err != nil {
-		return launch.Options{}, err
-	}
-
 	storage := firstNonEmpty(f.storage, srv.Storage)
 	if storage == "" {
 		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox configure' (required for the cloud-init drive)", exitcode.ErrNotFound)
 	}
 
-	user := firstNonEmpty(f.user, srv.User, defaultUser)
+	cloudInitPath, err := config.CloudInitPath(resolved.URL)
+	if err != nil {
+		return launch.Options{}, fmt.Errorf("resolve cloud-init path: %w", err)
+	}
 
 	cpu := f.cpu
 	if cpu == 0 {
@@ -179,22 +175,21 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	}
 
 	return launch.Options{
-		Client:       client,
-		Node:         node,
-		Name:         name,
-		User:         user,
-		SSHPubKey:    sshKey,
-		TemplateName: templateName,
-		TemplateID:   templateID,
-		CPU:          cpu,
-		MemMB:        mem,
-		DiskSize:     disk,
-		Storage:      storage,
-		Bridge:       firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:         wait,
-		NoWaitSSH:    f.noWaitSSH,
-		Stderr:       os.Stderr,
-		Verbose:      verbose,
+		Client:        client,
+		Node:          node,
+		Name:          name,
+		TemplateName:  templateName,
+		TemplateID:    templateID,
+		CPU:           cpu,
+		MemMB:         mem,
+		DiskSize:      disk,
+		Storage:       storage,
+		Bridge:        firstNonEmpty(f.bridge, srv.Bridge),
+		Wait:          wait,
+		NoWaitSSH:     f.noWaitSSH,
+		CloudInitPath: cloudInitPath,
+		Stderr:        os.Stderr,
+		Verbose:       verbose,
 	}, nil
 }
 

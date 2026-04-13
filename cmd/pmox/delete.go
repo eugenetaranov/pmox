@@ -14,6 +14,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/snippet"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
@@ -186,6 +187,14 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 		return fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
 	}
 
+	// Fetch the config BEFORE destroy so we can read any cicustom value
+	// for snippet cleanup. Once the destroy task completes the VM is
+	// gone and GetConfig returns 404.
+	var cicustom string
+	if cfg, cfgErr := client.GetConfig(ctx, ref.Node, ref.VMID); cfgErr == nil {
+		cicustom = cfg["cicustom"]
+	}
+
 	spinner := newDeleteSpinner(cmd.ErrOrStderr())
 
 	if status.Status == "running" {
@@ -207,6 +216,12 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 		return client.Delete(ctx, ref.Node, ref.VMID)
 	}); err != nil {
 		return err
+	}
+
+	if cicustom != "" {
+		if err := snippet.Cleanup(ctx, client, ref.Node, cicustom); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove snippet for vm %d: %v\n", ref.VMID, err)
+		}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted VM %q (vmid %d)\n", ref.Name, ref.VMID)

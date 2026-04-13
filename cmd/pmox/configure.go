@@ -29,8 +29,9 @@ import (
 )
 
 var (
-	configureList   bool
-	configureRemove string
+	configureList         bool
+	configureRemove       string
+	configureRegenCloudCI bool
 )
 
 var configureCmd = &cobra.Command{
@@ -64,6 +65,7 @@ Prompts:
 func init() {
 	configureCmd.Flags().BoolVar(&configureList, "list", false, "List configured server URLs")
 	configureCmd.Flags().StringVar(&configureRemove, "remove", "", "Remove a configured server by URL")
+	configureCmd.Flags().BoolVar(&configureRegenCloudCI, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
 	rootCmd.AddCommand(configureCmd)
 }
 
@@ -148,14 +150,27 @@ func runConfigure(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if configureList && configureRemove != "" {
-		return fmt.Errorf("--list and --remove are mutually exclusive")
+	nexcl := 0
+	if configureList {
+		nexcl++
+	}
+	if configureRemove != "" {
+		nexcl++
+	}
+	if configureRegenCloudCI {
+		nexcl++
+	}
+	if nexcl > 1 {
+		return fmt.Errorf("--list, --remove, and --regen-cloud-init are mutually exclusive")
 	}
 	if configureList {
 		return runList(newStdPrompter(ctx))
 	}
 	if configureRemove != "" {
 		return runRemove(newStdPrompter(ctx), configureRemove)
+	}
+	if configureRegenCloudCI {
+		return runRegenCloudInit(ctx, newStdPrompter(ctx))
 	}
 	return runInteractive(ctx, newStdPrompter(ctx))
 }
@@ -329,6 +344,109 @@ func runInteractive(ctx context.Context, p prompter) error {
 		home, _ := os.UserHomeDir()
 		p.Printf("config saved to %s\n", displayPath(path, home))
 	}
+
+	// Step 15: write the starter cloud-init template for this server.
+	// Failures here are non-fatal — the credentials are already saved,
+	// and the user can always rerun with --regen-cloud-init.
+	writeInitialCloudInit(p, canonical, user, sshKey)
+	return nil
+}
+
+// writeInitialCloudInit renders and writes the per-server cloud-init
+// starter on first configure. It reads the SSH pubkey file named by
+// sshKeyPath, calls WriteStarterCloudInit, and prints a human message
+// for each outcome. Errors are warned to stderr but never returned.
+func writeInitialCloudInit(p prompter, canonicalURL, user, sshKeyPath string) {
+	path, err := config.CloudInitPath(canonicalURL)
+	if err != nil {
+		p.Errf("warning: could not resolve cloud-init path: %v\n", err)
+		return
+	}
+	pubkeyContent, err := readSSHKey(sshKeyPath)
+	if err != nil {
+		p.Errf("warning: could not read ssh pubkey %s: %v\n", sshKeyPath, err)
+		return
+	}
+	home, _ := os.UserHomeDir()
+	switch err := config.WriteStarterCloudInit(path, user, pubkeyContent); {
+	case err == nil:
+		p.Printf("wrote cloud-init template to %s — edit it to customize packages, users, runcmd\n", displayPath(path, home))
+	case errors.Is(err, config.ErrCloudInitExists):
+		p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
+	default:
+		p.Errf("warning: could not write cloud-init template to %s: %v\n", path, err)
+	}
+}
+
+// runRegenCloudInit rewrites the per-server cloud-init template from
+// the stored user+pubkey. If more than one server is configured, it
+// prompts the user to pick one. If the target file already exists, it
+// prompts for overwrite confirmation before clobbering user edits.
+func runRegenCloudInit(ctx context.Context, p prompter) error {
+	_ = ctx
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	urls := cfg.ServerURLs()
+	if len(urls) == 0 {
+		return fmt.Errorf("no servers configured; run 'pmox configure' first")
+	}
+
+	var canonical string
+	switch len(urls) {
+	case 1:
+		canonical = urls[0]
+	default:
+		opts := make([]huh.Option[string], 0, len(urls))
+		for _, u := range urls {
+			opts = append(opts, huh.NewOption(u, u))
+		}
+		canonical = tui.SelectOne("Select server", opts, urls[0])
+		if canonical == "" {
+			return fmt.Errorf("%w: no server selected", exitcode.ErrUserInput)
+		}
+	}
+
+	srv := cfg.Servers[canonical]
+	if srv == nil {
+		return fmt.Errorf("server %s not found in config", canonical)
+	}
+	if srv.SSHPubkey == "" {
+		return fmt.Errorf("server %s has no ssh_pubkey configured; run 'pmox configure' to set one", canonical)
+	}
+	user := srv.User
+	if user == "" {
+		user = "ubuntu"
+	}
+	pubkeyContent, err := readSSHKey(srv.SSHPubkey)
+	if err != nil {
+		return fmt.Errorf("read ssh pubkey %s: %w", srv.SSHPubkey, err)
+	}
+
+	path, err := config.CloudInitPath(canonical)
+	if err != nil {
+		return err
+	}
+
+	if _, statErr := os.Stat(path); statErr == nil {
+		ans, err := p.Prompt(fmt.Sprintf("cloud-init template %s already exists — overwrite? [y/N]: ", path))
+		if err != nil {
+			return err
+		}
+		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
+			p.Printf("aborted; %s not modified\n", path)
+			return nil
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("stat %s: %w", path, statErr)
+	}
+
+	if err := config.WriteCloudInit(path, user, pubkeyContent); err != nil {
+		return fmt.Errorf("write cloud-init template: %w", err)
+	}
+	home, _ := os.UserHomeDir()
+	p.Printf("wrote cloud-init template to %s\n", displayPath(path, home))
 	return nil
 }
 

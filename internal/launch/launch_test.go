@@ -1,10 +1,13 @@
 package launch
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,32 +81,49 @@ func newLaunchFake(t *testing.T) *launchFake {
 		fmt.Fprint(w, `{"data":"UPID:pve:delete"}`)
 	})
 
+	f.srv.Handle("GET", "/nodes/pve/storage", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		fmt.Fprint(w, `{"data":[{"storage":"local-lvm","content":"snippets,images","active":1,"enabled":1}]}`)
+	})
+
+	f.srv.Handle("POST", "/storage/local-lvm/upload", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		fmt.Fprint(w, `{"data":null}`)
+	})
+
 	return f
 }
 
 func (f *launchFake) client() *pveclient.Client { return f.srv.Client() }
 
-// orderedPaths proxies through to the underlying server, keeping the
-// existing test assertions unchanged.
 func (f *launchFake) orderedPaths() []string { return f.srv.OrderedPaths() }
 
-// configBodies returns every POST /config body in order.
 func (f *launchFake) configBodies() []string { return f.srv.Bodies("POST", "/config") }
 
-func baseOpts(c *pveclient.Client) Options {
+// writeCI writes a valid cloud-init file (with an ssh_authorized_keys
+// stanza so warnings don't fire) to a tempdir and returns the path.
+func writeCI(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cloud-init.yaml")
+	content := []byte("#cloud-config\nusers:\n  - name: ubuntu\n    ssh_authorized_keys:\n      - ssh-ed25519 AAAA test\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func baseOpts(t *testing.T, c *pveclient.Client) Options {
 	return Options{
-		Client:     c,
-		Node:       "pve",
-		Name:       "web1",
-		User:       "pmox",
-		SSHPubKey:  "ssh-ed25519 AAAA test@host",
-		TemplateID: 9000,
-		CPU:        2,
-		MemMB:      2048,
-		DiskSize:   "20G",
-		Storage:    "local-lvm",
-		Wait:       5 * time.Second,
-		NoWaitSSH:  true,
+		Client:        c,
+		Node:          "pve",
+		Name:          "web1",
+		TemplateID:    9000,
+		CPU:           2,
+		MemMB:         2048,
+		DiskSize:      "20G",
+		Storage:       "local-lvm",
+		Wait:          5 * time.Second,
+		NoWaitSSH:     true,
+		CloudInitPath: writeCI(t),
 	}
 }
 
@@ -111,7 +131,7 @@ func TestRun_HappyPath(t *testing.T) {
 	f := newLaunchFake(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	r, err := Run(ctx, baseOpts(f.client()))
+	r, err := Run(ctx, baseOpts(t, f.client()))
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -119,24 +139,25 @@ func TestRun_HappyPath(t *testing.T) {
 		t.Fatalf("Result = %+v, want VMID=101 IP=10.9.8.7", r)
 	}
 
-	expected := []string{
-		"GET /cluster/nextid",
-		"POST /nodes/pve/qemu/9000/clone",
-		"GET /nodes/pve/tasks/UPID:pve:clone/status",
-		"POST /nodes/pve/qemu/101/config", // tag
-		"PUT /nodes/pve/qemu/101/resize",
-		"POST /nodes/pve/qemu/101/config", // full kv
-		"POST /nodes/pve/qemu/101/status/start",
-		"GET /nodes/pve/tasks/UPID:pve:start/status",
-	}
-	got := f.orderedPaths()
-	if len(got) < len(expected) {
-		t.Fatalf("got %d hits, want at least %d: %v", len(got), len(expected), got)
-	}
-	for i, want := range expected {
-		if got[i] != want {
-			t.Errorf("hit[%d] = %q, want %q", i, got[i], want)
+	paths := f.orderedPaths()
+	var uploadIdx, secondCfgIdx = -1, -1
+	cfgSeen := 0
+	for i, p := range paths {
+		if strings.Contains(p, "/storage/local-lvm/upload") {
+			uploadIdx = i
 		}
+		if strings.HasSuffix(p, "/config") && strings.HasPrefix(p, "POST ") {
+			cfgSeen++
+			if cfgSeen == 2 {
+				secondCfgIdx = i
+			}
+		}
+	}
+	if uploadIdx == -1 {
+		t.Fatalf("upload not called: %v", paths)
+	}
+	if secondCfgIdx == -1 || uploadIdx >= secondCfgIdx {
+		t.Errorf("upload (idx %d) must precede full SetConfig (idx %d)", uploadIdx, secondCfgIdx)
 	}
 
 	bodies := f.configBodies()
@@ -146,27 +167,27 @@ func TestRun_HappyPath(t *testing.T) {
 	if !strings.Contains(bodies[0], "tags=pmox") {
 		t.Errorf("first config body = %q, want tags=pmox", bodies[0])
 	}
-	if strings.Contains(bodies[0], "ciuser") {
-		t.Error("first config body should be tag-only, not include ciuser")
-	}
-
 	parsed, _ := url.ParseQuery(bodies[1])
-	for _, k := range []string{"ciuser", "sshkeys", "ipconfig0", "agent", "memory", "cores", "name"} {
+	wantCi := "user=local-lvm:snippets/pmox-101-user-data.yaml"
+	if got := parsed.Get("cicustom"); got != wantCi {
+		t.Errorf("cicustom = %q, want %q", got, wantCi)
+	}
+	if parsed.Get("ciuser") != "" {
+		t.Errorf("ciuser must not appear: %q", parsed.Get("ciuser"))
+	}
+	if parsed.Get("sshkeys") != "" {
+		t.Errorf("sshkeys must not appear: %q", parsed.Get("sshkeys"))
+	}
+	for _, k := range []string{"name", "memory", "cores", "agent", "ipconfig0", "cicustom", "ide2"} {
 		if parsed.Get(k) == "" {
-			t.Errorf("second config body missing %q: %v", k, parsed)
+			t.Errorf("config body missing %q: %v", k, parsed)
 		}
-	}
-	if parsed.Get("ipconfig0") != "ip=dhcp" {
-		t.Errorf("ipconfig0 = %q, want ip=dhcp", parsed.Get("ipconfig0"))
-	}
-	if parsed.Get("agent") != "1" {
-		t.Errorf("agent = %q, want 1", parsed.Get("agent"))
 	}
 }
 
 func TestRun_TagBeforeResize(t *testing.T) {
 	f := newLaunchFake(t)
-	_, err := Run(context.Background(), baseOpts(f.client()))
+	_, err := Run(context.Background(), baseOpts(t, f.client()))
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -190,7 +211,7 @@ func TestRun_TagBeforeResize(t *testing.T) {
 func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 	f := newLaunchFake(t)
 	f.failTagCfg = true
-	_, err := Run(context.Background(), baseOpts(f.client()))
+	_, err := Run(context.Background(), baseOpts(t, f.client()))
 	if err == nil {
 		t.Fatal("Run err=nil, want tag failure error")
 	}
@@ -202,7 +223,7 @@ func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 func TestRun_StartFailsNoRollback(t *testing.T) {
 	f := newLaunchFake(t)
 	f.failStart = true
-	_, err := Run(context.Background(), baseOpts(f.client()))
+	_, err := Run(context.Background(), baseOpts(t, f.client()))
 	if err == nil {
 		t.Fatal("Run err=nil, want start failure")
 	}
@@ -211,10 +232,68 @@ func TestRun_StartFailsNoRollback(t *testing.T) {
 	}
 }
 
+func TestRun_MissingCloudInitFile(t *testing.T) {
+	f := newLaunchFake(t)
+	opts := baseOpts(t, f.client())
+	opts.CloudInitPath = filepath.Join(t.TempDir(), "nope.yaml")
+	_, err := Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("expected missing-file error")
+	}
+	if !strings.Contains(err.Error(), "pmox configure --regen-cloud-init") {
+		t.Errorf("err = %v, want regen hint", err)
+	}
+	if len(f.orderedPaths()) != 0 {
+		t.Errorf("expected 0 PVE calls, got %v", f.orderedPaths())
+	}
+}
+
+func TestRun_InvalidCloudInitFile(t *testing.T) {
+	f := newLaunchFake(t)
+	dir := t.TempDir()
+	ciPath := filepath.Join(dir, "binary.bin")
+	if err := os.WriteFile(ciPath, []byte{0xff, 0xfe, 0xfd}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := baseOpts(t, f.client())
+	opts.CloudInitPath = ciPath
+
+	_, err := Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Errorf("err = %v, want UTF-8 message", err)
+	}
+	if len(f.orderedPaths()) != 0 {
+		t.Errorf("expected 0 PVE calls, got %v", f.orderedPaths())
+	}
+}
+
+func TestRun_SSHWarning(t *testing.T) {
+	f := newLaunchFake(t)
+	dir := t.TempDir()
+	ciPath := filepath.Join(dir, "user-data.yaml")
+	if err := os.WriteFile(ciPath, []byte("#cloud-config\nhostname: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	opts := baseOpts(t, f.client())
+	opts.CloudInitPath = ciPath
+	opts.Stderr = &stderr
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "ssh_authorized_keys") {
+		t.Errorf("stderr = %q, want ssh warning", stderr.String())
+	}
+}
+
 func TestRun_WaitIPTimeout(t *testing.T) {
 	f := newLaunchFake(t)
 	f.agentTimeout = true
-	opts := baseOpts(f.client())
+	opts := baseOpts(t, f.client())
 	opts.Wait = 1500 * time.Millisecond
 	_, err := Run(context.Background(), opts)
 	if err == nil {

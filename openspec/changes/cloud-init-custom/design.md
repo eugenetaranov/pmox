@@ -1,57 +1,66 @@
-## D1. Full replace, no merge — per D-T5
+## D1. Single code path — no built-in branch
 
-`--cloud-init <file>` is full-replace. The file contents become the
-VM's user-data verbatim. Pmox does not inject `ciuser`, `sshkeys`,
-or anything else on top.
+Every pmox-launched VM gets its user-data from a snippet file on
+disk. There is no built-in `ciuser`/`sshkeys` path anymore. The
+launcher's config phase is straight-line:
 
 ```go
-// internal/launch/launch.go — phase 5 branch
-if opts.CloudInitPath != "" {
-    content, _ := os.ReadFile(opts.CloudInitPath)
-    snippet.Upload(ctx, opts.Client, opts.Node, opts.Storage, vmid, content)
-    kv := cloudinit.BuildCustomKV(opts, vmid)  // sets cicustom, agent, memory, cores, name, ipconfig0
-    opts.Client.SetConfig(ctx, node, vmid, kv)
-} else {
-    kv := cloudinit.BuildBuiltinKV(opts, vmid) // sets ciuser, sshkeys, agent, ...
-    opts.Client.SetConfig(ctx, node, vmid, kv)
+// internal/launch/launch.go — config phase
+path := opts.CloudInitPath // resolved from server config before Run()
+content, err := os.ReadFile(path)
+if err != nil {
+    return fmt.Errorf("read cloud-init file %s: %w\n  hint: run 'pmox configure --regen-cloud-init' to write a fresh default", path, err)
+}
+if err := snippet.ValidateContent(content); err != nil { return err }
+if err := snippet.ValidateStorage(ctx, client, node, opts.Storage); err != nil { return err }
+warnIfNoSSHKey(opts.Stderr, path, content)
+if err := snippet.Upload(ctx, client, node, opts.Storage, vmid, content); err != nil { return err }
+kv := cloudinit.BuildCustomKV(opts, vmid) // sets cicustom, agent, memory, cores, name, ipconfig0
+return client.SetConfig(ctx, node, vmid, kv)
+```
+
+`BuildBuiltinKV` is deleted. `BuildCustomKV` becomes the only
+config-builder. The launcher never sets `ciuser`, `cipassword`,
+or `sshkeys` on a pmox-managed VM. Those concerns live in the
+user's cloud-init file.
+
+**Why collapse the branch:** two paths that diverge subtly is
+worse than one path that's always explicit. The generated starter
+file already contains the SSH key and default user — for the
+"disposable Ubuntu VM" case the UX is unchanged, except that the
+configuration is visible and editable on disk.
+
+## D2. SSH-key warning — detect and warn, always on
+
+After reading the file, before uploading, run a shallow text
+check:
+
+```go
+if !bytes.Contains(content, []byte("ssh_authorized_keys:")) {
+    fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", path)
 }
 ```
 
-`BuildCustomKV` does **not** set `ciuser` or `sshkeys`. PVE's
-`cicustom` takes precedence over those keys — mixing them is
-confusing and PVE's behavior isn't documented clearly. Clean break:
-if you pass `--cloud-init`, you own the user-data.
+**Why warn, not error:** a password-only VM or a VM configured
+via `write_files` with a key dropped elsewhere is legitimate.
+The user may know what they're doing. We surface the risk and
+let them decide.
 
-**Operational consequence (D-T5 explicit):** users who forget to
-include `ssh_authorized_keys` in their file will boot an SSH-less
-VM. Mitigation is D2 below (warning) + `examples/cloud-init.yaml`.
+**Why no silencer flag:** the previous iteration had
+`--no-ssh-key-check`. Now that the file lives under the user's
+control and is seeded with the key by default, the warning only
+fires when the user has actively removed the key — which is
+either a mistake worth flagging or a conscious choice the user
+can ignore. A flag adds a maintenance surface for negligible
+benefit.
 
-## D2. SSH-key warning — detect and warn, don't block
-
-After reading the file, before uploading, run a shallow text check:
-
-```go
-if !bytes.Contains(content, []byte("ssh_authorized_keys:")) &&
-   !opts.NoSSHKeyCheck {
-    fmt.Fprintln(opts.Stderr, "warning: --cloud-init file has no ssh_authorized_keys; you may not be able to SSH in")
-}
-```
-
-**Why warn, not error:** a password-only VM or a VM configured via
-`write_files` with a key dropped elsewhere is legitimate. The user
-may know what they're doing. We surface the risk and let them
-decide.
-
-**Why a string contains, not YAML parse:** YAML parsing pulls in
-a dependency (`gopkg.in/yaml.v3` is already in-tree) but introduces
-false negatives (the key may be under `users:` → `- name: foo` →
-`ssh_authorized_keys:`, and a dumb text match catches that; a
-structured parse that only checks `top.users[*].ssh_authorized_keys`
-misses `#cloud-config` that uses `ssh_authorized_keys` at the top
-level). The text check is coarse but catches the typical mistake.
-
-**`--no-ssh-key-check`** silences it for the "I know what I'm doing"
-case.
+**Why a string contains, not YAML parse:** YAML parsing pulls
+in a dependency (`gopkg.in/yaml.v3` is already in-tree) but
+introduces false negatives — a structured parse that only
+checks `top.users[*].ssh_authorized_keys` misses `#cloud-config`
+that uses `ssh_authorized_keys:` at the top level, or under a
+nested write_files scheme. The text check is coarse but catches
+the typical mistake.
 
 ## D3. Snippet storage validation — lazy per D-T2
 
@@ -85,7 +94,9 @@ see https://pve.proxmox.com/wiki/Storage for content-type details.
 This runs once per launch, immediately before the upload. Not at
 configure time — D-T2 is explicit.
 
-`pmox configure` stays unchanged in this slice.
+`pmox configure` does not validate snippet support on the chosen
+storage. It does, however, write the starter cloud-init file
+(see D11).
 
 ## D4. Multipart upload — `mime/multipart` + `io.Pipe`
 
@@ -122,17 +133,17 @@ func (c *Client) PostSnippet(ctx context.Context, node, storage, filename string
 }
 ```
 
-**Why `io.Pipe` and a goroutine** — `multipart.Writer` can't produce
-its boundary until it's been written to, and a preallocated
-`bytes.Buffer` would hold the whole file in memory twice. Pipe-plus-
-goroutine streams it. Our snippet files are ≤64 KiB so the buffer
-approach would be fine, but pipe is idiomatic and avoids the double-
-allocation pattern.
+**Why `io.Pipe` and a goroutine** — `multipart.Writer` can't
+produce its boundary until it's been written to, and a
+preallocated `bytes.Buffer` would hold the whole file in memory
+twice. Pipe-plus-goroutine streams it. Our snippet files are
+≤64 KiB so the buffer approach would be fine, but pipe is
+idiomatic and avoids the double-allocation pattern.
 
 **Rejected:** adding a dedicated `requestMultipart` helper in
 `client.go`. One caller, ~30 lines; inlining into `storage.go`
-keeps `client.go` focused on the two common shapes (query + form).
-If a second multipart caller shows up, factor then.
+keeps `client.go` focused on the two common shapes (query +
+form). If a second multipart caller shows up, factor then.
 
 ## D5. Snippet filename convention
 
@@ -145,15 +156,21 @@ Frozen. This is the filename used by:
 - `snippet.Cleanup` when deleting (slice 6's delete flow)
 - any future "list pmox-owned snippets" command
 
-Storage path as seen by PVE: `<storage>:snippets/pmox-<vmid>-user-data.yaml`,
-which expands to `/var/lib/vz/snippets/pmox-<vmid>-user-data.yaml`
-on default directory storage.
+Storage path as seen by PVE:
+`<storage>:snippets/pmox-<vmid>-user-data.yaml`, which expands to
+`/var/lib/vz/snippets/pmox-<vmid>-user-data.yaml` on default
+directory storage.
 
 **Vmid in the filename** rather than VM name because names can
 collide and change; vmids can't.
 
 **Rejected:** a hash of file contents. Harder to clean up
 retroactively if something goes wrong, and the vmid is enough.
+
+Note that this filename (on PVE) is unrelated to the local
+user-facing filename (`~/.config/pmox/cloud-init/<slug>.yaml`)
+from D11. PVE names snippets by target VM; the local file is
+named by source server.
 
 ## D6. Size and text validation
 
@@ -176,9 +193,8 @@ func ValidateContent(content []byte) error {
 
 **64 KiB** is PVE's snippet limit. Not documented anywhere we
 trust; derived from the underlying storage-hook constraints. If
-someone hits it, they can split the file into `write_files` +
-a pmox-hosted http GET in `runcmd`, but that's out of scope for
-v1.
+someone hits it, they can split the file into `write_files` + a
+pmox-hosted http GET in `runcmd`, but that's out of scope for v1.
 
 **UTF-8 check** catches accidentally passing a binary file. The
 `utf8.Valid` from stdlib is zero-cost on small inputs.
@@ -187,32 +203,28 @@ v1.
 
 ```go
 // cmd/pmox/delete.go, after the destroy task wait succeeds
-if err := snippet.Cleanup(ctx, client, node, storage, vmid); err != nil {
+if err := snippet.Cleanup(ctx, client, node, cicustomValue); err != nil {
     fmt.Fprintf(os.Stderr, "warning: could not remove snippet for vm %d: %v\n", vmid, err)
 }
 ```
 
-`Cleanup` calls `DeleteSnippet(ctx, node, storage, "pmox-<vmid>-user-data.yaml")`.
-If the file doesn't exist (e.g. the VM was launched without
-`--cloud-init`), PVE returns 404 and `DeleteSnippet` returns
-`ErrNotFound`, which `Cleanup` swallows as success.
+`Cleanup` parses `cicustomValue` (format
+`user=<storage>:snippets/<filename>[,meta=...][,network=...]`),
+extracts storage and filename, and calls `DeleteSnippet(ctx,
+node, storage, filename)`. If the file doesn't exist, PVE
+returns 404 and `DeleteSnippet` returns `ErrNotFound`, which
+`Cleanup` swallows as success.
 
 **Which storage?** `pmox delete` doesn't know at delete time
-whether the VM was launched with `--cloud-init` or which storage
-it used. Two options:
+which storage the snippet lives on — the launch could have been
+against a non-default `--storage`. Parsing the `cicustom` field
+handles that case because the value carries the storage.
 
-- A) parse the VM's `cicustom` config value (`user=local:snippets/pmox-104-user-data.yaml`) to extract storage + filename
-- B) try the configured default snippet storage, ignore 404
-
-**Decision:** A. `GetConfig` already exists from slice 6. Parse
-the `cicustom` field; if present, use its storage/filename
-exactly (handles the case where the user launched with a non-
-default `--storage` and we're now deleting via the default). If
-absent, skip cleanup entirely.
-
-Parser: `cicustom` is `user=<storage>:snippets/<filename>` (may
-also include `meta=` and `network=` parts separated by `,`). We
-only care about the `user=` part in this slice.
+**When `cicustom` is absent:** pre-slice-7 VMs launched under
+the old built-in path don't have a `cicustom` key. `pmox delete`
+must still work on those. If `GetConfig` returns a config with
+no `cicustom`, snippet cleanup is skipped silently. New
+pmox-launched VMs will always have one.
 
 ## D8. `DeleteSnippet` and `ListStorageContent`
 
@@ -248,23 +260,43 @@ Test cases in `internal/snippet/snippet_test.go`:
 - `TestValidate_BinaryFile`: invalid UTF-8 → error
 - `TestValidateStorage_HappyPath`: storage with `snippets` in
   content → nil
-- `TestValidateStorage_Missing`: storage without `snippets` → error
-  message contains storage name and content list
+- `TestValidateStorage_Missing`: storage without `snippets` →
+  error message contains storage name and content list
 
-Tests in `internal/launch/launch_test.go` gain:
-- `TestRun_CustomCloudInit`: pass `CloudInitPath` set to a fake
-  file, assert `PostSnippet` is called before `SetConfig`, and
-  the `SetConfig` body contains `cicustom=user=<storage>:snippets/pmox-<vmid>-user-data.yaml`
-- `TestRun_CustomCloudInit_NoSSHKeys`: assert the SetConfig body
-  does NOT contain `sshkeys=` or `ciuser=`
+Tests in `internal/launch/launch_test.go`:
+- `TestRun_HappyPath` — asserts `PostSnippet` is called before
+  `SetConfig`, and the `SetConfig` body contains
+  `cicustom=user=<storage>:snippets/pmox-<vmid>-user-data.yaml`
+  and does NOT contain `sshkeys=` or `ciuser=`. This replaces
+  the old "built-in path" happy-path test entirely.
+- `TestRun_MissingCloudInitFile` — `opts.CloudInitPath` points
+  at a non-existent path; assert the launcher returns an error
+  wrapping the OS not-exist, the error string mentions `pmox
+  configure --regen-cloud-init`, and no PVE API call is issued.
+- `TestRun_InvalidCloudInitFile` — binary bytes on disk; assert
+  validation fails before any PVE call.
 
-## D10. Example file as a functional test gate
+## D10. Example file as the configure template
 
-`examples/cloud-init.yaml` is shipped in this slice. A test in
-`internal/snippet/snippet_test.go` reads the file and runs
-`ValidateContent` + the SSH-key text check against it, asserting
-no errors and no warning. This catches accidental regressions
-where we break our own example.
+`examples/cloud-init.yaml` is shipped in this slice *and* is the
+authoritative template source for `pmox configure`'s generator.
+Storing the template as a repo file (loaded into the binary at
+build time via `go:embed`) instead of as a Go string literal
+keeps it reviewable as YAML and lets the in-repo test suite
+validate it using the same validators end users run.
+
+```go
+// internal/config/cloudinit.go
+//go:embed cloud-init.template.yaml
+var cloudInitTemplate []byte // copy of examples/cloud-init.yaml with {{.User}}/{{.SSHPubkey}} placeholders
+
+func RenderTemplate(user, sshPubkey string) ([]byte, error) { /* text/template.Execute */ }
+```
+
+A test in `internal/snippet/snippet_test.go` reads
+`examples/cloud-init.yaml` and runs `ValidateContent` + the
+SSH-key text check against it, asserting no errors. This
+catches accidental regressions where we break our own template.
 
 ```go
 func TestExampleFileIsValid(t *testing.T) {
@@ -276,3 +308,105 @@ func TestExampleFileIsValid(t *testing.T) {
     }
 }
 ```
+
+A second test asserts the rendered output of `RenderTemplate`
+also passes `ValidateContent` and contains the substituted
+pubkey — so the template-as-shipped and the template-as-rendered
+stay in sync.
+
+## D11. Configure-time file generation
+
+`pmox configure` generates the cloud-init file at the end of the
+interactive flow, after the SSH key and default user have been
+collected. Two rules:
+
+1. **Idempotent on existing files** — if
+   `~/.config/pmox/cloud-init/<slug>.yaml` already exists, leave
+   it alone and print `cloud-init template already exists at
+   <path> — not overwriting`. This protects user edits across
+   reconfigures.
+2. **Atomic write** — use a temp file + rename. A partial write
+   must never leave half a template on disk.
+
+**Server slug:** derived from the canonical URL with a pure
+function:
+
+```go
+// internal/config/cloudinit.go
+func Slug(canonicalURL string) (string, error) {
+    u, err := url.Parse(canonicalURL)
+    if err != nil { return "", err }
+    host := u.Hostname()
+    port := u.Port()
+    if port == "" { port = "8006" }
+    return fmt.Sprintf("%s-%s", host, port), nil
+}
+```
+
+Example: `https://192.168.0.185:8006` → `192.168.0.185-8006`.
+
+**File path resolver:**
+
+```go
+func CloudInitPath(canonicalURL string) (string, error) {
+    slug, err := Slug(canonicalURL)
+    if err != nil { return "", err }
+    dir, err := os.UserConfigDir() // ~/.config
+    if err != nil { return "", err }
+    return filepath.Join(dir, "pmox", "cloud-init", slug+".yaml"), nil
+}
+```
+
+Not stored in `config.Server` — derivable at call time from the
+canonical URL, which is already the key in `cfg.Servers`.
+
+**Generator:**
+
+```go
+func WriteStarterCloudInit(path, user, sshPubkey string) error {
+    if _, err := os.Stat(path); err == nil {
+        return ErrAlreadyExists // caller prints the "not overwriting" line
+    }
+    content, err := RenderTemplate(user, sshPubkey)
+    if err != nil { return err }
+    if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { return err }
+    return atomicWrite(path, content, 0o600)
+}
+```
+
+**`--regen-cloud-init` subflag:** regenerates the file for a
+selected server without walking the full configure flow. It:
+1. Loads `config.Load()`, finds the server (prompts for URL if
+   more than one is configured and `--server` wasn't passed).
+2. Resolves the path via `CloudInitPath(canonicalURL)`.
+3. If the file exists, prompts `cloud-init file already exists
+   at <path>. Overwrite? [y/N]`.
+4. Calls `RenderTemplate(srv.User, srv.SSHPubkey)` and writes
+   atomically.
+5. Prints the resulting path.
+
+This is the documented path for "my file is missing" and "reset
+my customizations," referenced by the launch-time error message
+in D12.
+
+## D12. Missing-file error at launch time
+
+When the launcher can't read the cloud-init file, the error is
+explicit about what went wrong, where the file should be, and
+how to regenerate a sane default:
+
+```
+read cloud-init file /home/e/.config/pmox/cloud-init/192.168.0.185-8006.yaml: open ...: no such file or directory
+
+hint: run 'pmox configure --regen-cloud-init' to write a fresh default,
+      or create the file manually with your own cloud-init content.
+```
+
+**Why not auto-regenerate on the fly:** a silent regenerate at
+launch time loses any customizations the user previously made —
+if the file went missing because of an `rm` mistake, the user
+wants to know. An explicit regen step lets them decide.
+
+**Where the error is returned from:** the very top of
+`launch.Run`, before any PVE API call, so a missing file cannot
+leave an orphan VM.

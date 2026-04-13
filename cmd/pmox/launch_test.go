@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,23 +11,11 @@ import (
 	"github.com/eugenetaranov/pmox/internal/server"
 )
 
-// writeTempSSHKey writes a throwaway pubkey so readSSHKey has something
-// real to load during option resolution tests.
-func writeTempSSHKey(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "id.pub")
-	if err := os.WriteFile(path, []byte("ssh-ed25519 AAAA test@host\n"), 0o600); err != nil {
-		t.Fatalf("write ssh key: %v", err)
-	}
-	return path
-}
-
 func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
-	key := writeTempSSHKey(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	resolved := &server.Resolved{
 		URL:    "https://pve.example:8006/api2/json",
-		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm"},
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", Template: "9000", Storage: "local-lvm"},
 		Secret: "s",
 		Source: "single configured",
 	}
@@ -44,25 +30,25 @@ func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
 	if opts.Wait != defaultWait {
 		t.Errorf("wait = %v, want %v", opts.Wait, defaultWait)
 	}
-	if opts.User != defaultUser {
-		t.Errorf("user = %q, want %q", opts.User, defaultUser)
-	}
 	if opts.TemplateID != 9000 {
 		t.Errorf("templateID = %d, want 9000", opts.TemplateID)
+	}
+	wantPath, _ := config.CloudInitPath(resolved.URL)
+	if opts.CloudInitPath != wantPath {
+		t.Errorf("CloudInitPath = %q, want %q", opts.CloudInitPath, wantPath)
 	}
 }
 
 func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
-	key := writeTempSSHKey(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	resolved := &server.Resolved{
 		URL: "https://pve.example:8006/api2/json",
 		Server: &config.Server{
-			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm",
-			User: "ubuntu",
+			TokenID: "t@pam!x", Node: "pve", Template: "9000", Storage: "local-lvm",
 		},
 		Secret: "s",
 	}
-	f := &launchFlags{cpu: 8, memMB: 16384, disk: "80G", wait: 2 * time.Minute, user: "admin"}
+	f := &launchFlags{cpu: 8, memMB: 16384, disk: "80G", wait: 2 * time.Minute}
 	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved)
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
@@ -70,36 +56,16 @@ func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
 	if opts.CPU != 8 || opts.MemMB != 16384 || opts.DiskSize != "80G" {
 		t.Errorf("flag values not honored: %+v", opts)
 	}
-	if opts.User != "admin" {
-		t.Errorf("user = %q, want admin (flag beats configured default)", opts.User)
-	}
 	if opts.Wait != 2*time.Minute {
 		t.Errorf("wait = %v, want 2m", opts.Wait)
 	}
 }
 
-func TestResolveLaunchOptions_ConfiguredDefault(t *testing.T) {
-	key := writeTempSSHKey(t)
-	resolved := &server.Resolved{
-		URL: "https://pve.example:8006/api2/json",
-		Server: &config.Server{
-			TokenID: "t@pam!x", Node: "pve", Template: "9000", SSHPubkey: key, Storage: "local-lvm",
-			User: "ubuntu",
-		},
-		Secret: "s",
-	}
-	f := &launchFlags{}
-	opts, _ := resolveLaunchOptions(context.Background(), "web1", f, resolved)
-	if opts.User != "ubuntu" {
-		t.Errorf("user = %q, want ubuntu (configured default beats built-in)", opts.User)
-	}
-}
-
 func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
-	key := writeTempSSHKey(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	resolved := &server.Resolved{
 		URL:    "https://pve.example:8006/api2/json",
-		Server: &config.Server{TokenID: "t@pam!x", Node: "pve", SSHPubkey: key},
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve"},
 		Secret: "s",
 	}
 	_, err := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved)

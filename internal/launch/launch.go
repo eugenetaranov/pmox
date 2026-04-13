@@ -1,17 +1,20 @@
 // Package launch implements the 9-step state machine that turns a
 // Proxmox template into a running, reachable VM. It owns the clone →
 // tag → resize → config → start → wait-IP → wait-SSH sequence, the
-// built-in cloud-init key set, the IP-picking heuristic, and the SSH
-// reachability wait.
+// snippet upload, the IP-picking heuristic, and the SSH reachability
+// wait.
 package launch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/snippet"
 )
 
 // Progress receives phase-level UI callbacks. A nil Progress is valid —
@@ -25,23 +28,22 @@ type Progress interface {
 
 // Options bundles everything Run needs to launch a VM.
 type Options struct {
-	Client       *pveclient.Client
-	Node         string
-	Name         string
-	User         string
-	SSHPubKey    string
-	TemplateName string
-	TemplateID   int
-	CPU          int
-	MemMB        int
-	DiskSize     string
-	Storage      string
-	Bridge       string
-	Wait         time.Duration
-	NoWaitSSH    bool
-	Stderr       io.Writer
-	Verbose      bool
-	Progress     Progress
+	Client        *pveclient.Client
+	Node          string
+	Name          string
+	TemplateName  string
+	TemplateID    int
+	CPU           int
+	MemMB         int
+	DiskSize      string
+	Storage       string
+	Bridge        string
+	Wait          time.Duration
+	NoWaitSSH     bool
+	CloudInitPath string
+	Stderr        io.Writer
+	Verbose       bool
+	Progress      Progress
 }
 
 func (o Options) pStart(step string) {
@@ -66,6 +68,29 @@ type Result struct {
 // VMID and discovered IPv4. Any failure after step 2 (clone) leaves
 // the VM on the cluster tagged with `pmox` — no automatic rollback.
 func Run(ctx context.Context, opts Options) (*Result, error) {
+	// Phase 0 — read and validate the per-server cloud-init file
+	// BEFORE the first PVE API call so a bad or missing file fails
+	// fast without leaving an orphan VM on the cluster.
+	if opts.CloudInitPath == "" {
+		return nil, errors.New("cloud-init path is empty; this is a programming bug — the CLI layer must populate Options.CloudInitPath from config.CloudInitPath(canonicalURL)")
+	}
+	cloudInitBytes, err := os.ReadFile(opts.CloudInitPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read cloud-init file %s: %w\n  hint: run 'pmox configure --regen-cloud-init' to write a fresh default, or create the file manually", opts.CloudInitPath, err)
+		}
+		return nil, fmt.Errorf("read cloud-init file %s: %w", opts.CloudInitPath, err)
+	}
+	if err := snippet.ValidateContent(cloudInitBytes); err != nil {
+		return nil, fmt.Errorf("validate cloud-init file %s: %w", opts.CloudInitPath, err)
+	}
+	if err := snippet.ValidateStorage(ctx, opts.Client, opts.Node, opts.Storage); err != nil {
+		return nil, err
+	}
+	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
+		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
+	}
+
 	// Phase 1 — allocate VMID.
 	opts.pStart("Allocating VMID")
 	vmid, err := opts.Client.NextID(ctx)
@@ -104,9 +129,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	opts.pDone(nil)
 
-	// Phase 5 — push cloud-init + resource config.
+	// Phase 5 — upload snippet, push cloud-init + resource config.
 	opts.pStart("Pushing cloud-init config")
-	if err := opts.Client.SetConfig(ctx, opts.Node, vmid, BuildBuiltinKV(opts, vmid)); err != nil {
+	if err := opts.Client.PostSnippet(ctx, opts.Node, opts.Storage, snippet.Filename(vmid), cloudInitBytes); err != nil {
+		opts.pDone(err)
+		return nil, fmt.Errorf("upload cloud-init snippet for vm %d: %w (run pmox delete %d)", vmid, err, vmid)
+	}
+	kv := BuildCustomKV(opts, vmid)
+	if err := opts.Client.SetConfig(ctx, opts.Node, vmid, kv); err != nil {
 		opts.pDone(err)
 		return nil, fmt.Errorf("push cloud-init config on vm %d: %w (run pmox delete %d)", vmid, err, vmid)
 	}

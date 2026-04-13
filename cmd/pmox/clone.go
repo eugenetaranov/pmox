@@ -23,9 +23,14 @@ func newCloneCmd() *cobra.Command {
 conceptually 'pmox launch', except the template is the resolved
 source VM instead of the configured template.
 
-The same --cpu/--mem/--disk/--ssh-key/--user/--wait/--no-wait-ssh
-flags are accepted and are applied to the clone. Flags unset on the
-command line fall back to the configured defaults, same as launch.`,
+The same --cpu/--mem/--disk/--wait/--no-wait-ssh flags are accepted
+and are applied to the clone. Flags unset on the command line fall
+back to the configured defaults, same as launch.
+
+Cloud-init user-data comes from
+~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox configure'
+writes on first run. Edit that file to customize the new VM, or run
+'pmox configure --regen-cloud-init' to rewrite it.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClone(cmd, args[0], args[1], f)
@@ -36,8 +41,6 @@ command line fall back to the configured defaults, same as launch.`,
 	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
-	cmd.Flags().StringVar(&f.user, "user", "", "default cloud-init user (default pmox)")
-	cmd.Flags().StringVar(&f.sshKey, "ssh-key", "", "path to SSH public key (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	return cmd
@@ -69,15 +72,10 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	srv := resolved.Server
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
-	sshKeyPath := firstNonEmpty(f.sshKey, srv.SSHPubkey)
-	if sshKeyPath == "" {
-		return fmt.Errorf("no ssh key configured; pass --ssh-key or run 'pmox configure'")
-	}
-	sshKey, err := readSSHKey(sshKeyPath)
+	cloudInitPath, err := config.CloudInitPath(resolved.URL)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve cloud-init path: %w", err)
 	}
-	user := firstNonEmpty(f.user, srv.User, defaultUser)
 	cpu := f.cpu
 	if cpu == 0 {
 		cpu = defaultCPU
@@ -93,18 +91,17 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	}
 
 	partial := launch.Options{
-		User:      user,
-		SSHPubKey: sshKey,
-		CPU:       cpu,
-		MemMB:     mem,
-		DiskSize:  disk,
-		Storage:   firstNonEmpty(f.storage, srv.Storage),
-		Bridge:    firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:      wait,
-		NoWaitSSH: f.noWaitSSH,
-		Stderr:    os.Stderr,
-		Verbose:   verbose,
-		Progress:  newLaunchProgress(cmd.ErrOrStderr()),
+		CPU:           cpu,
+		MemMB:         mem,
+		DiskSize:      disk,
+		Storage:       firstNonEmpty(f.storage, srv.Storage),
+		Bridge:        firstNonEmpty(f.bridge, srv.Bridge),
+		Wait:          wait,
+		NoWaitSSH:     f.noWaitSSH,
+		CloudInitPath: cloudInitPath,
+		Stderr:        os.Stderr,
+		Verbose:       verbose,
+		Progress:      newLaunchProgress(cmd.ErrOrStderr()),
 	}
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }

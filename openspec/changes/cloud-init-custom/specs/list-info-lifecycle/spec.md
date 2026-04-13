@@ -2,17 +2,20 @@
 
 ### Requirement: Snippet cleanup on delete
 
-`pmox delete` SHALL remove any pmox-owned snippet referenced by
-the deleted VM's `cicustom` config value. Cleanup runs after the
+`pmox delete` SHALL remove the pmox-owned snippet referenced by
+the deleted VM's `cicustom` config value. Every pmox-launched
+VM carries a `cicustom` value after this slice, so cleanup runs
+for every delete of a pmox-managed VM. Cleanup runs after the
 destroy task completes and is best-effort.
 
-#### Scenario: Custom cloud-init VM cleanup
+#### Scenario: Cleanup runs on every pmox-managed delete
 - **WHEN** `pmox delete web1` is invoked and the VM has `cicustom=user=local:snippets/pmox-104-user-data.yaml`
 - **THEN** the delete command SHALL call `DeleteSnippet(node, "local", "pmox-104-user-data.yaml")` after the destroy task completes
 
-#### Scenario: Built-in cloud-init VM has nothing to clean up
-- **WHEN** `pmox delete web1` is invoked and the VM config has no `cicustom` key
+#### Scenario: Pre-slice VM without cicustom has nothing to clean
+- **WHEN** `pmox delete web1` is invoked on a legacy VM whose config has no `cicustom` key
 - **THEN** the delete command SHALL NOT call `DeleteSnippet`
+- **AND** SHALL exit 0
 
 #### Scenario: Failed cleanup warns but does not fail delete
 - **WHEN** `DeleteSnippet` returns an error that is not `ErrNotFound`

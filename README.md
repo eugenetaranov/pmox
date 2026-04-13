@@ -12,6 +12,27 @@ Run `pmox configure` and answer the prompts. You'll need:
 - **API token ID** — in the form `user@realm!tokenname`, e.g. `root@pam!pmox` or `pmox@pve!mytoken`.
 - **API token secret** — the UUID shown once when the token is created.
 - **Node SSH credentials** — pmox also prompts for an SSH username (default `root`) and either a password or private key. These are required by `pmox create-template`, which uploads a cloud-init snippet directly into the storage pool's `snippets/` directory via SFTP. The secret is stored in the OS keyring alongside the API token; the YAML config only records the username, auth mode, and (for key mode) the key file path. On first contact, pmox prints the host's SSH fingerprint and asks you to confirm (TOFU), then pins it to `~/.config/pmox/known_hosts` — pmox never reads or writes `~/.ssh/known_hosts`.
+- **SSH public key** — pmox scans `~/.ssh/*.pub` and asks you to pick one. The selected **path** is stored in `config.yaml` as `ssh_pubkey`; the key material is only ever read at cloud-init render time.
+- **Default user** — the login name baked into the cloud-init template (default `ubuntu`).
+
+At the end of `pmox configure`, pmox writes a starter cloud-init file to `~/.config/pmox/cloud-init/<host>-<port>.yaml` with your selected user and public key substituted in. If the file already exists it is left alone (edit in place; never clobbered by reruns).
+
+## Cloud-init
+
+Every `pmox launch` and `pmox clone` uploads the per-server cloud-init file as a Proxmox `snippets` volume and points the new VM's `cicustom` at it. There is no built-in cloud-init mode anymore — the file on disk is the single source of truth for what ships to the VM.
+
+Per-server file: `~/.config/pmox/cloud-init/<host>-<port>.yaml` (one per configured PVE server; the slug comes from the canonical API URL).
+
+**Editing it.** The starter template sets up a sudo user, injects your SSH key, installs `qemu-guest-agent`, and enables it. Anything else cloud-init supports — extra packages, `runcmd`, write_files, network config — you add by editing this file directly. Changes take effect on the next `pmox launch` or `pmox clone`; running VMs are not updated.
+
+**Rotating the SSH key.** The public key is read fresh on every render, so:
+
+1. update `ssh_pubkey:` in `~/.config/pmox/config.yaml` (or re-run `pmox configure`) to point at the new `.pub` file, then
+2. run `pmox configure --regen-cloud-init` to rewrite the cloud-init file with the new key. Pmox prompts before overwriting.
+
+**If the file gets deleted.** `pmox launch` refuses to run and tells you to rerun `pmox configure --regen-cloud-init`, which writes a fresh default without prompting when no file exists.
+
+**Snippet cleanup.** `pmox delete` removes the per-VM snippet (`pmox-<vmid>-user-data.yaml`) from the PVE host after the VM is destroyed. Legacy VMs created before this change have no `cicustom` set and skip the cleanup silently.
 
 ### Flags / environment
 

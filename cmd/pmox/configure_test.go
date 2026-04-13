@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -269,6 +271,154 @@ func TestOverwritePromptRejected(t *testing.T) {
 		t.Errorf("config was modified despite reject")
 	}
 	if !strings.Contains(p.out.String(), "aborted; no changes") {
+		t.Errorf("out missing abort message: %q", p.out.String())
+	}
+}
+
+// writePubKey drops a fake public key on disk and returns its path —
+// used by the cloud-init regen tests so readSSHKey() has something
+// real to load.
+func writePubKey(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "id.pub")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestWriteInitialCloudInit_FirstWrite(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyPath := writePubKey(t, "ssh-ed25519 AAAA test@host\n")
+	p := &fakePrompter{}
+	writeInitialCloudInit(p, "https://pve.example:8006/api2/json", "ubuntu", keyPath)
+
+	path, _ := config.CloudInitPath("https://pve.example:8006/api2/json")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cloud-init: %v", err)
+	}
+	if !bytes.Contains(got, []byte("ssh-ed25519 AAAA test@host")) {
+		t.Errorf("cloud-init missing pubkey: %s", got)
+	}
+	if !bytes.Contains(got, []byte("name: ubuntu")) {
+		t.Errorf("cloud-init missing user: %s", got)
+	}
+	if !strings.Contains(p.out.String(), "wrote cloud-init template") {
+		t.Errorf("out missing confirmation: %q", p.out.String())
+	}
+}
+
+func TestWriteInitialCloudInit_DoesNotOverwrite(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyPath := writePubKey(t, "ssh-ed25519 AAAA test@host\n")
+
+	path, _ := config.CloudInitPath("https://pve.example:8006/api2/json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# my custom file\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &fakePrompter{}
+	writeInitialCloudInit(p, "https://pve.example:8006/api2/json", "ubuntu", keyPath)
+
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, original) {
+		t.Errorf("file was modified: %s", got)
+	}
+	if !strings.Contains(p.out.String(), "not overwriting") {
+		t.Errorf("out missing idempotent message: %q", p.out.String())
+	}
+}
+
+func TestRegenCloudInit_MissingFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyPath := writePubKey(t, "ssh-ed25519 AAAA regen@host\n")
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "t@pve!x", SSHPubkey: keyPath, User: "ubuntu"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &fakePrompter{}
+	if err := runRegenCloudInit(context.Background(), p); err != nil {
+		t.Fatalf("runRegenCloudInit: %v", err)
+	}
+	path, _ := config.CloudInitPath(url)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cloud-init: %v", err)
+	}
+	if !bytes.Contains(got, []byte("ssh-ed25519 AAAA regen@host")) {
+		t.Errorf("missing pubkey: %s", got)
+	}
+}
+
+func TestRegenCloudInit_Overwrite(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyPath := writePubKey(t, "ssh-ed25519 AAAA regen@host\n")
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "t@pve!x", SSHPubkey: keyPath, User: "ubuntu"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := config.CloudInitPath(url)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &fakePrompter{inputs: []string{"y"}}
+	if err := runRegenCloudInit(context.Background(), p); err != nil {
+		t.Fatalf("runRegenCloudInit: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if bytes.Equal(got, []byte("old\n")) {
+		t.Errorf("file was not overwritten")
+	}
+	if !bytes.Contains(got, []byte("ssh-ed25519 AAAA regen@host")) {
+		t.Errorf("missing pubkey: %s", got)
+	}
+}
+
+func TestRegenCloudInit_Abort(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyPath := writePubKey(t, "ssh-ed25519 AAAA regen@host\n")
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "t@pve!x", SSHPubkey: keyPath, User: "ubuntu"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := config.CloudInitPath(url)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("keep me\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &fakePrompter{inputs: []string{"n"}}
+	if err := runRegenCloudInit(context.Background(), p); err != nil {
+		t.Fatalf("runRegenCloudInit: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, original) {
+		t.Errorf("file was modified: %s", got)
+	}
+	if !strings.Contains(p.out.String(), "aborted") {
 		t.Errorf("out missing abort message: %q", p.out.String())
 	}
 }

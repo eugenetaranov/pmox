@@ -1,0 +1,19 @@
+#cloud-config
+# Minimal pmox cloud-init example. Pass to `pmox launch --cloud-init`
+# or `pmox clone --cloud-init`. When --cloud-init is set, pmox does
+# NOT inject its own user/ssh-key/DHCP config — this file becomes the
+# VM's entire user-data.
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA... replace-with-your-key
+
+package_update: true
+packages:
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent

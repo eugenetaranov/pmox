@@ -1,0 +1,6 @@
+{
+  "data": [
+    {"volid": "local:snippets/pmox-104-user-data.yaml", "format": "snippet", "size": 512},
+    {"volid": "local:snippets/pmox-105-user-data.yaml", "format": "snippet", "size": 640}
+  ]
+}
