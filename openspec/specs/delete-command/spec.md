@@ -122,3 +122,9 @@ When the picker auto-selects the only pmox VM on the cluster, the confirmation p
 - **WHEN** `pmox delete 104` is invoked
 - **THEN** the command SHALL resolve `104` as a VMID, not a name
 - **AND** the resolver SHALL look up the VM's node via `ClusterResources` so the destroy targets the correct node
+
+#### Scenario: Snippet cleanup uses the storage embedded in `cicustom`
+- **WHEN** the destroyed VM has `cicustom=user=local:snippets/pmox-104-user-data.yaml` and `server.Storage=vm-data`
+- **THEN** the command SHALL call `DeleteSnippet(node, "local", "pmox-104-user-data.yaml")`
+- **AND** SHALL NOT issue any `DeleteSnippet` call against `vm-data` or `server.SnippetStorage`
+- **AND** SHALL tolerate legacy VMs with no `cicustom` by skipping cleanup silently

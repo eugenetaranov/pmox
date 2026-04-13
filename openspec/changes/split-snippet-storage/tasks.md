@@ -51,7 +51,7 @@
 
 - [x] 7.1 Update `pmox launch` and `pmox clone` Long help to document `--snippet-storage` and how it relates to `--storage`
 - [x] 7.2 Update `pmox configure` Long help to mention that it now picks (or enables) a snippet storage separately from the disk storage
-- [ ] 7.3 Update `README.md` and `openspec/specs/cloud-init-custom` (or equivalent) once this change is archived
+- [x] 7.3 Update `README.md` and `openspec/specs/cloud-init-custom` (or equivalent) once this change is archived
 
 ## 9. Launch snippet upload via SFTP (PVE upload endpoint rejects `snippets`)
 

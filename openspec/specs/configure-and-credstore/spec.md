@@ -137,21 +137,52 @@ record is fully populated and ready for SSH use.
 - **THEN** `NodeSSHUser`, `NodeSSHAuth == "key"`, and `NodeSSHKeyPath` SHALL be set
 - **AND** `NodeSSHPassword` SHALL be empty
 
-### Requirement: Missing SSH fields block create-template only
+### Requirement: Missing SSH fields block snippet-writing commands
 
-Commands other than `pmox create-template` SHALL continue to work when
-the server record has no SSH fields. `pmox create-template` SHALL
-detect missing SSH fields on the resolved server and exit with a clear
-error instructing the user to re-run `pmox configure`.
+`pmox create-template`, `pmox launch`, and `pmox clone` SHALL detect
+missing SSH fields on the resolved server and exit with a clear error
+instructing the user to re-run `pmox configure`. Commands that do not
+upload snippets (e.g. `pmox list`, `pmox info`, `pmox delete`) SHALL
+continue to work without SSH credentials.
 
-#### Scenario: Launch still works without SSH fields
-- **WHEN** the user runs `pmox launch` against a legacy server record missing the SSH fields
-- **THEN** the command SHALL complete normally without touching SSH
+#### Scenario: Launch fails fast without SSH fields
+- **WHEN** the user runs `pmox launch` against a server record missing the `node_ssh` block
+- **THEN** the command SHALL exit with `ExitConfig` before any clone is issued
+- **AND** SHALL print a message telling the user to run `pmox configure` to add SSH credentials
 
 #### Scenario: create-template fails fast with a clear message
 - **WHEN** the user runs `pmox create-template` against a server record missing the SSH fields
 - **THEN** the command SHALL exit non-zero before any API call
 - **AND** SHALL print a message telling the user to run `pmox configure` to add SSH credentials
+
+### Requirement: Snippet storage resolution during configure
+
+The `pmox configure` flow SHALL resolve a snippet storage for each
+configured server, independent from the disk storage, and persist it
+as `server.snippet_storage` in `config.yaml`. The snippet storage is
+the pool into which cloud-init files are uploaded; it does not have
+to match the pool that holds VM disks.
+
+#### Scenario: Exactly one storage supports snippets
+- **WHEN** `pmox configure` is run and exactly one entry returned by `ListStorage` has `snippets` in its content types
+- **THEN** configure SHALL save that entry's name as `server.snippet_storage` without prompting
+
+#### Scenario: Multiple storages support snippets
+- **WHEN** more than one entry has `snippets` in its content types
+- **THEN** configure SHALL show a TUI picker titled `Snippet storage` listing the candidates
+- **AND** SHALL save the selected name as `server.snippet_storage`
+
+#### Scenario: No storage supports snippets — offer to enable
+- **WHEN** no storage has `snippets` in its content types and at least one storage is of type `dir`, `nfs`, `cifs`, or `cephfs`
+- **THEN** configure SHALL prompt `enable snippets on "<name>"? [Y/n]` defaulting to `local` when present
+- **AND** on confirmation SHALL call `UpdateStorageContent` to append `snippets` to the pool's content list
+- **AND** SHALL save `<name>` as `server.snippet_storage`
+- **AND** on decline SHALL print manual remediation pointing at `/etc/pve/storage.cfg` and leave `snippet_storage` empty
+
+#### Scenario: No snippet-capable storage at all
+- **WHEN** zero storages can host snippets (no existing `snippets` content and no dir-backed pool)
+- **THEN** configure SHALL print the manual remediation and SHALL NOT prompt
+- **AND** SHALL still save the remaining credentials so the user can re-run after fixing storage.cfg
 
 ### Requirement: --ssh-insecure escape hatch
 

@@ -23,6 +23,10 @@ Every `pmox launch` and `pmox clone` uploads the per-server cloud-init file as a
 
 Per-server file: `~/.config/pmox/cloud-init/<host>-<port>.yaml` (one per configured PVE server; the slug comes from the canonical API URL).
 
+**Snippet storage vs disk storage.** The storage that holds the cloud-init snippet and the storage that holds the VM disk are resolved independently. `pmox configure` picks (or offers to enable `snippets` content on) a snippet-capable pool and persists it as `snippet_storage:` in `config.yaml`; the VM disk still lands on `storage:`. Override per invocation with `pmox launch --snippet-storage <pool>` / `pmox clone --snippet-storage <pool>`. If an old config has no `snippet_storage` key, launch falls back to `storage` and prints a stderr warning pointing at `pmox configure` as the permanent fix. `pmox delete` reads the snippet storage back out of the VM's existing `cicustom` value, so it always cleans up the right pool regardless of how the config currently looks.
+
+**SFTP upload.** Snippet upload goes through the configured `node_ssh` credentials via SFTP into the snippet pool's on-disk `snippets/` directory. `pmox launch` and `pmox clone` fail up-front if `node_ssh` is missing — PVE's HTTP upload endpoint hardcodes a rejection of `content=snippets`, so SSH is the only working path.
+
 **Editing it.** The starter template sets up a sudo user, injects your SSH key, installs `qemu-guest-agent`, and enables it. Anything else cloud-init supports — extra packages, `runcmd`, write_files, network config — you add by editing this file directly. Changes take effect on the next `pmox launch` or `pmox clone`; running VMs are not updated.
 
 **Rotating the SSH key.** The public key is read fresh on every render, so:

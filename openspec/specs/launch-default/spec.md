@@ -139,9 +139,15 @@ format.
 The `launch` command SHALL accept the following flags:
 
 - `--cpu N`, `--mem MB`, `--disk NG`
-- `--template <id|name>`, `--storage <id>`, `--node <name>`, `--bridge <name>`
+- `--template <id|name>`, `--storage <id>`, `--snippet-storage <id>`, `--node <name>`, `--bridge <name>`
 - `--user <name>`, `--ssh-key <path>`
 - `--wait <duration>` (default 3m), `--no-wait-ssh`
+
+`--snippet-storage` overrides `server.snippet_storage` on a single
+invocation and SHALL NOT affect disk-storage resolution. When neither
+the flag nor `server.snippet_storage` is set, the launcher SHALL fall
+back to the resolved disk storage and emit a stderr warning naming the
+fallback pool and suggesting `pmox configure` as the permanent fix.
 
 #### Scenario: Unset flags fall back to configured defaults
 - **WHEN** a flag is not passed and the resolved server has a corresponding default in `config.yaml`
