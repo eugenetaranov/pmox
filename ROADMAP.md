@@ -20,7 +20,7 @@ slices under `openspec/changes/`.
 | 6  | `list-info-lifecycle`         | ✅ Shipped  | `list`, `info`, `start`, `stop`, `delete`, `clone` (`fef837d`) |
 | 10 | `create-template`             | ✅ Shipped  | `pmox create-template` builds an Ubuntu cloud-image template in the 9000–9099 range (`c32ade3`, PVE 9 fix `78ee16e`) |
 | 7  | `cloud-init-custom`           | ✅ Shipped  | Per-server cloud-init file at `<UserConfigDir>/pmox/cloud-init/<slug>.yaml`; full-replace snippet semantics; `configure --regen-cloud-init`; snippet cleanup on delete |
-| 8  | `post-create-hooks`           | 📋 Planned  | `--post-create`, `--tack`, `--ansible`, `--strict-hooks`; proposal at `openspec/changes/post-create-hooks/` |
+| 8  | `post-create-hooks`           | ✅ Shipped  | `--post-create`, `--tack`, `--ansible`, `--strict-hooks`; `ExitHook` in `internal/exitcode` (`6164b27`) |
 | 9  | `docs-and-llms-txt`           | 📋 Planned  | Real README, `llms.txt`, `examples/`; proposal at `openspec/changes/docs-and-llms-txt/` |
 
 ### Shipped outside the original roadmap
@@ -47,18 +47,11 @@ capability specs live in `openspec/specs/`.
 
 ## Next up
 
-### 8. `post-create-hooks`
-
-Post-SSH-ready hooks: `--post-create <script>`, `--tack`, `--ansible`,
-and `--strict-hooks` to upgrade hook failure from warning to error.
-Adds `ExitHook` to `internal/exitcode`. Proposal and tasks live at
-`openspec/changes/post-create-hooks/`.
-
 ### 9. `docs-and-llms-txt`
 
 Pure-documentation slice: replace the placeholder README with a full
-user guide, ship `llms.txt`, and populate `examples/`. Should ship
-last so it can document 7 and 8 accurately.
+user guide, ship `llms.txt`, and populate `examples/`. Last slice
+before v1 — documents 7 and 8 now that they're shipped.
 
 ## Out of scope for v1
 
@@ -72,7 +65,6 @@ last so it can document 7 and 8 accurately.
 
 Questions flagged during exploration that don't block progress:
 
-- `--strict-hooks` exit code semantics (to be resolved as part of slice 8)
 - Interrupt behavior of `pmox delete` between stop and destroy
 - Keychain account-key collision when two pmox installs on one host
   configure the same URL with different credentials
