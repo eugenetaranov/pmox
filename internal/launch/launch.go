@@ -13,9 +13,25 @@ import (
 	"os"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/snippet"
 )
+
+// HookError wraps a hook execution failure. It is the sentinel type
+// exitcode.From maps to ExitHook via errors.As.
+type HookError struct {
+	Hook string
+	Err  error
+}
+
+func (e *HookError) Error() string { return fmt.Sprintf("%s hook failed: %v", e.Hook, e.Err) }
+func (e *HookError) Unwrap() error { return e.Err }
+
+// IsHookError is a marker method used by internal/exitcode to detect
+// HookError via a local interface. Using an interface avoids an import
+// cycle between exitcode and launch.
+func (e *HookError) IsHookError() {}
 
 // Progress receives phase-level UI callbacks. A nil Progress is valid —
 // Run checks and no-ops. Start is called before a phase begins; Done is
@@ -42,6 +58,23 @@ type Options struct {
 	Wait           time.Duration
 	NoWaitSSH      bool
 	CloudInitPath  string
+	// Hook is an optional post-SSH-ready hook (--post-create, --tack,
+	// --ansible). Nil means no hook phase.
+	Hook hook.Hook
+	// StrictHooks upgrades hook failure from a stderr warning (Run
+	// returns nil) to a fatal error returned as *HookError.
+	StrictHooks bool
+	// User is the SSH login user passed to hooks via PMOX_USER and to
+	// tack/ansible as --user / -u.
+	User string
+	// SSHKeyPath is the private-key path passed to ansible as
+	// --private-key. Empty if unknown.
+	SSHKeyPath string
+	// WaitForSSHFn is a test seam. When non-nil, the launch state
+	// machine calls it instead of the real WaitForSSH so hook tests
+	// can run without a live SSH endpoint. Production code leaves
+	// it nil.
+	WaitForSSHFn func(ctx context.Context, ip string, timeout time.Duration) error
 	// UploadSnippet writes the cloud-init snippet to the PVE node's
 	// snippets/ directory via SFTP. PVE's HTTP /upload endpoint
 	// rejects content=snippets, so the launcher cannot use the API
@@ -175,6 +208,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if waitBudget <= 0 {
 		waitBudget = 3 * time.Minute
 	}
+	overallDeadline := time.Now().Add(waitBudget)
 	opts.pStart("Waiting for guest agent to report IP")
 	ip, err := WaitForIP(ctx, opts.Client, opts.Node, vmid, waitBudget)
 	opts.pDone(err)
@@ -185,10 +219,49 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// Phase 8 — wait for sshd to complete a handshake, unless skipped.
 	if !opts.NoWaitSSH {
 		opts.pStart(fmt.Sprintf("Waiting for ssh on %s", ip))
-		err := WaitForSSH(ctx, ip, waitBudget)
+		waitFn := opts.WaitForSSHFn
+		if waitFn == nil {
+			waitFn = WaitForSSH
+		}
+		err := waitFn(ctx, ip, waitBudget)
 		opts.pDone(err)
 		if err != nil {
 			return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
+		}
+	}
+
+	// Phase 10 — run the post-SSH hook if configured.
+	if opts.Hook != nil {
+		if opts.NoWaitSSH {
+			if opts.Stderr != nil {
+				fmt.Fprintln(opts.Stderr, "warning: --no-wait-ssh set; hook will not run")
+			}
+		} else {
+			hookBudget := time.Until(overallDeadline)
+			if hookBudget < 30*time.Second {
+				hookBudget = 30 * time.Second
+			}
+			hookCtx, cancel := context.WithTimeout(ctx, hookBudget)
+			env := hook.Env{
+				IP:     ip,
+				Name:   opts.Name,
+				VMID:   vmid,
+				User:   opts.User,
+				Node:   opts.Node,
+				SSHKey: opts.SSHKeyPath,
+			}
+			opts.pStart(fmt.Sprintf("Running %s hook", opts.Hook.Name()))
+			hookErr := opts.Hook.Run(hookCtx, env, os.Stdout, os.Stderr)
+			cancel()
+			opts.pDone(hookErr)
+			if hookErr != nil {
+				if opts.Stderr != nil {
+					fmt.Fprintf(opts.Stderr, "warning: %s hook failed: %v\n", opts.Hook.Name(), hookErr)
+				}
+				if opts.StrictHooks {
+					return nil, &HookError{Hook: opts.Hook.Name(), Err: hookErr}
+				}
+			}
 		}
 	}
 

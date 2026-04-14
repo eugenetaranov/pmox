@@ -50,6 +50,7 @@ configured snippet_storage, then to --storage with a warning.`,
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
+	addHookFlags(cmd, f)
 	return cmd
 }
 
@@ -57,6 +58,12 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// Resolve hook flags first so mutual-exclusion errors short-circuit
+	// before any config load / server resolution / PVE call.
+	hk, err := resolveHook(f)
+	if err != nil {
+		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -106,6 +113,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	upload, closeUpload := newSnippetUploader(resolved)
 	defer closeUpload()
 
+	user, sshKey := hookSSHDefaults(srv)
 	partial := launch.Options{
 		CPU:            cpu,
 		MemMB:          mem,
@@ -120,6 +128,10 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 		Stderr:         cmd.ErrOrStderr(),
 		Verbose:        verbose,
 		Progress:       newLaunchProgress(cmd.ErrOrStderr()),
+		Hook:           hk,
+		StrictHooks:    f.strictHooks,
+		User:           user,
+		SSHKeyPath:     sshKey,
 	}
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }

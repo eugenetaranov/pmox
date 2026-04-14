@@ -3,16 +3,20 @@ package launch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 )
@@ -307,6 +311,164 @@ func TestRun_SSHWarning(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "ssh_authorized_keys") {
 		t.Errorf("stderr = %q, want ssh warning", stderr.String())
+	}
+}
+
+// fakeWaitSSH returns a WaitForSSHFn that always succeeds immediately.
+// Used by hook-phase tests so they don't need a live :22 endpoint.
+func fakeWaitSSH() func(ctx context.Context, ip string, timeout time.Duration) error {
+	return func(_ context.Context, _ string, _ time.Duration) error { return nil }
+}
+
+func writeHookScript(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "hook.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRun_HookSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook not supported on windows")
+	}
+	f := newLaunchFake(t)
+	markerDir := t.TempDir()
+	markerPath := filepath.Join(markerDir, "marker")
+	script := writeHookScript(t, "touch "+markerPath)
+
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = &hook.PostCreateHook{Path: script}
+	opts.User = "ubuntu"
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Errorf("marker file %s missing: %v", markerPath, err)
+	}
+}
+
+func TestRun_HookFailureLenient(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook not supported on windows")
+	}
+	f := newLaunchFake(t)
+	script := writeHookScript(t, "exit 1")
+
+	var stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = &hook.PostCreateHook{Path: script}
+	opts.StrictHooks = false
+	opts.Stderr = &stderr
+
+	_, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run err: %v, want nil", err)
+	}
+	if !strings.Contains(stderr.String(), "post-create hook failed") {
+		t.Errorf("stderr = %q, want 'post-create hook failed'", stderr.String())
+	}
+}
+
+func TestRun_HookFailureStrict(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook not supported on windows")
+	}
+	f := newLaunchFake(t)
+	script := writeHookScript(t, "exit 1")
+
+	var stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = &hook.PostCreateHook{Path: script}
+	opts.StrictHooks = true
+	opts.Stderr = &stderr
+
+	_, err := Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Run err=nil, want *HookError")
+	}
+	var hookErr *HookError
+	if !errors.As(err, &hookErr) {
+		t.Errorf("err = %T (%v), want *HookError", err, err)
+	}
+	if atomic.LoadInt32(&f.deleteHit) != 0 {
+		t.Errorf("strict hook failure issued %d DELETE calls, want 0", f.deleteHit)
+	}
+}
+
+func TestRun_HookSkippedOnNoWaitSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook not supported on windows")
+	}
+	f := newLaunchFake(t)
+	markerDir := t.TempDir()
+	markerPath := filepath.Join(markerDir, "marker")
+	script := writeHookScript(t, "touch "+markerPath)
+
+	var stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = true
+	opts.Hook = &hook.PostCreateHook{Path: script}
+	opts.Stderr = &stderr
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if _, err := os.Stat(markerPath); err == nil {
+		t.Errorf("marker file %s exists; hook should have been skipped", markerPath)
+	}
+	if !strings.Contains(stderr.String(), "--no-wait-ssh set; hook will not run") {
+		t.Errorf("stderr = %q, want skip warning", stderr.String())
+	}
+}
+
+// deadlineHook records the context deadline it was invoked with.
+type deadlineHook struct {
+	deadline time.Time
+	hasDL    bool
+}
+
+func (h *deadlineHook) Name() string { return "deadline" }
+
+func (h *deadlineHook) Run(ctx context.Context, _ hook.Env, _, _ io.Writer) error {
+	h.deadline, h.hasDL = ctx.Deadline()
+	return nil
+}
+
+func TestRun_HookTimeoutFloor(t *testing.T) {
+	f := newLaunchFake(t)
+	dh := &deadlineHook{}
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = dh
+	// A tiny Wait budget simulates wait-IP + wait-SSH consuming
+	// nearly everything. The floor should kick in and grant >=30s.
+	opts.Wait = 100 * time.Millisecond
+
+	start := time.Now()
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if !dh.hasDL {
+		t.Fatal("hook ctx had no deadline; want one derived from hook budget")
+	}
+	remaining := time.Until(dh.deadline)
+	// time.Until is measured at the assertion point, not at hook
+	// invocation — subtract a small slack to allow for the elapsed
+	// time between hook invocation and this check.
+	elapsed := time.Since(start)
+	grantedAtInvocation := remaining + elapsed
+	if grantedAtInvocation < 30*time.Second {
+		t.Errorf("hook deadline granted = %v, want >=30s floor", grantedAtInvocation)
 	}
 }
 

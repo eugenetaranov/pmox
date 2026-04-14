@@ -14,6 +14,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
@@ -44,6 +45,10 @@ type launchFlags struct {
 	bridge         string
 	wait           time.Duration
 	noWaitSSH      bool
+	postCreate     string
+	tack           string
+	ansible        string
+	strictHooks    bool
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -97,13 +102,74 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
+	addHookFlags(cmd, f)
 	return cmd
 }
+
+// addHookFlags registers the post-create hook flags on a launch-style
+// command. Shared between launch and clone so their hook surface stays
+// identical.
+func addHookFlags(cmd *cobra.Command, f *launchFlags) {
+	cmd.Flags().StringVar(&f.postCreate, "post-create", "", "path to a script to run after SSH is ready; receives PMOX_IP, PMOX_VMID, PMOX_NAME, PMOX_USER, PMOX_NODE env vars")
+	cmd.Flags().StringVar(&f.tack, "tack", "", "path to a tack config; runs tack apply against the new VM after SSH is ready")
+	cmd.Flags().StringVar(&f.ansible, "ansible", "", "path to an Ansible playbook; runs ansible-playbook against the new VM after SSH is ready")
+	cmd.Flags().BoolVar(&f.strictHooks, "strict-hooks", false, "treat hook failure as fatal (exit ExitHook) instead of a stderr warning")
+}
+
+// resolveHook enforces mutual exclusion among --post-create, --tack,
+// and --ansible and returns the chosen hook implementation (or nil).
+// The error returned when multiple flags are set wraps ErrUserInput so
+// the top-level exit-code mapping produces ExitUserError.
+func resolveHook(f *launchFlags) (hook.Hook, error) {
+	var set []string
+	if f.postCreate != "" {
+		set = append(set, "--post-create")
+	}
+	if f.tack != "" {
+		set = append(set, "--tack")
+	}
+	if f.ansible != "" {
+		set = append(set, "--ansible")
+	}
+	if len(set) > 1 {
+		return nil, fmt.Errorf("%w: --post-create, --tack, and --ansible are mutually exclusive; pick one of %s", exitcode.ErrUserInput, strings.Join(set, ", "))
+	}
+	switch {
+	case f.postCreate != "":
+		return &hook.PostCreateHook{Path: f.postCreate}, nil
+	case f.tack != "":
+		return &hook.TackHook{ConfigPath: f.tack}, nil
+	case f.ansible != "":
+		return &hook.AnsibleHook{PlaybookPath: f.ansible}, nil
+	}
+	return nil, nil
+}
+
+// hookSSHDefaults resolves the SSH user and private-key path exposed to
+// hooks via Env.User / Env.SSHKey. Honors server.User (fallback to the
+// built-in defaultUser) and derives the private key from the configured
+// ssh_pubkey by stripping `.pub`.
+func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
+	user = firstNonEmpty(srv.User, defaultUser)
+	if srv.SSHPubkey != "" {
+		sshKey = expandHome(strings.TrimSuffix(srv.SSHPubkey, ".pub"))
+	}
+	return user, sshKey
+}
+
 
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	// Resolve hook flags before any config load / server resolution /
+	// PVE call so --post-create + --tack (etc.) fail immediately with
+	// zero network traffic.
+	hk, err := resolveHook(f)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.Load()
@@ -135,6 +201,9 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	if err != nil {
 		return err
 	}
+	opts.Hook = hk
+	opts.StrictHooks = f.strictHooks
+	opts.User, opts.SSHKeyPath = hookSSHDefaults(resolved.Server)
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)

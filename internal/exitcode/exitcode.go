@@ -19,7 +19,16 @@ const (
 	ExitNetworkError = 5
 	ExitUnauthorized = 6
 	ExitTimeout      = 7
+	ExitHook         = 8
 )
+
+// hookErrMarker is implemented by *launch.HookError. Using a local
+// interface lets From detect hook failures via errors.As without
+// importing internal/launch (which would create a cycle since launch
+// imports other internal packages).
+type hookErrMarker interface {
+	IsHookError()
+}
 
 // ErrUserInput is a sentinel for interactive-prompt input errors
 // (invalid entries, too many attempts).
@@ -34,6 +43,10 @@ var ErrNotFound = errors.New("not found")
 func From(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	var hookErr hookErrMarker
+	if errors.As(err, &hookErr) {
+		return ExitHook
 	}
 	switch {
 	case errors.Is(err, pveclient.ErrUnauthorized):
