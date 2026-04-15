@@ -62,3 +62,31 @@ jobs:
         with:
           version: v1.64
           args: --timeout=3m
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Filter changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            docs:
+              - 'README.md'
+              - 'llms.txt'
+              - 'docs/**'
+              - 'examples/**'
+              - 'internal/tools/doccheck/**'
+              - 'Makefile'
+
+      - name: Set up Go
+        if: steps.changes.outputs.docs == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: make docs-check
+        if: steps.changes.outputs.docs == 'true'
+        run: make docs-check

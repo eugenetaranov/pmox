@@ -1,4 +1,4 @@
-.PHONY: build build-all build-linux build-darwin test test-coverage lint clean run install deps release release-dry-run release-snapshot release-check list
+.PHONY: build build-all build-linux build-darwin test test-coverage lint clean run install deps release release-dry-run release-snapshot release-check docs-check list
 
 list: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | sort | awk -F ':.*## ' '{printf "  %-24s %s\n", $$1, $$2}'
@@ -36,6 +36,13 @@ test-coverage: ## Run tests with coverage report
 
 lint: ## Run linter
 	golangci-lint run
+
+docs-check: ## Validate internal links in README, llms.txt, docs/, examples/
+	@if command -v lychee >/dev/null 2>&1; then \
+		lychee --offline README.md llms.txt docs/ examples/; \
+	else \
+		go run ./internal/tools/doccheck; \
+	fi
 
 clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR)
