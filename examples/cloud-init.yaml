@@ -1,11 +1,20 @@
 #cloud-config
-# Minimal pmox cloud-init example. Pass to `pmox launch --cloud-init`
-# or `pmox clone --cloud-init`. When --cloud-init is set, pmox does
-# NOT inject its own user/ssh-key/DHCP config — this file becomes the
-# VM's entire user-data.
+# Example cloud-init user-data for pmox.
+#
+# pmox does not take a --cloud-init flag. Instead, every launch/clone
+# uploads the per-server file at ~/.config/pmox/cloud-init/<slug>.yaml
+# as the VM's user-data. `pmox configure` writes a working starter
+# file on first run; edit it in place to add packages, users, runcmd,
+# write_files, network config, etc. To regenerate a fresh default,
+# run `pmox configure --regen-cloud-init`.
+#
+# This file is a reference snapshot of what a minimal working
+# cloud-init looks like. Copy it into
+# ~/.config/pmox/cloud-init/<slug>.yaml (replacing the ssh key) if
+# you want to bootstrap by hand instead of going through `configure`.
 
 users:
-  - name: ubuntu
+  - name: pmox
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     ssh_authorized_keys:

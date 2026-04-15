@@ -1,0 +1,23 @@
+# Example Ansible playbook for pmox launch --ansible.
+#
+# Invoked as:
+#   ansible-playbook -i <ip>, -u <user> --private-key <key> \
+#     -e pmox_vmid=<vmid> -e pmox_name=<name> ./playbook.yaml
+#
+# Note the trailing comma after the IP — that is Ansible's inline
+# inventory syntax for a single-host run. Requires `ansible-playbook`
+# on PATH.
+#
+# Usage:
+#   pmox launch --ansible ./examples/ansible/playbook.yaml web1
+---
+- name: pmox post-create provision
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: install htop
+      ansible.builtin.apt:
+        name: htop
+        state: present
+        update_cache: true

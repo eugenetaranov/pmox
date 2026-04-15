@@ -1,0 +1,20 @@
+# Example tack config for pmox launch --tack.
+#
+# Invoked as `tack apply --host <ip> --user <user> ./tack.yaml` after
+# the launched VM reports an IP and pmox confirms SSH is reachable.
+# Requires the `tack` binary on PATH — install from
+# https://github.com/tackhq/tack.
+#
+# Usage:
+#   pmox launch --tack ./examples/tack.yaml web1
+#
+# This minimal config installs htop via apt. Replace or extend the
+# `steps:` list with whatever your VM needs; tack supports shell
+# commands, file templates, systemd units, and more. See tack's own
+# examples at https://github.com/tackhq/tack/tree/main/examples.
+
+steps:
+  - name: install htop
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y htop
