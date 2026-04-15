@@ -1,0 +1,133 @@
+# pmox
+
+> A single static Go binary that launches and manages ephemeral VMs
+> on a remote Proxmox VE cluster via the PVE HTTP API. A
+> multipass-style CLI for homelabs and dev clusters where Terraform
+> is too much and the web UI is too slow. Does not run on the
+> Proxmox host.
+
+## Commands
+
+- `pmox configure`: interactive setup — API URL, token, node SSH credentials, default node/template/storage/bridge, SSH public key; writes `~/.config/pmox/cloud-init/<slug>.yaml`.
+- `pmox configure --list`: print configured server URLs.
+- `pmox configure --remove <url>`: forget a configured server and its keychain secrets.
+- `pmox configure --regen-cloud-init`: rewrite the per-server cloud-init file from the current `ssh_pubkey`.
+- `pmox create-template`: download an Ubuntu cloud image, bake `qemu-guest-agent` in, convert to a template in the 9000–9099 VMID range. Requires PVE 8.0+ and a TTY.
+- `pmox launch <name>`: clone the configured template, tag with `pmox`, upload cloud-init snippet, start, wait for guest-agent IP, handshake SSH.
+- `pmox clone <source> <new-name>`: same state machine as launch, but the source is any existing VM or template.
+- `pmox list`: list pmox-tagged VMs with IPs. `--all` includes every VM on the cluster.
+- `pmox info [name|vmid]`: cpu/mem/disk/status/uptime/interfaces for one VM. Arg optional (picker).
+- `pmox start [name|vmid]`: start a VM and wait for guest-agent IP. `--no-wait` skips the poll.
+- `pmox stop [name|vmid]`: ACPI graceful shutdown. `--force` for hard power-off; `--no-wait` to return as soon as the task is queued.
+- `pmox delete [name|vmid]`: stop + destroy + snippet cleanup. Confirmation prompt by default; `--yes` / `PMOX_ASSUME_YES=1` to skip.
+- `pmox shell [name|vmid]`: interactive SSH; auto-starts stopped VMs.
+- `pmox exec [name|vmid] -- <cmd>`: run one command on a VM over SSH; `--` separator required.
+- `pmox cp <src> <dst>`: scp-based copy; exactly one side uses `<name>:<path>`.
+- `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>`.
+- `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
+- `pmox umount [<name>:<remote>]`: stop background-mode mounts. Empty arg stops every mount for the picked VM.
+
+## Flags
+
+Persistent root flags (every command):
+`--server <url>` — pick which configured server to target (overrides `PMOX_SERVER`).
+`--debug` / `-d` — detailed debug output.
+`--verbose` / `-v` — verbose progress.
+`--no-color` — disable colored output.
+`--output <text|json>` — machine-readable output where supported.
+`--ssh-insecure` — skip SSH host-key verification (env `PMOX_SSH_INSECURE`).
+
+`pmox launch` / `pmox clone`:
+`--cpu <n>`, `--mem <MB>`, `--disk <size>`, `--storage <pool>`, `--snippet-storage <pool>`, `--bridge <name>`, `--node <name>`, `--wait <duration>`, `--no-wait-ssh`, `--post-create <path>`, `--tack <path>`, `--ansible <path>`, `--strict-hooks`.
+`--post-create` / `--tack` / `--ansible` are mutually exclusive — one per invocation.
+
+`pmox delete`:
+`--yes` / `-y` (skip confirm), `--force` (bypass pmox tag check + hard stop).
+
+`pmox start`:
+`--wait <duration>`, `--no-wait`.
+
+`pmox stop`:
+`--force`, `--no-wait`.
+
+`pmox shell` / `exec` / `cp` / `sync`:
+`--user` / `-u`, `--identity` / `-i`, `--force` (bypass tag check). `cp` adds `--recursive` / `-r`.
+
+`pmox mount`:
+`--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable), `--no-delete`, plus `-- <rsync-extras>`.
+
+## Exit codes
+
+| Code | Name              | Meaning                                                         |
+| ---- | ----------------- | --------------------------------------------------------------- |
+| 0    | `ExitOK`          | success                                                         |
+| 1    | `ExitGeneric`     | uncategorized error                                             |
+| 2    | `ExitUserError`   | invalid user input (bad flag value, prompt refusal)             |
+| 3    | `ExitNotFound`    | configured resource missing (server, credential, VM)            |
+| 4    | `ExitAPIError`    | PVE API returned a non-2xx other than 401/404                   |
+| 5    | `ExitNetworkError`| network or TLS failure reaching the PVE API                     |
+| 6    | `ExitUnauthorized`| 401 from the PVE API (bad token or privilege)                   |
+| 7    | `ExitTimeout`     | deadline exceeded (wait-IP, wait-SSH, task polling)             |
+| 8    | `ExitHook`        | `--strict-hooks` set and a post-create hook failed              |
+
+Canonical source: `internal/exitcode/exitcode.go`.
+
+## Config file
+
+Location: `$XDG_CONFIG_HOME/pmox/config.yaml`, else `~/.config/pmox/config.yaml`.
+Mode: 0600 file inside a 0700 directory. YAML.
+
+Shape:
+
+```yaml
+servers:
+  https://pve.lan:8006:
+    token_id: pmox@pve!pmox
+    node: pve
+    template: ubuntu-24.04
+    storage: local-lvm
+    snippet_storage: local
+    bridge: vmbr0
+    ssh_pubkey: /home/you/.ssh/id_ed25519.pub
+    user: pmox
+    insecure: false
+    node_ssh:
+      user: root
+      auth: key          # "password" | "key"
+      key_path: /home/you/.ssh/id_ed25519
+mount_excludes:
+  - .git
+  - node_modules
+```
+
+Secrets (API token secret, node SSH password, key passphrase) live
+in the system keychain via go-keyring — not in `config.yaml`.
+
+Per-server cloud-init user-data:
+`~/.config/pmox/cloud-init/<host>-<port>.yaml`. Uploaded as a
+`snippets` volume on every launch/clone and referenced via
+`cicustom`. Edit in place; `pmox configure --regen-cloud-init`
+rewrites it from the stored pubkey.
+
+## Environment variables
+
+- `PMOX_SERVER` — select configured server; overridden by `--server`.
+- `PMOX_SSH_INSECURE` — equivalent to `--ssh-insecure`.
+- `PMOX_ASSUME_YES` — equivalent to `--yes` for `pmox delete`.
+- `PMOX_IP`, `PMOX_VMID`, `PMOX_NAME`, `PMOX_USER`, `PMOX_NODE` — set in the environment of `--post-create` hook scripts.
+
+## Examples
+
+- [examples/cloud-init.yaml](./examples/cloud-init.yaml) — reference cloud-init user-data.
+- [examples/post-create.sh](./examples/post-create.sh) — minimal `--post-create` script; SSHes in and waits for `cloud-init status --wait`.
+- [examples/tack.yaml](./examples/tack.yaml) — minimal tack config installing htop.
+- [examples/ansible/playbook.yaml](./examples/ansible/playbook.yaml) — minimal Ansible playbook installing htop.
+- [examples/README.md](./examples/README.md) — index.
+
+## Links
+
+- README: https://github.com/eugenetaranov/pmox/blob/main/README.md
+- Roadmap: https://github.com/eugenetaranov/pmox/blob/main/ROADMAP.md
+- PVE setup guide: https://github.com/eugenetaranov/pmox/blob/main/docs/pve-setup.md
+- tack (companion provisioning tool): https://github.com/tackhq/tack
+- Releases: https://github.com/eugenetaranov/pmox/releases
