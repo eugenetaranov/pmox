@@ -21,7 +21,7 @@ slices under `openspec/changes/`.
 | 10 | `create-template`             | ✅ Shipped  | `pmox create-template` builds an Ubuntu cloud-image template in the 9000–9099 range (`c32ade3`, PVE 9 fix `78ee16e`) |
 | 7  | `cloud-init-custom`           | ✅ Shipped  | Per-server cloud-init file at `<UserConfigDir>/pmox/cloud-init/<slug>.yaml`; full-replace snippet semantics; `configure --regen-cloud-init`; snippet cleanup on delete |
 | 8  | `post-create-hooks`           | ✅ Shipped  | `--post-create`, `--tack`, `--ansible`, `--strict-hooks`; `ExitHook` in `internal/exitcode` (`6164b27`) |
-| 9  | `docs-and-llms-txt`           | 📋 Planned  | Real README, `llms.txt`, `examples/`; proposal at `openspec/changes/docs-and-llms-txt/` |
+| 9  | `docs-and-llms-txt`           | ✅ Shipped  | Full README, `llms.txt`, `docs/pve-setup.md`, runnable `examples/`, offline link checker + CI gate |
 
 ### Shipped outside the original roadmap
 
@@ -47,11 +47,9 @@ capability specs live in `openspec/specs/`.
 
 ## Next up
 
-### 9. `docs-and-llms-txt`
-
-Pure-documentation slice: replace the placeholder README with a full
-user guide, ship `llms.txt`, and populate `examples/`. Last slice
-before v1 — documents 7 and 8 now that they're shipped.
+All v1 feature slices are shipped. Remaining pre-release work is
+tracked under [Prereqs for the first real release](#prereqs-for-the-first-real-release)
+below.
 
 ## Out of scope for v1
 
