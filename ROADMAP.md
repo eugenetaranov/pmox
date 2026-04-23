@@ -38,6 +38,7 @@ part of real user flows:
 | `confirm-destructive-commands`     | y/N prompt before `pmox delete` |
 | `enforce-full-clone`               | Tighten `Clone` spec / behavior to always pass `full=1` |
 | `mount-daemon-logs`                | Daemonized mount writes log file, proper pid display |
+| `split-snippet-storage`            | `snippet_storage` config key + `--snippet-storage` flag; `configure` picks or enables snippets on a dir pool independently from disk storage |
 | `mount-umount-optional-target`     | Mount/umount accept a bare remote path and route through the picker |
 | `mount-daemon-default`             | Background mode is now the default for `pmox mount`; `--foreground`/`-F` opts out |
 | `ssh-user-precedence`              | Honor `server.user` from config in shell/exec/cp/sync/mount |

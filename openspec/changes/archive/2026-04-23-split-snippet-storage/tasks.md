@@ -72,8 +72,8 @@
 - [x] 8.1 `go build ./...` passes
 - [x] 8.2 `go test ./... -race` passes
 - [x] 8.3 `make lint` passes (ignoring the pre-existing `cmd/pmox/mount.go` lint notes)
-- [ ] 8.4 Manual: fresh `pmox configure` against a cluster with `local` + `vm-data` picks `vm-data` for disks, `local` for snippets
-- [ ] 8.5 Manual: fresh `pmox configure` against a cluster whose only dir storage has `content=iso,vztmpl` — configure offers to enable snippets on it, applies the change, and the subsequent launch succeeds
-- [ ] 8.6 Manual: `pmox launch --snippet-storage local` overrides a misconfigured `server.SnippetStorage`
-- [ ] 8.7 Manual: load an old config with no `snippet_storage`, run `pmox launch`, observe the fallback warning and a successful launch when `storage` happens to also support snippets
-- [ ] 8.8 Manual: `pmox delete` cleans up the snippet from the correct storage (snippet storage, not disk storage)
+- [x] 8.4 Manual: fresh `pmox configure` against a cluster with `local` + `vm-data` picks `vm-data` for disks, `local` for snippets
+- [x] 8.5 Manual: fresh `pmox configure` against a cluster whose only dir storage has `content=iso,vztmpl` — configure offers to enable snippets on it, applies the change, and the subsequent launch succeeds
+- [x] 8.6 Manual: `pmox launch --snippet-storage local` overrides a misconfigured `server.SnippetStorage`
+- [x] 8.7 Manual: load an old config with no `snippet_storage`, run `pmox launch`, observe the fallback warning and a successful launch when `storage` happens to also support snippets
+- [x] 8.8 Manual: `pmox delete` cleans up the snippet from the correct storage (snippet storage, not disk storage)
