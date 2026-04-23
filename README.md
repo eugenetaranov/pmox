@@ -10,9 +10,9 @@ talks to PVE over HTTPS for VM lifecycle, and over SSH/SFTP for
 cloud-init snippet upload. One command builds a template
 (`pmox create-template`); another launches a cloud-init-ready VM
 and waits for it to be reachable (`pmox launch`). The rest of the
-command set — `shell`, `exec`, `cp`, `sync`, `mount`, `list`,
-`info`, `start`, `stop`, `delete`, `clone` — exists so you rarely
-need to open the PVE web UI again.
+command set — `shell`, `exec`, `cp`, `sync`, `mount`, `umount`,
+`list`, `info`, `start`, `stop`, `delete`, `clone` — exists so you
+rarely need to open the PVE web UI again.
 
 ## Install
 
@@ -81,9 +81,11 @@ public key. It writes a starter cloud-init file to
 | `umount` | Stop background-mode mounts for a VM | `pmox umount web1` |
 
 Single-target commands (`info`, `start`, `stop`, `delete`, `shell`,
-`exec`, `mount`, `umount`) accept an optional `[name|vmid]` argument.
-Omit it and pmox auto-selects the only pmox-tagged VM when exactly
-one exists, or shows an interactive picker when several do.
+`exec`) accept an optional `[name|vmid]` argument. Omit it and pmox
+auto-selects the only pmox-tagged VM when exactly one exists, or
+shows an interactive picker when several do. `mount` and `umount`
+follow the same auto-select rule when the VM prefix is omitted from
+the `[<name|vmid>:]<remote_path>` argument.
 
 Run `pmox <command> --help` for the full flag set of any command.
 
@@ -149,7 +151,7 @@ pmox launch --tack ./examples/tack.yaml web1
 pmox launch --ansible ./examples/ansible/playbook.yaml web1
 ```
 
-- `--post-create <script>` exec's the script directly (no shell
+- `--post-create <script>` runs the script directly (no shell
   wrapper). The environment contains `PMOX_IP`, `PMOX_VMID`,
   `PMOX_NAME`, `PMOX_USER`, `PMOX_NODE`.
 - `--tack <config>` runs `tack apply --host <ip> --user <user> <config>`.
