@@ -496,11 +496,6 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 	return nil
 }
 
-func cleanPIDFileOnShutdown(localPath, vmName, remotePath string) {
-	pidPath := pidFilePath(vmName, localPath, remotePath)
-	os.Remove(pidPath)
-}
-
 // --- Umount command ---
 
 // umountResolveVMFn resolves the target VM when umount is invoked with
@@ -630,14 +625,14 @@ func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
 		// Wait for process to exit (with timeout)
 		done := make(chan struct{})
 		go func() {
-			process.Wait()
+			_, _ = process.Wait()
 			close(done)
 		}()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
 			fmt.Fprintf(cmd.ErrOrStderr(), "process %d did not exit within 10s, sending SIGKILL\n", pid)
-			process.Signal(syscall.SIGKILL)
+			_ = process.Signal(syscall.SIGKILL)
 		}
 
 		os.Remove(pidPath)
@@ -713,13 +708,13 @@ func umountAll(cmd *cobra.Command, vmName string) error {
 
 		done := make(chan struct{})
 		go func() {
-			process.Wait()
+			_, _ = process.Wait()
 			close(done)
 		}()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
-			process.Signal(syscall.SIGKILL)
+			_ = process.Signal(syscall.SIGKILL)
 		}
 
 		os.Remove(pidPath)

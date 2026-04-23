@@ -11,7 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 )
+
+// waitDelay caps how long Wait blocks after the process exits (or ctx
+// cancel fires) when a descendant still holds stdout/stderr open.
+// Without it, a hook that backgrounds a child keeps pmox hanging.
+const waitDelay = 500 * time.Millisecond
 
 // Env is the set of values a hook receives about the just-launched VM.
 // It is locked by spec and exposed to shell hooks as PMOX_* env vars.
@@ -59,6 +65,7 @@ func (h *PostCreateHook) Run(ctx context.Context, env Env, stdout, stderr io.Wri
 	cmd.Env = setenv(env)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.WaitDelay = waitDelay
 	return cmd.Run()
 }
 
@@ -81,6 +88,7 @@ func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) e
 	cmd.Env = os.Environ()
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.WaitDelay = waitDelay
 	return cmd.Run()
 }
 
@@ -110,5 +118,6 @@ func (h *AnsibleHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer
 	cmd.Env = os.Environ()
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.WaitDelay = waitDelay
 	return cmd.Run()
 }
