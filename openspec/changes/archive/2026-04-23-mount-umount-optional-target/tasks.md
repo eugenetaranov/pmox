@@ -26,4 +26,4 @@
 - [x] 4.1 Update `README.md` (and `docs/llms.txt` if it covers mount/umount) to mention the optional `<name|vmid>:` prefix on `pmox mount` and the zero-arg `pmox umount` form
 - [x] 4.2 Run `go build ./...` and `go test ./...` clean
 - [x] 4.3 Run `golangci-lint run ./...` clean
-- [ ] 4.4 Manual smoke test: `pmox mount ./src /tmp/foo` with one VM auto-selects; `pmox umount` with one VM stops all of its mounts
+- [x] 4.4 Manual smoke test: `pmox mount ./src /tmp/foo` with one VM auto-selects; `pmox umount` with one VM stops all of its mounts
