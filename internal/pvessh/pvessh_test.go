@@ -34,7 +34,7 @@ func TestDial_PasswordHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if err := client.Ping(ctx); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestDial_KeyHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 }
 
 func TestDial_EncryptedKeyNoPassphrase(t *testing.T) {
@@ -126,7 +126,7 @@ func TestUploadSnippet_CreatesDirAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Use the test server's rootDir as an absolute path so sftp writes
 	// land under the t.TempDir() jail.
@@ -165,7 +165,7 @@ func TestUploadSnippet_Overwrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.UploadSnippet(context.Background(), pool, "file.yaml", []byte("NEW")); err != nil {
 		t.Fatalf("upload: %v", err)
@@ -187,7 +187,7 @@ func TestUploadSnippet_ContextCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	pool := filepath.Join(srv.rootDir, "cancel")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -244,7 +244,7 @@ func TestInsecureSkipsHostKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial insecure: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 }
 
 // splitHP is a tiny wrapper so the test file doesn't depend on "net".

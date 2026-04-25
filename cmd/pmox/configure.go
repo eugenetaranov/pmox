@@ -829,7 +829,7 @@ var (
 		if err != nil {
 			return err
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		return c.Ping(ctx)
 	}
 	sshPinHostKeyFn = func(ctx context.Context, host, knownHosts string, w io.Writer, r io.Reader) error {

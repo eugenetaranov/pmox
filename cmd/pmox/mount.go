@@ -283,7 +283,7 @@ func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, loca
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := addWatchRecursive(watcher, localPath); err != nil {
 		return fmt.Errorf("watch %s: %w", localPath, err)

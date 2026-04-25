@@ -64,7 +64,7 @@ func WaitForSSH(ctx context.Context, ip string, timeout time.Duration) error {
 // already-established TCP connection. The connection is always closed
 // before the function returns.
 func sshHandshake(conn net.Conn) error {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, conn.RemoteAddr().String(), &ssh.ClientConfig{
 		User:            "pmox",
