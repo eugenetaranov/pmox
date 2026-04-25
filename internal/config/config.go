@@ -168,7 +168,7 @@ func CanonicalizeURL(raw string) (string, error) {
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "https" {
-		return "", fmt.Errorf("pmox requires https; got %s://...", u.Scheme)
+		return "", fmt.Errorf("pmox requires https; got scheme %q", u.Scheme)
 	}
 	if u.Host == "" {
 		return "", errors.New("url is missing host")

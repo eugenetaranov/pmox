@@ -64,7 +64,7 @@ func ValidateStorage(ctx context.Context, client *pveclient.Client, node, storag
 				return nil
 			}
 		}
-		return fmt.Errorf(`storage %q does not have 'snippets' in its content types.
+		return fmt.Errorf(`storage %q does not have 'snippets' in its content types
 
   current content: %s
   expected to include: snippets
@@ -75,7 +75,7 @@ fix options:
   2. re-run with --storage <other-storage> pointing to a storage
      that supports snippets (see: pmox configure --list-storage)
 
-see https://pve.proxmox.com/wiki/Storage for content-type details.`, storage, s.Content)
+see https://pve.proxmox.com/wiki/Storage for content-type details`, storage, s.Content)
 	}
 	return fmt.Errorf("storage %q not found on node %s", storage, node)
 }

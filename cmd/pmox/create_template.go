@@ -83,7 +83,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 
 	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload). Run 'pmox configure' to add SSH credentials.", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload); run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
 	}
 
 	srv := resolved.Server

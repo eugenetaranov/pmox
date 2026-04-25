@@ -6,3 +6,18 @@ version: "2"
 
 run:
   timeout: 3m
+
+linters:
+  settings:
+    errcheck:
+      # Restore the v1-era defaults for calls whose errors are
+      # intentionally ignored across the codebase: deferred Close on
+      # any io.Closer, terminal Fprint* writes, and best-effort
+      # os.Remove in cleanup branches.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - os.Remove
