@@ -20,7 +20,15 @@ const (
 	ExitUnauthorized = 6
 	ExitTimeout      = 7
 	ExitHook         = 8
+	ExitWarnings     = 9 // doctor --strict: all checks passed but warnings present
 )
+
+// codeCarrier is implemented by errors that already know their exact
+// process exit code (e.g. `pmox doctor`, which picks the code of the
+// worst failing check). From honors it before any sentinel matching.
+type codeCarrier interface {
+	ExitCode() int
+}
 
 // hookErrMarker is implemented by *launch.HookError. Using a local
 // interface lets From detect hook failures via errors.As without
@@ -43,6 +51,10 @@ var ErrNotFound = errors.New("not found")
 func From(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	var carrier codeCarrier
+	if errors.As(err, &carrier) {
+		return carrier.ExitCode()
 	}
 	var hookErr hookErrMarker
 	if errors.As(err, &hookErr) {

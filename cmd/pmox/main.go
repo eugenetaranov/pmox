@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,14 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 )
+
+// selfReporter is implemented by errors that have already rendered their
+// own user-facing output (e.g. `pmox doctor`, which prints a full report
+// and only returns an error to carry the exit code). main skips the
+// generic "Error: ..." line for these.
+type selfReporter interface {
+	ExitCode() int
+}
 
 var (
 	version = "dev"
@@ -96,6 +105,7 @@ func init() {
 	rootCmd.AddCommand(newSyncCmd())
 	rootCmd.AddCommand(newMountCmd())
 	rootCmd.AddCommand(newUmountCmd())
+	rootCmd.AddCommand(newDoctorCmd())
 }
 
 // signalContext returns a context that is cancelled on the first SIGINT/SIGTERM
@@ -149,7 +159,9 @@ func main() {
 	if err != nil {
 		// If the context was cancelled (Ctrl+C), the signal handler already
 		// printed "Interrupted, cleaning up..."; skip the duplicate error line.
-		if ctx.Err() == nil {
+		// Also skip errors that already rendered their own output.
+		var self selfReporter
+		if ctx.Err() == nil && !errors.As(err, &self) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}

@@ -65,6 +65,7 @@ public key. It writes a starter cloud-init file to
 | Command | Summary | Example |
 | --- | --- | --- |
 | `configure` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox configure` |
+| `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox launch web1` |
 | `clone` | Clone any existing VM or template into a new VM | `pmox clone web1 web2` |
@@ -88,6 +89,29 @@ follow the same auto-select rule when the VM prefix is omitted from
 the `[<name|vmid>:]<remote_path>` argument.
 
 Run `pmox <command> --help` for the full flag set of any command.
+
+## Checking readiness
+
+`pmox doctor` runs read-only checks and tells you whether pmox is ready
+to launch VMs — validating config, API reachability and token
+privileges, the target node's online status, storage/template
+readiness, node SSH, and local tooling. It never prompts or changes
+anything.
+
+```
+pmox doctor            # human report; exits non-zero if any check fails
+pmox doctor --strict   # also fail on warnings (good for CI)
+pmox doctor --output json | jq '.checks[] | select(.status=="fail")'
+```
+
+Each check reports `✓ pass`, `! warn`, or `✗ fail` with an exact
+remediation hint (e.g. the missing privilege name and the `pveum` line
+to grant it, or the `pvesm set … snippets` command). Warnings don't
+block readiness unless `--strict` is set. The exit code follows the
+same taxonomy as other commands (unauthorized, network, not-found,
+timeout, …), so CI can gate on it; `--output json` (with a stable
+`schema_version` and per-check `id`) is the machine-readable form.
+Add `--verbose` to also list passing checks.
 
 ## Cloud-init
 
