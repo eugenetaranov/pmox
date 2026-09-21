@@ -41,7 +41,45 @@ func buildClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, *s
 	}
 	srv := resolved.Server
 	warnInsecureTLS(cmd.ErrOrStderr(), resolved.URL, srv.Insecure)
+	if err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved); err != nil {
+		return nil, nil, err
+	}
 	return pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure), resolved, nil
+}
+
+// fetchCertFingerprint is overridable in tests.
+var fetchCertFingerprint = pveclient.FetchCertFingerprint
+
+// checkTLSPin implements TLS trust-on-first-use for insecure servers:
+// it pins the server's leaf-cert SHA-256 in config on first insecure
+// connect, and on later connects fails if the presented cert no longer
+// matches the pin (a possible MITM). It is a no-op for verified (secure)
+// servers, and it never blocks on a fingerprint-fetch error — the
+// subsequent API call will surface a genuine network problem itself.
+func checkTLSPin(ctx context.Context, w io.Writer, cfg *config.Config, resolved *server.Resolved) error {
+	srv := resolved.Server
+	if !srv.Insecure {
+		return nil
+	}
+	fp, err := fetchCertFingerprint(ctx, resolved.URL)
+	if err != nil {
+		return nil // don't block; the real request will report the network error
+	}
+	switch {
+	case srv.TLSPinSHA256 == "":
+		srv.TLSPinSHA256 = fp
+		if saveErr := cfg.Save(); saveErr != nil {
+			fmt.Fprintf(w, "WARNING: pinned the TLS certificate but could not save it to config: %v\n", saveErr)
+			return nil
+		}
+		fmt.Fprintf(w, "Pinned TLS certificate for %s (sha256:%s). pmox will warn if it changes.\n", resolved.URL, fp)
+		return nil
+	case srv.TLSPinSHA256 != fp:
+		return fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, clear tls_pin_sha256 for this server in the pmox config (or re-run 'pmox configure')",
+			pveclient.ErrTLSVerificationFailed, resolved.URL, srv.TLSPinSHA256, fp)
+	default:
+		return nil // pin matches
+	}
 }
 
 // insecureTLSWarned guards the one-shot insecure-TLS warning for this

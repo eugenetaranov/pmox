@@ -75,6 +75,7 @@ public key. It writes a starter cloud-init file to
 | `stop` | ACPI graceful shutdown (`--force` for hard stop) | `pmox stop web1` |
 | `delete` | Stop + destroy with y/N confirmation (`--yes` to skip) | `pmox delete web1` |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox shell web1` |
+| `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox ssh-config web1` |
 | `exec` | Run one command on a VM over SSH | `pmox exec web1 -- uname -a` |
 | `cp` | scp-based file copy to or from a VM | `pmox cp ./app.tar web1:/tmp/` |
 | `sync` | rsync-based sync to or from a VM | `pmox sync ./src/ web1:/opt/app/` |
@@ -82,7 +83,7 @@ public key. It writes a starter cloud-init file to
 | `umount` | Stop background-mode mounts for a VM | `pmox umount web1` |
 
 Single-target commands (`info`, `start`, `stop`, `delete`, `shell`,
-`exec`) accept an optional `[name|vmid]` argument. Omit it and pmox
+`exec`, `ssh-config`) accept an optional `[name|vmid]` argument. Omit it and pmox
 auto-selects the only pmox-tagged VM when exactly one exists, or
 shows an interactive picker when several do. `mount` and `umount`
 follow the same auto-select rule when the VM prefix is omitted from
@@ -291,6 +292,17 @@ latter if you grant it `Datastore.Allocate`.
 Scripts need `--yes` (or `PMOX_ASSUME_YES=1`) to bypass the
 confirmation prompt. `--force` is orthogonal — it bypasses the tag
 check, not the prompt.
+
+### `TLS certificate for … CHANGED — possible MITM`
+
+When a server is configured with `insecure: true` (self-signed cert),
+pmox pins the certificate's SHA-256 fingerprint in the config on the
+first connect and warns once per command that the transport is
+unverified. If the presented certificate later stops matching the pin,
+pmox refuses to proceed. If you deliberately replaced or renewed the
+node's certificate, clear `tls_pin_sha256` for that server in
+`~/.config/pmox/config.yaml` (or re-run `pmox configure`) and pmox will
+re-pin on the next connect.
 
 ### Snippet upload fails with an SSH handshake error
 

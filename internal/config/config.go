@@ -30,6 +30,12 @@ type Server struct {
 	User           string   `yaml:"user,omitempty"`
 	Insecure       bool     `yaml:"insecure"`
 	NodeSSH        *NodeSSH `yaml:"node_ssh,omitempty"`
+
+	// TLSPinSHA256 is the SHA-256 fingerprint (hex) of the server's leaf
+	// TLS certificate, pinned on the first insecure (unverified) connect.
+	// On later connects a mismatch is treated as a possible MITM. Only
+	// meaningful when Insecure is true.
+	TLSPinSHA256 string `yaml:"tls_pin_sha256,omitempty"`
 }
 
 // NodeSSH holds the SSH credentials pmox uses to reach the PVE node
