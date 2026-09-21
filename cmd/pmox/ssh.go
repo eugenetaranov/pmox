@@ -12,10 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
-	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -300,25 +298,3 @@ func buildSSHArgs(sshPath string, target *sshTarget, extraArgs []string) []strin
 	return args
 }
 
-func buildSSHClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, *config.Server, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, nil, err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
-	}
-	srv := resolved.Server
-	return pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure), srv, nil
-}

@@ -87,6 +87,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 
 	srv := resolved.Server
+	warnInsecureTLS(cmd.ErrOrStderr(), resolved.URL, srv.Insecure)
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {

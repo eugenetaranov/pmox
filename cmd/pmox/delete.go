@@ -11,9 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
-	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/snippet"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -121,29 +119,6 @@ func resolveTargetArg(ctx context.Context, client *pveclient.Client, args []stri
 		return "", err
 	}
 	return strconv.Itoa(ref.VMID), nil
-}
-
-func buildDeleteClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
-	}
-	srv := resolved.Server
-	return pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure), nil
 }
 
 // executeDelete holds the command logic without server/config wiring
