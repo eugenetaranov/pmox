@@ -26,6 +26,7 @@
 - `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>`.
 - `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
 - `pmox umount [<name>:<remote>]`: stop background-mode mounts. Empty arg stops every mount for the picked VM.
+- `pmox doctor`: read-only readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH (strict, never prompts), and local tooling. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report. Never prompts or writes.
 
 ## Flags
 
@@ -56,6 +57,9 @@ Persistent root flags (every command):
 `pmox mount`:
 `--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable), `--no-delete`, plus `-- <rsync-extras>`.
 
+`pmox doctor`:
+`--strict` (warnings become failures), `--timeout <duration>` (overall budget, default 20s), `--output json` (versioned per-check report), `--verbose` (list passing checks too).
+
 ## Exit codes
 
 | Code | Name              | Meaning                                                         |
@@ -66,9 +70,10 @@ Persistent root flags (every command):
 | 3    | `ExitNotFound`    | configured resource missing (server, credential, VM)            |
 | 4    | `ExitAPIError`    | PVE API returned a non-2xx other than 401/404                   |
 | 5    | `ExitNetworkError`| network or TLS failure reaching the PVE API                     |
-| 6    | `ExitUnauthorized`| 401 from the PVE API (bad token or privilege)                   |
+| 6    | `ExitUnauthorized`| 401/403 from the PVE API (bad token or missing privilege)       |
 | 7    | `ExitTimeout`     | deadline exceeded (wait-IP, wait-SSH, task polling)             |
 | 8    | `ExitHook`        | `--strict-hooks` set and a post-create hook failed              |
+| 9    | `ExitWarnings`    | `pmox doctor --strict`: all checks passed but warnings present   |
 
 Canonical source: `internal/exitcode/exitcode.go`.
 

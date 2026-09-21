@@ -42,6 +42,7 @@ part of real user flows:
 | `mount-umount-optional-target`     | Mount/umount accept a bare remote path and route through the picker |
 | `mount-daemon-default`             | Background mode is now the default for `pmox mount`; `--foreground`/`-F` opts out |
 | `ssh-user-precedence`              | Honor `server.user` from config in shell/exec/cp/sync/mount |
+| `doctor`                           | `pmox doctor` — read-only readiness checks (config, API + privilege probe, node/storage/template, node SSH, tooling) with text/JSON output and exit-code taxonomy |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
