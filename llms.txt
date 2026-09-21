@@ -22,6 +22,7 @@
 - `pmox delete [name|vmid]`: stop + destroy + snippet cleanup. Confirmation prompt by default; `--yes` / `PMOX_ASSUME_YES=1` to skip.
 - `pmox shell [name|vmid]`: interactive SSH; auto-starts stopped VMs.
 - `pmox exec [name|vmid] -- <cmd>`: run one command on a VM over SSH; `--` separator required.
+- `pmox ssh-config [name|vmid]`: print SSH connection details for a running VM — an OpenSSH config block by default, the full `ssh` command with `--command`, or JSON with `--output json`. Never starts the VM (stopped = error). Arg optional (picker).
 - `pmox cp <src> <dst>`: scp-based copy; exactly one side uses `<name>:<path>`.
 - `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>`.
 - `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
@@ -53,6 +54,9 @@ Persistent root flags (every command):
 
 `pmox shell` / `exec` / `cp` / `sync`:
 `--user` / `-u`, `--identity` / `-i`, `--force` (bypass tag check). `cp` adds `--recursive` / `-r`.
+
+`pmox ssh-config`:
+`--user` / `-u`, `--identity` / `-i`, `--force`, `--command` (print an `ssh` command instead of a config block), `--output json`.
 
 `pmox mount`:
 `--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable), `--no-delete`, plus `-- <rsync-extras>`.

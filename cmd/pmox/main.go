@@ -106,6 +106,7 @@ func init() {
 	rootCmd.AddCommand(newMountCmd())
 	rootCmd.AddCommand(newUmountCmd())
 	rootCmd.AddCommand(newDoctorCmd())
+	rootCmd.AddCommand(newSSHConfigCmd())
 }
 
 // signalContext returns a context that is cancelled on the first SIGINT/SIGTERM

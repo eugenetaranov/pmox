@@ -43,6 +43,8 @@ part of real user flows:
 | `mount-daemon-default`             | Background mode is now the default for `pmox mount`; `--foreground`/`-F` opts out |
 | `ssh-user-precedence`              | Honor `server.user` from config in shell/exec/cp/sync/mount |
 | `doctor`                           | `pmox doctor` — read-only readiness checks (config, API + privilege probe, node/storage/template, node SSH, tooling) with text/JSON output and exit-code taxonomy |
+| `tls-pinning`                       | Pin the server TLS cert (SHA-256) on first insecure connect; alert on later mismatch (possible MITM) |
+| `ssh-config`                        | `pmox ssh-config` — print an OpenSSH config block or full ssh command for a VM (Vagrant-style) |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
