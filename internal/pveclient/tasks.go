@@ -3,9 +3,26 @@ package pveclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// IsFatalPollError reports whether an error from a status poll is
+// permanent and should abort a wait loop immediately, versus a
+// transient error that should be retried until the deadline.
+//
+// Fatal: unauthorized (bad/expired token), TLS verification failure
+// (cert won't start verifying mid-poll), and resource-not-found (the
+// task/VM genuinely does not exist). Everything else — network blips
+// (ErrNetwork) and 5xx/gateway errors (ErrAPIError) — is transient:
+// the underlying PVE task keeps running server-side, so a dropped
+// connection must not be reported as a hard failure.
+func IsFatalPollError(err error) bool {
+	return errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrTLSVerificationFailed) ||
+		errors.Is(err, ErrNotFound)
+}
 
 const taskPollInterval = 500 * time.Millisecond
 
@@ -42,18 +59,28 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string, timeout time.D
 		return err
 	}
 	deadline := time.Now().Add(timeout)
+	var lastTransient error
 	for {
 		status, err := c.GetTaskStatus(ctx, node, upid)
 		if err != nil {
-			return err
-		}
-		if status.Status == "stopped" {
+			// A fatal error (auth/TLS/not-found) can't be waited out —
+			// abort now. A transient error (network blip, 5xx) must not
+			// abort the wait: the task is still running server-side, so
+			// remember it and keep polling until the deadline.
+			if IsFatalPollError(err) {
+				return err
+			}
+			lastTransient = err
+		} else if status.Status == "stopped" {
 			if status.ExitStatus == "OK" {
 				return nil
 			}
 			return fmt.Errorf("%w: pve task %s: %s", ErrAPIError, upid, status.ExitStatus)
 		}
 		if time.Now().After(deadline) {
+			if lastTransient != nil {
+				return fmt.Errorf("%w: waiting for pve task %s (last poll error: %w)", ErrTimeout, upid, lastTransient)
+			}
 			return fmt.Errorf("%w: waiting for pve task %s", ErrTimeout, upid)
 		}
 		select {
