@@ -32,6 +32,9 @@ type fakePVE struct {
 	// vmCicustom, when non-empty, is returned as the `cicustom` key
 	// from GET /config; empty means no cicustom on the VM.
 	vmCicustom string
+	// deleteFails, when true, makes the destroy (DELETE qemu) endpoint
+	// return a 500 so tests can exercise the interrupted/failed-destroy path.
+	deleteFails bool
 
 	clusterHits        int32
 	statusHits         int32
@@ -100,6 +103,10 @@ func newFakePVE(t *testing.T) *fakePVE {
 
 		case r.Method == "DELETE" && strings.HasPrefix(p, "/nodes/") && strings.Contains(p, "/qemu/"):
 			atomic.AddInt32(&f.deleteHits, 1)
+			if f.deleteFails {
+				http.Error(w, `{"data":null}`, http.StatusInternalServerError)
+				return
+			}
 			_, _ = io.WriteString(w, `{"data":"UPID:pve1:delete:"}`)
 
 		default:
@@ -210,11 +217,13 @@ func TestDelete_UntaggedWithForceProceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
-	if f.stopHits != 1 {
-		t.Errorf("stop hits = %d, want 1", f.stopHits)
+	// --force only bypasses the tag check; it uses graceful shutdown
+	// (--hard is the separate power-off flag).
+	if f.shutdownHits != 1 {
+		t.Errorf("shutdown hits = %d, want 1 (force uses graceful shutdown)", f.shutdownHits)
 	}
-	if f.shutdownHits != 0 {
-		t.Errorf("shutdown hits = %d, want 0 (force uses stop)", f.shutdownHits)
+	if f.stopHits != 0 {
+		t.Errorf("stop hits = %d, want 0", f.stopHits)
 	}
 	if f.deleteHits != 1 {
 		t.Errorf("delete hits = %d, want 1", f.deleteHits)
@@ -242,18 +251,18 @@ func TestDelete_RunningShutdownThenDestroy(t *testing.T) {
 	}
 }
 
-func TestDelete_RunningForceUsesHardStop(t *testing.T) {
+func TestDelete_HardUsesStop(t *testing.T) {
 	f := newFakePVE(t)
 	f.clusterBody = taggedRunningVM
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{force: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{hard: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
 	if f.stopHits != 1 {
-		t.Errorf("stop hits = %d, want 1", f.stopHits)
+		t.Errorf("stop hits = %d, want 1 (--hard uses stop)", f.stopHits)
 	}
 	if f.shutdownHits != 0 {
 		t.Errorf("shutdown hits = %d, want 0", f.shutdownHits)
@@ -579,6 +588,26 @@ func TestDelete_CustomCloudInitRemovesSnippet(t *testing.T) {
 	}
 	if !strings.Contains(f.snippetDeletePath, "local:snippets/pmox-100-user-data.yaml") {
 		t.Errorf("snippet delete path = %q", f.snippetDeletePath)
+	}
+}
+
+// The snippet must be removed BEFORE the irreversible destroy, so an
+// interrupted or failed destroy never leaves an orphaned snippet behind.
+// Here the destroy fails, yet the snippet is still cleaned up.
+func TestDelete_SnippetCleanedBeforeDestroyFails(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	f.vmCicustom = "user=local:snippets/pmox-100-user-data.yaml"
+	f.deleteFails = true
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	if err == nil {
+		t.Fatal("expected destroy to fail")
+	}
+	if f.snippetDeleteHits != 1 {
+		t.Errorf("snippet should be cleaned before destroy even when destroy fails; hits = %d, want 1", f.snippetDeleteHits)
 	}
 }
 

@@ -107,6 +107,24 @@ func envBool(name string) bool {
 	return v == "1" || v == "true" || v == "TRUE" || v == "yes"
 }
 
+// exactArgs requires exactly n positional arguments and, on mismatch,
+// returns an example-driven error instead of cobra's terse "accepts N
+// arg(s), received M". Arguments after a literal "--" are not counted,
+// so commands can accept a fixed number of positionals plus pass-through
+// flags (e.g. `pmox cp ./a web1:/tmp -- -l 1000`).
+func exactArgs(n int, usage, example string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		got := len(args)
+		if d := cmd.ArgsLenAtDash(); d >= 0 {
+			got = d
+		}
+		if got == n {
+			return nil
+		}
+		return fmt.Errorf("expected %d argument(s), got %d — usage: %s (example: %s)", n, got, usage, example)
+	}
+}
+
 func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	sigCh := make(chan os.Signal, 1)

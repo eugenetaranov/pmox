@@ -47,12 +47,13 @@ func TestRequestErrorMapping(t *testing.T) {
 		sentin error
 	}{
 		{http.StatusUnauthorized, ErrUnauthorized},
+		{http.StatusForbidden, ErrUnauthorized},
 		{http.StatusNotFound, ErrNotFound},
 		{http.StatusInternalServerError, ErrAPIError},
 		{http.StatusBadGateway, ErrAPIError},
 	}
 	for _, tc := range cases {
-		t.Run(tc.sentin.Error(), func(t *testing.T) {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 			})

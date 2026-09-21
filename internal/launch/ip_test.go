@@ -2,6 +2,7 @@ package launch
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -140,6 +141,30 @@ func TestWaitForIP_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "qemu-guest-agent not responding on VM") {
 		t.Errorf("err = %v, want qemu-guest-agent not responding message", err)
+	}
+}
+
+// A fatal error (bad token → 401) can't resolve by waiting, so
+// WaitForIP must surface it immediately instead of polling for the full
+// timeout and then misreporting it as "guest agent not responding".
+func TestWaitForIP_FatalErrorFailsFast(t *testing.T) {
+	var hits int32
+	c, stop := agentNetworkServer(t, func(hit int) (int, string) {
+		atomic.AddInt32(&hits, 1)
+		return 401, `{"data":null}`
+	})
+	defer stop()
+
+	start := time.Now()
+	_, err := WaitForIP(context.Background(), c, "pve", 100, 30*time.Second)
+	if !errors.Is(err, pveclient.ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("fatal error should fail fast, took %v", elapsed)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Errorf("expected exactly 1 poll before abort, got %d", n)
 	}
 }
 

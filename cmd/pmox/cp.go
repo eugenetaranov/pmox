@@ -38,23 +38,21 @@ func resolveTransferArgs(args []string) (local string, remote remoteArg, localIs
 	}
 }
 
-func sshOptionArgs(target *sshTarget) []string {
-	args := []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-	}
+// scpOptionArgs returns the scp "-o" host-key options plus an optional
+// identity flag. hostKeyOpts is computed once per command by
+// guestHostKeyOpts so TOFU vs --ssh-insecure behavior is consistent.
+func scpOptionArgs(target *sshTarget, hostKeyOpts []string) []string {
+	args := append([]string{}, hostKeyOpts...)
 	if target.Key != "" {
 		args = append(args, "-i", target.Key)
 	}
 	return args
 }
 
-func sshOptionString(target *sshTarget) string {
-	parts := []string{
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-	}
+// rsyncSSHOption builds the value for rsync's -e flag: the ssh command
+// plus the same host-key options used everywhere else.
+func rsyncSSHOption(target *sshTarget, hostKeyOpts []string) string {
+	parts := append([]string{"ssh"}, hostKeyOpts...)
 	if target.Key != "" {
 		parts = append(parts, "-i", target.Key)
 	}
@@ -103,7 +101,7 @@ Examples:
   pmox cp web1:/var/log/syslog ./logs/
   pmox cp -r ./config/ web1:/etc/app/
   pmox cp ./big.tar web1:/tmp/ -- -l 1000`,
-		Args:               cobra.ExactArgs(2),
+		Args:               exactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCp(cmd, args, f, recursive)
@@ -136,13 +134,13 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 		return err
 	}
 
-	scpArgs := buildScpArgs(scpPath, target, localArg, remote.remotePath, localIsSource, recursive, extraArgsAfterDash())
+	scpArgs := buildScpArgs(scpPath, target, localArg, remote.remotePath, localIsSource, recursive, guestHostKeyOpts(), extraArgsAfterDash())
 	return scpRunFn(scpPath, scpArgs)
 }
 
-func buildScpArgs(scpPath string, target *sshTarget, localPath, remotePath string, localIsSource, recursive bool, extra []string) []string {
+func buildScpArgs(scpPath string, target *sshTarget, localPath, remotePath string, localIsSource, recursive bool, hostKeyOpts, extra []string) []string {
 	args := []string{scpPath}
-	args = append(args, sshOptionArgs(target)...)
+	args = append(args, scpOptionArgs(target, hostKeyOpts)...)
 	if recursive {
 		args = append(args, "-r")
 	}
@@ -170,7 +168,7 @@ Examples:
   pmox sync ./src/ web1:/opt/app/
   pmox sync web1:/var/log/ ./logs/
   pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git`,
-		Args:               cobra.ExactArgs(2),
+		Args:               exactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSync(cmd, args, f)
@@ -202,13 +200,13 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, extraArgsAfterDash())
+	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, guestHostKeyOpts(), extraArgsAfterDash())
 	return rsyncRunFn(rsyncPath, rsyncArgs)
 }
 
-func buildRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, localIsSource bool, extra []string) []string {
+func buildRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, localIsSource bool, hostKeyOpts, extra []string) []string {
 	args := []string{rsyncPath}
-	args = append(args, "-e", sshOptionString(target))
+	args = append(args, "-e", rsyncSSHOption(target, hostKeyOpts))
 	args = append(args, extra...)
 
 	remoteSpec := fmt.Sprintf("%s@%s:%s", target.User, target.IP, remotePath)

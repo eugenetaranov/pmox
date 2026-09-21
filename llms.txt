@@ -35,14 +35,14 @@ Persistent root flags (every command):
 `--verbose` / `-v` — verbose progress.
 `--no-color` — disable colored output.
 `--output <text|json>` — machine-readable output where supported.
-`--ssh-insecure` — skip SSH host-key verification (env `PMOX_SSH_INSECURE`).
+`--ssh-insecure` — skip SSH host-key verification (env `PMOX_SSH_INSECURE`). By default guest-VM SSH (shell/exec/cp/sync/mount) pins host keys on first connect (TOFU) into `~/.config/pmox/known_hosts_guests` and aborts if a pinned key later changes; `--ssh-insecure` disables that.
 
 `pmox launch` / `pmox clone`:
 `--cpu <n>`, `--mem <MB>`, `--disk <size>`, `--storage <pool>`, `--snippet-storage <pool>`, `--bridge <name>`, `--node <name>`, `--wait <duration>`, `--no-wait-ssh`, `--post-create <path>`, `--tack <path>`, `--ansible <path>`, `--strict-hooks`.
 `--post-create` / `--tack` / `--ansible` are mutually exclusive — one per invocation.
 
 `pmox delete`:
-`--yes` / `-y` (skip confirm), `--force` (bypass pmox tag check + hard stop).
+`--yes` / `-y` (skip confirm), `--force` (bypass pmox tag check), `--hard` (hard power-off instead of graceful ACPI shutdown).
 
 `pmox start`:
 `--wait <duration>`, `--no-wait`.

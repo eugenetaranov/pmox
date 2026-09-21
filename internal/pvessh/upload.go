@@ -81,6 +81,13 @@ func (c *Client) writeAndRename(tmp, dest string, content []byte) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp %s: %w", tmp, err)
 	}
+	// Restrict to owner-only before the rename so the published snippet is
+	// never briefly world-readable. The snippet embeds the default user's
+	// SSH public key and its sudo policy; on a shared PVE host the node's
+	// default umask would otherwise leave it 0644.
+	if err := c.sftp.Chmod(tmp, 0o600); err != nil {
+		return fmt.Errorf("chmod temp %s: %w", tmp, err)
+	}
 	// PosixRename replaces the destination atomically. Fall back to
 	// Remove+Rename for servers without the posix-rename extension.
 	if err := c.sftp.PosixRename(tmp, dest); err != nil {
@@ -149,7 +156,7 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 
 	br := bufio.NewReader(r)
 	ans, err := br.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read host-key answer: %w", err)
 	}
 	ans = strings.TrimSpace(strings.ToLower(ans))

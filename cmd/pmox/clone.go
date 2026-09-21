@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
-	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -37,7 +35,7 @@ writes on first run. Edit that file to customize the new VM, or run
 the new VM's disk, the second targets the cloud-init snippet upload
 (must support 'snippets'). --snippet-storage falls back to the
 configured snippet_storage, then to --storage with a warning.`,
-		Args: cobra.ExactArgs(2),
+		Args: exactArgs(2, "pmox clone <source-name|vmid> <new-name>", "pmox clone web1 web2"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClone(cmd, args[0], args[1], f)
 		},
@@ -65,29 +63,14 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	})
-	if err != nil {
-		return err
-	}
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
 	if !resolved.HasNodeSSH() {
 		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
 	}
 	srv := resolved.Server
-	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
 	cloudInitPath, err := config.CloudInitPath(resolved.URL)
 	if err != nil {

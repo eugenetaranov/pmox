@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
@@ -105,7 +104,7 @@ Examples:
   pmox mount --no-delete --no-gitignore ./src web1:/opt/app
   pmox mount --exclude=.git --exclude='*.log' ./src web1:/opt/app
   pmox mount ./src web1:/opt/app -- --bwlimit=1000`,
-		Args: cobra.ExactArgs(2),
+		Args: exactArgs(2, "pmox mount <local_path> [<name|vmid>:]<remote_path>", "pmox mount ./src web1:/opt/app"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMount(cmd, args, f)
 		},
@@ -180,7 +179,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	excludes := resolveExcludes(f.excludes)
-	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, extraArgsAfterDash())
+	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash())
 
 	stderr := os.Stderr
 
@@ -251,9 +250,9 @@ func configPathForMount() string {
 	return filepath.Join(home, ".config", "pmox", "config.yaml")
 }
 
-func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, noGitignore, noDelete bool, excludes, extra []string) []string {
+func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, noGitignore, noDelete bool, excludes, hostKeyOpts, extra []string) []string {
 	args := []string{rsyncPath}
-	args = append(args, "-e", sshOptionString(target))
+	args = append(args, "-e", rsyncSSHOption(target, hostKeyOpts))
 	args = append(args, "-az", "--partial")
 
 	if !noDelete {
@@ -356,7 +355,7 @@ func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, loca
 }
 
 func isOverflow(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "overflow") || err == fsnotify.ErrEventOverflow
+	return err != nil && (strings.Contains(err.Error(), "overflow") || errors.Is(err, fsnotify.ErrEventOverflow))
 }
 
 func addWatchRecursive(w *fsnotify.Watcher, root string) error {
@@ -387,14 +386,8 @@ func mountStateDir() string {
 	return filepath.Join(home, ".local", "state", "pmox", "mounts")
 }
 
-func pidFilePath(vmName, localPath, remotePath string) string {
-	h := sha256.Sum256([]byte(localPath + "\x00" + remotePath))
-	return filepath.Join(mountStateDir(), fmt.Sprintf("%s-%x.pid", vmName, h[:8]))
-}
-
 func logFilePath(vmName, localPath, remotePath string) string {
-	h := sha256.Sum256([]byte(localPath + "\x00" + remotePath))
-	return filepath.Join(mountStateDir(), fmt.Sprintf("%s-%x.log", vmName, h[:8]))
+	return filepath.Join(mountStateDir(), fmt.Sprintf("%s-%s.log", vmName, mount.ID(localPath, remotePath)))
 }
 
 func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, localPath, vmName, remotePath string, f *mountFlags, target *sshTarget, excludes []string) error {
@@ -403,19 +396,14 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 		return fmt.Errorf("create state dir: %w", err)
 	}
 
-	pidPath := pidFilePath(vmName, localPath, remotePath)
-
-	if data, err := os.ReadFile(pidPath); err == nil {
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-		if pid > 0 {
-			if process, err := os.FindProcess(pid); err == nil {
-				if err := process.Signal(syscall.Signal(0)); err == nil {
-					return fmt.Errorf("mount already active (pid %d) for %s → %s:%s", pid, localPath, vmName, remotePath)
-				}
-			}
-			// Stale PID file
-			os.Remove(pidPath)
+	// If a record already exists for this exact local→remote pair and its
+	// daemon is still alive, refuse to start a duplicate. A stale record
+	// (dead pid) is cleared so the new daemon can take over.
+	if rec, ok, err := mount.Find(stateDir, localPath, remotePath); err == nil && ok {
+		if mount.Alive(rec.PID) {
+			return fmt.Errorf("mount already active (pid %d) for %s → %s:%s", rec.PID, localPath, vmName, remotePath)
 		}
+		_ = mount.Remove(rec)
 	}
 
 	exe, err := os.Executable()
@@ -434,6 +422,11 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 	}
 	if f.force {
 		childArgs = append(childArgs, "--force")
+	}
+	if sshInsecure {
+		// Propagate the host-key mode so the detached daemon uses the
+		// same verification behavior the operator chose for the parent.
+		childArgs = append(childArgs, "--ssh-insecure")
 	}
 	if f.noGitignore {
 		childArgs = append(childArgs, "--no-gitignore")
@@ -481,8 +474,14 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 	}
 	pid := proc.Pid
 
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o644); err != nil {
-		return fmt.Errorf("write PID file: %w", err)
+	if _, err := mount.Save(stateDir, mount.Record{
+		VMName:     vmName,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		PID:        pid,
+		LogPath:    logPath,
+	}); err != nil {
+		return fmt.Errorf("record mount: %w", err)
 	}
 
 	if err := proc.Release(); err != nil {
@@ -516,6 +515,10 @@ var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
 	return picked.Name, nil
 }
 
+// umountGrace is how long a mount daemon is given to shut down
+// gracefully after SIGTERM before it is force-killed.
+const umountGrace = 10 * time.Second
+
 func runUmount(cmd *cobra.Command, args []string, all bool) error {
 	if len(args) == 0 {
 		vmName, err := umountResolveVMFn(cmd)
@@ -546,100 +549,56 @@ func runUmount(cmd *cobra.Command, args []string, all bool) error {
 	if !isRemote {
 		return fmt.Errorf("argument must use <name>:<path> syntax (e.g. web1:/opt/app)")
 	}
-
-	stateDir := mountStateDir()
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		return fmt.Errorf("no mount found for %s:%s", ref, remotePath)
-	}
-
-	prefix := ref + "-"
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".pid") {
-			continue
-		}
-		pidPath := filepath.Join(stateDir, e.Name())
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-		if pid <= 0 {
-			os.Remove(pidPath)
-			continue
-		}
-
-		// We can't know for certain which PID file matches without storing more metadata.
-		// Use the hash-based path to find the exact match.
-		break
-	}
-
-	// Try to find the exact PID file by scanning all local paths
-	// The PID file path requires knowledge of the local path, which we don't have from umount.
-	// Instead, search for all PID files for this VM and match by reading them.
-	// Since the hash includes local+remote, and we only know remote, we check all.
 	return umountByRemote(cmd, ref, remotePath)
 }
 
-func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
-	stateDir := mountStateDir()
-	entries, err := os.ReadDir(stateDir)
+// stopRecord stops the daemon behind a record and removes the record.
+// A record whose process is already gone is treated as stale: removed
+// with a note, reported as not-stopped.
+func stopRecord(cmd *cobra.Command, rec mount.Record) (stopped bool) {
+	if !mount.Alive(rec.PID) {
+		_ = mount.Remove(rec)
+		fmt.Fprintf(cmd.ErrOrStderr(), "removed stale mount record for %s:%s (process not running)\n", rec.VMName, rec.RemotePath)
+		return false
+	}
+	if mount.LooksReused(rec.PID) {
+		// The pid is alive but belongs to some other program — it was
+		// recycled since this record was written (e.g. across a reboot).
+		// Drop the record instead of signalling an unrelated process.
+		_ = mount.Remove(rec)
+		fmt.Fprintf(cmd.ErrOrStderr(), "removed stale mount record for %s:%s (pid %d now belongs to another process)\n", rec.VMName, rec.RemotePath, rec.PID)
+		return false
+	}
+	killed, err := mount.Stop(rec.PID, umountGrace)
 	if err != nil {
-		return fmt.Errorf("no mount found for %s:%s", vmName, remotePath)
+		fmt.Fprintf(cmd.ErrOrStderr(), "failed to stop pid %d: %v\n", rec.PID, err)
+		return false
 	}
+	_ = mount.Remove(rec)
+	if killed {
+		fmt.Fprintf(cmd.ErrOrStderr(), "mount (pid %d) did not exit within %s; sent SIGKILL\n", rec.PID, umountGrace)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "stopped mount (pid %d) %s → %s:%s\n", rec.PID, rec.LocalPath, rec.VMName, rec.RemotePath)
+	return true
+}
 
-	prefix := vmName + "-"
+// umountByRemote stops the single mount matching a VM name AND remote
+// path. The registry records both endpoints, so this targets exactly one
+// mount instead of every mount for the VM.
+func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
+	records, err := mount.ForVM(mountStateDir(), vmName)
+	if err != nil {
+		return fmt.Errorf("read mount records: %w", err)
+	}
 	found := false
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".pid") {
+	for _, rec := range records {
+		if rec.RemotePath != remotePath {
 			continue
 		}
-		pidPath := filepath.Join(stateDir, e.Name())
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
+		if stopRecord(cmd, rec) {
+			found = true
 		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-		if pid <= 0 {
-			os.Remove(pidPath)
-			continue
-		}
-
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			os.Remove(pidPath)
-			fmt.Fprintf(cmd.ErrOrStderr(), "removed stale PID file %s\n", e.Name())
-			continue
-		}
-
-		if err := process.Signal(syscall.Signal(0)); err != nil {
-			os.Remove(pidPath)
-			fmt.Fprintf(cmd.ErrOrStderr(), "removed stale PID file %s (process not running)\n", e.Name())
-			continue
-		}
-
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			return fmt.Errorf("signal pid %d: %w", pid, err)
-		}
-
-		// Wait for process to exit (with timeout)
-		done := make(chan struct{})
-		go func() {
-			_, _ = process.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			fmt.Fprintf(cmd.ErrOrStderr(), "process %d did not exit within 10s, sending SIGKILL\n", pid)
-			_ = process.Signal(syscall.SIGKILL)
-		}
-
-		os.Remove(pidPath)
-		fmt.Fprintf(cmd.ErrOrStderr(), "stopped mount (pid %d)\n", pid)
-		found = true
 	}
-
 	if !found {
 		return fmt.Errorf("no mount found for %s:%s", vmName, remotePath)
 	}
@@ -666,62 +625,16 @@ func colorize(s, color string) string {
 var errNoMountsFound = errors.New("no mounts found")
 
 func umountAll(cmd *cobra.Command, vmName string) error {
-	stateDir := mountStateDir()
-	entries, err := os.ReadDir(stateDir)
+	records, err := mount.ForVM(mountStateDir(), vmName)
 	if err != nil {
-		return fmt.Errorf("%w for %s", errNoMountsFound, vmName)
+		return fmt.Errorf("read mount records: %w", err)
 	}
-
-	prefix := vmName + "-"
 	stopped := 0
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".pid") {
-			continue
+	for _, rec := range records {
+		if stopRecord(cmd, rec) {
+			stopped++
 		}
-		pidPath := filepath.Join(stateDir, e.Name())
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-		if pid <= 0 {
-			os.Remove(pidPath)
-			continue
-		}
-
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			os.Remove(pidPath)
-			continue
-		}
-
-		if err := process.Signal(syscall.Signal(0)); err != nil {
-			os.Remove(pidPath)
-			fmt.Fprintf(cmd.ErrOrStderr(), "removed stale PID file %s\n", e.Name())
-			continue
-		}
-
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "failed to signal pid %d: %v\n", pid, err)
-			continue
-		}
-
-		done := make(chan struct{})
-		go func() {
-			_, _ = process.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			_ = process.Signal(syscall.SIGKILL)
-		}
-
-		os.Remove(pidPath)
-		fmt.Fprintf(cmd.ErrOrStderr(), "stopped mount (pid %d)\n", pid)
-		stopped++
 	}
-
 	if stopped == 0 {
 		return fmt.Errorf("%w for %s", errNoMountsFound, vmName)
 	}

@@ -32,7 +32,17 @@ func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, 
 	var agentAnswered bool
 	for {
 		ifaces, err := c.AgentNetwork(ctx, node, vmid)
-		if err == nil {
+		if err != nil {
+			// A fatal error (bad token, TLS failure, VM gone) will never
+			// resolve by waiting — surface it immediately instead of
+			// polling for the full timeout and then blaming the guest
+			// agent. A transient error (network blip) or the expected
+			// "agent not running yet" (ErrAPIError) during boot keeps
+			// polling.
+			if pveclient.IsFatalPollError(err) {
+				return "", err
+			}
+		} else {
 			agentAnswered = true
 			if ip := PickIPv4(ifaces); ip != "" {
 				return ip, nil

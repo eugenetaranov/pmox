@@ -142,6 +142,15 @@ func TestUploadSnippet_CreatesDirAndWrites(t *testing.T) {
 	if string(got) != "hello" {
 		t.Fatalf("content = %q", got)
 	}
+	// The published snippet must be owner-only (it embeds the SSH pubkey
+	// and sudo policy), not left at the node's default umask.
+	fi, err := os.Stat(on)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("snippet mode = %o, want 0600", perm)
+	}
 }
 
 func TestUploadSnippet_Overwrites(t *testing.T) {

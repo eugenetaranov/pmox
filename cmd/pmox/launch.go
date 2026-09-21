@@ -172,25 +172,13 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 
-	cfg, err := config.Load()
+	// buildClient loads config, resolves the server, emits the D-T4
+	// verbose log line, and warns on insecure TLS — all before any PVE
+	// API call. The returned client is discarded here because
+	// resolveLaunchOptions builds its own from the resolved record.
+	_, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	})
-	if err != nil {
-		return err
-	}
-
-	// D-T4 verbose log line. Must be emitted before any PVE API call.
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
 
 	if !resolved.HasNodeSSH() {

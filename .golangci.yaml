@@ -8,6 +8,13 @@ run:
   timeout: 3m
 
 linters:
+  # The default set (govet, errcheck, staticcheck, unused, ineffassign)
+  # plus linters that matter for a codebase that is mostly HTTP/SSH/SFTP
+  # client calls with explicit error wrapping and context threading.
+  enable:
+    - bodyclose    # HTTP response bodies must be closed
+    - errorlint    # correct errors.Is/As usage and %w wrapping
+    - contextcheck # context is propagated, not dropped
   settings:
     errcheck:
       # Restore the v1-era defaults for calls whose errors are
