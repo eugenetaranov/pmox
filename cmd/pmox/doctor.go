@@ -158,7 +158,7 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	}
 	doctorConfigDefaults(cl, srv)
 	doctorCloudInit(cl, resolved.URL)
-	doctorTLSMode(cl, srv, strict)
+	doctorTLSMode(ctx, cl, resolved, strict)
 
 	// --- Local tooling (independent of network) ---
 	doctorTooling(cl, deps)
@@ -211,7 +211,8 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
 }
 
-func doctorTLSMode(cl *doctor.Checklist, srv *config.Server, strict bool) {
+func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, strict bool) {
+	srv := resolved.Server
 	if !srv.Insecure {
 		cl.Pass("config.tls_mode", "config", "TLS certificate verification enabled")
 		return
@@ -224,6 +225,27 @@ func doctorTLSMode(cl *doctor.Checklist, srv *config.Server, strict bool) {
 	} else {
 		cl.Info("config.tls_mode", "config", "TLS certificate verification disabled (insecure: true, expected for self-signed homelab certs)")
 	}
+
+	// Verify the pinned certificate, read-only. doctor never pins (that's
+	// a mutation) — it only reports whether the presented cert still
+	// matches what was pinned on first connect.
+	if srv.TLSPinSHA256 == "" {
+		cl.Info("config.tls_pin", "config", "no TLS certificate pinned yet (pmox pins it on the first insecure connect)")
+		return
+	}
+	fp, err := fetchCertFingerprint(ctx, resolved.URL)
+	if err != nil {
+		cl.Info("config.tls_pin", "config", "could not fetch the certificate to compare against the pin: "+err.Error())
+		return
+	}
+	if fp == srv.TLSPinSHA256 {
+		cl.Pass("config.tls_pin", "config", "TLS certificate matches the pinned fingerprint")
+		return
+	}
+	cl.Fail("config.tls_pin", "config",
+		"TLS certificate CHANGED from the pinned fingerprint (possible MITM)",
+		"if you deliberately replaced the cert, clear tls_pin_sha256 in config (or re-run 'pmox configure')",
+		exitcode.ExitNetworkError)
 }
 
 func doctorTooling(cl *doctor.Checklist, deps doctorDeps) {

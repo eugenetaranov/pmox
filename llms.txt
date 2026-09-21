@@ -95,7 +95,8 @@ servers:
     bridge: vmbr0
     ssh_pubkey: /home/you/.ssh/id_ed25519.pub
     user: pmox
-    insecure: false
+    insecure: false      # true = skip TLS verify; pmox then pins the cert (see tls_pin_sha256)
+    tls_pin_sha256: ""   # set automatically on first insecure connect; a later mismatch aborts (possible MITM)
     node_ssh:
       user: root
       auth: key          # "password" | "key"
