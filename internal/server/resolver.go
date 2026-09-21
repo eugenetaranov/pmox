@@ -148,7 +148,7 @@ func matchInput(input string, cfg *config.Config) (string, *config.Server, error
 	}
 	canonical, err := config.CanonicalizeURL(raw)
 	if err != nil {
-		return "", nil, fmt.Errorf("%w: invalid --server/PMOX_SERVER value %q: %v", exitcode.ErrUserInput, input, err)
+		return "", nil, fmt.Errorf("%w: invalid --server/PMOX_SERVER value %q: %w", exitcode.ErrUserInput, input, err)
 	}
 	srv, ok := cfg.Servers[canonical]
 	if !ok {

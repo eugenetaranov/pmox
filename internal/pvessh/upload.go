@@ -149,7 +149,7 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 
 	br := bufio.NewReader(r)
 	ans, err := br.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read host-key answer: %w", err)
 	}
 	ans = strings.TrimSpace(strings.ToLower(ans))

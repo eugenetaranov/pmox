@@ -356,7 +356,7 @@ func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, loca
 }
 
 func isOverflow(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "overflow") || err == fsnotify.ErrEventOverflow
+	return err != nil && (strings.Contains(err.Error(), "overflow") || errors.Is(err, fsnotify.ErrEventOverflow))
 }
 
 func addWatchRecursive(w *fsnotify.Watcher, root string) error {
