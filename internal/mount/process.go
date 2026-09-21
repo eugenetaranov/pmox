@@ -3,9 +3,37 @@ package mount
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
+
+// readProcessCmd returns the full command line of a pid. Overridable in
+// tests. An error means "couldn't determine" — callers must not treat
+// that as evidence either way.
+var readProcessCmd = func(pid int) (string, error) {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// LooksReused reports true only when we can POSITIVELY determine that pid
+// is a live process whose command line is not a pmox daemon — i.e. the
+// recorded PID was recycled by an unrelated process (e.g. after a reboot
+// with a surviving state dir). If the command can't be read, it returns
+// false so a genuine daemon is never left un-stopped on an inconclusive
+// probe.
+func LooksReused(pid int) bool {
+	cmd, err := readProcessCmd(pid)
+	if err != nil {
+		return false
+	}
+	return !strings.Contains(cmd, "pmox")
+}
 
 // pollInterval is how often Stop re-checks whether a signalled process
 // has exited during the graceful window.

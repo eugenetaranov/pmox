@@ -561,6 +561,14 @@ func stopRecord(cmd *cobra.Command, rec mount.Record) (stopped bool) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "removed stale mount record for %s:%s (process not running)\n", rec.VMName, rec.RemotePath)
 		return false
 	}
+	if mount.LooksReused(rec.PID) {
+		// The pid is alive but belongs to some other program — it was
+		// recycled since this record was written (e.g. across a reboot).
+		// Drop the record instead of signalling an unrelated process.
+		_ = mount.Remove(rec)
+		fmt.Fprintf(cmd.ErrOrStderr(), "removed stale mount record for %s:%s (pid %d now belongs to another process)\n", rec.VMName, rec.RemotePath, rec.PID)
+		return false
+	}
 	killed, err := mount.Stop(rec.PID, umountGrace)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "failed to stop pid %d: %v\n", rec.PID, err)

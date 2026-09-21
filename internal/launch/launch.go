@@ -155,9 +155,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := opts.Client.WaitTask(ctx, opts.Node, upid, 120*time.Second); err != nil {
 		opts.pDone(err)
 		// The clone task may already have created vm %d server-side when
-		// the wait fails or is interrupted, so point at cleanup like
-		// every later phase does — there is no automatic rollback.
-		return nil, fmt.Errorf("wait for clone task: %w (vm %d may exist on the cluster, run pmox delete %d)", err, vmid, vmid)
+		// the wait fails or is interrupted. Tagging is the next phase and
+		// hasn't run yet, so the VM is NOT tagged "pmox" — the cleanup
+		// hint must use --force, which every later phase's hint can omit
+		// because they run after tagging.
+		return nil, fmt.Errorf("wait for clone task: %w (vm %d may exist on the cluster untagged, run pmox delete --force %d)", err, vmid, vmid)
 	}
 	opts.pDone(nil)
 

@@ -323,10 +323,13 @@ func guestHostKeyOpts() []string {
 		}
 	}
 	path, err := guestKnownHostsPath()
-	if err != nil {
-		// Config dir unresolvable — fail closed to accept-new against
-		// ssh's default known_hosts rather than silently skipping
-		// verification.
+	if err != nil || strings.ContainsAny(path, " \t") {
+		// Either the config dir is unresolvable, or the path contains
+		// whitespace. rsync's -e value (used by sync/mount) is
+		// whitespace-split with no quoting, so a spaced UserKnownHostsFile
+		// would corrupt the ssh invocation. Fall back to accept-new
+		// against ssh's default known_hosts — still TOFU, just not the
+		// pmox-managed file — rather than skipping verification.
 		return []string{"-o", "StrictHostKeyChecking=accept-new"}
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)

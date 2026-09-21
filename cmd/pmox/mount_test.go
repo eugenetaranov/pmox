@@ -32,7 +32,18 @@ func spawnDetachedSleep(t *testing.T) int {
 	if err != nil {
 		t.Skipf("sh not on PATH: %v", err)
 	}
-	out, err := exec.Command(sh, "-c", "sleep 30 >/dev/null 2>&1 & echo $!").Output()
+	sleepBin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("sleep not on PATH: %v", err)
+	}
+	// Symlink sleep under a pmox-named path so its command line satisfies
+	// mount.LooksReused's pmox-daemon check (a bare "sleep" would be
+	// treated as a recycled PID and skipped).
+	link := filepath.Join(t.TempDir(), "pmox-mount-daemon")
+	if err := os.Symlink(sleepBin, link); err != nil {
+		t.Fatalf("symlink sleep: %v", err)
+	}
+	out, err := exec.Command(sh, "-c", link+" 30 >/dev/null 2>&1 & echo $!").Output()
 	if err != nil {
 		t.Fatalf("spawn detached sleep: %v", err)
 	}

@@ -68,6 +68,12 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
+	case resp.StatusCode == http.StatusForbidden:
+		// Forbidden is a permission problem (e.g. an API token missing a
+		// required privilege). It never resolves by waiting, so classify
+		// it with ErrUnauthorized rather than the transient ErrAPIError —
+		// otherwise poll loops wait out the full timeout on a 403.
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Status)
 	case resp.StatusCode >= 400:
@@ -108,6 +114,9 @@ func (c *Client) requestForm(ctx context.Context, method, path string, form url.
 	respBody, _ := io.ReadAll(resp.Body)
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
+	case resp.StatusCode == http.StatusForbidden:
+		// See request(): a 403 is a permanent permission failure.
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, resp.Status)

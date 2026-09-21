@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
@@ -100,6 +101,32 @@ func TestStop_SIGKILLAfterGrace(t *testing.T) {
 		t.Errorf("Stop returned in %v, before the grace window elapsed", elapsed)
 	}
 	waitGone(t, pid, 2*time.Second)
+}
+
+func TestLooksReused(t *testing.T) {
+	orig := readProcessCmd
+	t.Cleanup(func() { readProcessCmd = orig })
+
+	t.Run("pmox daemon is not reused", func(t *testing.T) {
+		readProcessCmd = func(int) (string, error) { return "/usr/local/bin/pmox mount --foreground ./src web1:/opt\n", nil }
+		if LooksReused(1234) {
+			t.Error("a live pmox daemon must not be flagged as reused")
+		}
+	})
+
+	t.Run("unrelated process is reused", func(t *testing.T) {
+		readProcessCmd = func(int) (string, error) { return "/usr/sbin/sshd -D\n", nil }
+		if !LooksReused(1234) {
+			t.Error("a non-pmox process on the recorded pid must be flagged as reused")
+		}
+	})
+
+	t.Run("unreadable command is inconclusive (not reused)", func(t *testing.T) {
+		readProcessCmd = func(int) (string, error) { return "", errors.New("cannot query process") }
+		if LooksReused(1234) {
+			t.Error("an inconclusive probe must not flag reuse (avoid leaving a real daemon un-stopped)")
+		}
+	})
 }
 
 func TestStop_AlreadyGone(t *testing.T) {
