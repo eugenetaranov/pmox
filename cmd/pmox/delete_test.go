@@ -32,6 +32,9 @@ type fakePVE struct {
 	// vmCicustom, when non-empty, is returned as the `cicustom` key
 	// from GET /config; empty means no cicustom on the VM.
 	vmCicustom string
+	// deleteFails, when true, makes the destroy (DELETE qemu) endpoint
+	// return a 500 so tests can exercise the interrupted/failed-destroy path.
+	deleteFails bool
 
 	clusterHits        int32
 	statusHits         int32
@@ -100,6 +103,10 @@ func newFakePVE(t *testing.T) *fakePVE {
 
 		case r.Method == "DELETE" && strings.HasPrefix(p, "/nodes/") && strings.Contains(p, "/qemu/"):
 			atomic.AddInt32(&f.deleteHits, 1)
+			if f.deleteFails {
+				http.Error(w, `{"data":null}`, http.StatusInternalServerError)
+				return
+			}
 			_, _ = io.WriteString(w, `{"data":"UPID:pve1:delete:"}`)
 
 		default:
@@ -579,6 +586,26 @@ func TestDelete_CustomCloudInitRemovesSnippet(t *testing.T) {
 	}
 	if !strings.Contains(f.snippetDeletePath, "local:snippets/pmox-100-user-data.yaml") {
 		t.Errorf("snippet delete path = %q", f.snippetDeletePath)
+	}
+}
+
+// The snippet must be removed BEFORE the irreversible destroy, so an
+// interrupted or failed destroy never leaves an orphaned snippet behind.
+// Here the destroy fails, yet the snippet is still cleaned up.
+func TestDelete_SnippetCleanedBeforeDestroyFails(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "running"
+	f.vmCicustom = "user=local:snippets/pmox-100-user-data.yaml"
+	f.deleteFails = true
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	if err == nil {
+		t.Fatal("expected destroy to fail")
+	}
+	if f.snippetDeleteHits != 1 {
+		t.Errorf("snippet should be cleaned before destroy even when destroy fails; hits = %d, want 1", f.snippetDeleteHits)
 	}
 }
 

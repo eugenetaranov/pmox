@@ -186,17 +186,23 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 		}
 	}
 
+	// Clean the snippet BEFORE the irreversible destroy. If the process
+	// is interrupted (Ctrl-C, crash) at any point, the snippet is already
+	// gone by the time the VM is, so a re-run that hits the "already gone"
+	// path never leaves an orphaned pmox-<vmid>-user-data.yaml behind.
+	// Cleanup is idempotent (a missing snippet is swallowed), so a re-run
+	// before destroy completes is harmless.
+	if cicustom != "" {
+		if err := snippet.Cleanup(ctx, client, ref.Node, cicustom); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove snippet for vm %d: %v\n", ref.VMID, err)
+		}
+	}
+
 	destroyLabel := fmt.Sprintf("Destroying VM %d", ref.VMID)
 	if err := runTaskStep(ctx, spinner, destroyLabel, client, ref.Node, func() (string, error) {
 		return client.Delete(ctx, ref.Node, ref.VMID)
 	}); err != nil {
 		return err
-	}
-
-	if cicustom != "" {
-		if err := snippet.Cleanup(ctx, client, ref.Node, cicustom); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove snippet for vm %d: %v\n", ref.VMID, err)
-		}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted VM %q (vmid %d)\n", ref.Name, ref.VMID)
