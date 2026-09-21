@@ -217,11 +217,13 @@ func TestDelete_UntaggedWithForceProceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
-	if f.stopHits != 1 {
-		t.Errorf("stop hits = %d, want 1", f.stopHits)
+	// --force only bypasses the tag check; it uses graceful shutdown
+	// (--hard is the separate power-off flag).
+	if f.shutdownHits != 1 {
+		t.Errorf("shutdown hits = %d, want 1 (force uses graceful shutdown)", f.shutdownHits)
 	}
-	if f.shutdownHits != 0 {
-		t.Errorf("shutdown hits = %d, want 0 (force uses stop)", f.shutdownHits)
+	if f.stopHits != 0 {
+		t.Errorf("stop hits = %d, want 0", f.stopHits)
 	}
 	if f.deleteHits != 1 {
 		t.Errorf("delete hits = %d, want 1", f.deleteHits)
@@ -249,18 +251,18 @@ func TestDelete_RunningShutdownThenDestroy(t *testing.T) {
 	}
 }
 
-func TestDelete_RunningForceUsesHardStop(t *testing.T) {
+func TestDelete_HardUsesStop(t *testing.T) {
 	f := newFakePVE(t)
 	f.clusterBody = taggedRunningVM
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{force: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{hard: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
 	if f.stopHits != 1 {
-		t.Errorf("stop hits = %d, want 1", f.stopHits)
+		t.Errorf("stop hits = %d, want 1 (--hard uses stop)", f.stopHits)
 	}
 	if f.shutdownHits != 0 {
 		t.Errorf("shutdown hits = %d, want 0", f.shutdownHits)

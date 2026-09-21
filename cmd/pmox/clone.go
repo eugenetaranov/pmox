@@ -35,7 +35,7 @@ writes on first run. Edit that file to customize the new VM, or run
 the new VM's disk, the second targets the cloud-init snippet upload
 (must support 'snippets'). --snippet-storage falls back to the
 configured snippet_storage, then to --storage with a warning.`,
-		Args: cobra.ExactArgs(2),
+		Args: exactArgs(2, "pmox clone <source-name|vmid> <new-name>", "pmox clone web1 web2"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClone(cmd, args[0], args[1], f)
 		},

@@ -94,9 +94,13 @@ func RenderInfo(w io.Writer, info Info) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Tags:     %s\n", info.Tags)
-	if info.Template != "" {
-		fmt.Fprintf(w, "Template: %s\n", info.Template)
+	// Always render the Template line so its absence isn't mistaken for a
+	// bug; an empty value means the VM is a regular (non-template) VM.
+	template := info.Template
+	if template == "" {
+		template = "no"
 	}
+	fmt.Fprintf(w, "Template: %s\n", template)
 	fmt.Fprintf(w, "CPU:      %d cores\n", info.CPU)
 	fmt.Fprintf(w, "Memory:   %d MB\n", info.MemMB)
 	if info.DiskSize != "" || info.DiskStorage != "" {

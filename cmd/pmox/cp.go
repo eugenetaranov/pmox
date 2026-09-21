@@ -101,7 +101,7 @@ Examples:
   pmox cp web1:/var/log/syslog ./logs/
   pmox cp -r ./config/ web1:/etc/app/
   pmox cp ./big.tar web1:/tmp/ -- -l 1000`,
-		Args:               cobra.ExactArgs(2),
+		Args:               exactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCp(cmd, args, f, recursive)
@@ -168,7 +168,7 @@ Examples:
   pmox sync ./src/ web1:/opt/app/
   pmox sync web1:/var/log/ ./logs/
   pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git`,
-		Args:               cobra.ExactArgs(2),
+		Args:               exactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSync(cmd, args, f)

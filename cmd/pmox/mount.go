@@ -105,7 +105,7 @@ Examples:
   pmox mount --no-delete --no-gitignore ./src web1:/opt/app
   pmox mount --exclude=.git --exclude='*.log' ./src web1:/opt/app
   pmox mount ./src web1:/opt/app -- --bwlimit=1000`,
-		Args: cobra.ExactArgs(2),
+		Args: exactArgs(2, "pmox mount <local_path> [<name|vmid>:]<remote_path>", "pmox mount ./src web1:/opt/app"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMount(cmd, args, f)
 		},

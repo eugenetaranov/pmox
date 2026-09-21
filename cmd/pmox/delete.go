@@ -23,6 +23,7 @@ const deleteTaskTimeout = 120 * time.Second
 
 type deleteFlags struct {
 	force bool
+	hard  bool
 	yes   bool
 }
 
@@ -47,11 +48,11 @@ Since pmox launch tags every VM it creates, this rule means delete
 will only touch VMs pmox launched — hand-managed VMs are protected
 from accidental destruction.
 
---force relaxes two things at once: (1) it bypasses the tag check,
-allowing delete on untagged VMs, and (2) it uses hard "stop" (power
-off) instead of graceful "shutdown" (ACPI). Reach for --force when
-the VM is hand-managed or when the guest is not responding to ACPI.
---force is orthogonal to --yes: using --force alone still prompts.
+--force bypasses the tag check, allowing delete on untagged VMs — reach
+for it when the VM is hand-managed. --hard uses a hard "stop" (power off)
+instead of a graceful ACPI "shutdown" — reach for it when the guest is
+not responding to ACPI. The two are independent; either can be used
+alone. Both are orthogonal to --yes: using them alone still prompts.
 
 If the VM has already been destroyed, delete exits 0 with a note on
 stderr so scripted loops are idempotent.`,
@@ -60,7 +61,8 @@ stderr so scripted loops are idempotent.`,
 			return runDelete(cmd, args, f)
 		},
 	}
-	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check and use hard stop instead of graceful shutdown")
+	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check (allow deleting untagged VMs)")
+	cmd.Flags().BoolVar(&f.hard, "hard", false, "hard power-off instead of graceful ACPI shutdown")
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt (env: PMOX_ASSUME_YES)")
 	return cmd
 }
@@ -138,12 +140,18 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 		if tags == "" {
 			tags = "<none>"
 		}
-		var prompt string
+		verb := "delete"
 		if f.force {
-			prompt = fmt.Sprintf("About to FORCE-delete VM %q (vmid %d, node %s, tags %s)\nThis will use hard stop (no graceful shutdown) and bypasses the pmox tag check.\nContinue? [y/N]: ", ref.Name, ref.VMID, ref.Node, tags)
-		} else {
-			prompt = fmt.Sprintf("About to delete VM %q (vmid %d, node %s, tags %s)\nContinue? [y/N]: ", ref.Name, ref.VMID, ref.Node, tags)
+			verb = "FORCE-delete"
 		}
+		prompt := fmt.Sprintf("About to %s VM %q (vmid %d, node %s, tags %s)\n", verb, ref.Name, ref.VMID, ref.Node, tags)
+		if f.hard {
+			prompt += "This will use hard stop (no graceful shutdown).\n"
+		}
+		if f.force {
+			prompt += "This bypasses the pmox tag check.\n"
+		}
+		prompt += "Continue? [y/N]: "
 		ok, err := confirmer.Confirm(ctx, prompt)
 		if err != nil {
 			return fmt.Errorf("confirmation: %w", err)
@@ -175,8 +183,8 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 	if status.Status == "running" {
 		label := fmt.Sprintf("Shutting down VM %d", ref.VMID)
 		stopFn := client.Shutdown
-		if f.force {
-			label = fmt.Sprintf("Stopping VM %d (force)", ref.VMID)
+		if f.hard {
+			label = fmt.Sprintf("Stopping VM %d (hard)", ref.VMID)
 			stopFn = client.Stop
 		}
 		if err := runTaskStep(ctx, spinner, label, client, ref.Node, func() (string, error) {

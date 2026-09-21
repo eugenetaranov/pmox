@@ -5,7 +5,47 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+func TestExactArgs(t *testing.T) {
+	newCmd := func() *cobra.Command {
+		c := &cobra.Command{
+			Use:  "x",
+			Args: exactArgs(2, "pmox x <a> <b>", "pmox x foo bar"),
+			RunE: func(*cobra.Command, []string) error { return nil },
+		}
+		c.SetOut(&bytes.Buffer{})
+		c.SetErr(&bytes.Buffer{})
+		return c
+	}
+
+	t.Run("too few args gives example-driven error", func(t *testing.T) {
+		c := newCmd()
+		c.SetArgs([]string{"only-one"})
+		err := c.Execute()
+		if err == nil || !strings.Contains(err.Error(), "example: pmox x foo bar") {
+			t.Fatalf("want example-driven error, got %v", err)
+		}
+	})
+
+	t.Run("exactly n args passes", func(t *testing.T) {
+		c := newCmd()
+		c.SetArgs([]string{"a", "b"})
+		if err := c.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("post-dash args are not counted", func(t *testing.T) {
+		c := newCmd()
+		c.SetArgs([]string{"a", "b", "--", "-l", "1000"})
+		if err := c.Execute(); err != nil {
+			t.Fatalf("post-dash args should not fail validation, got %v", err)
+		}
+	})
+}
 
 func TestSSHInsecure_EnvVarParse(t *testing.T) {
 	cases := map[string]bool{
