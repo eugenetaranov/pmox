@@ -314,7 +314,7 @@ func TestSSH_GetOrStartVM_NotFound(t *testing.T) {
 func TestSSH_BuildArgsWithIdentity(t *testing.T) {
 	args := buildSSHArgs("/usr/bin/ssh", &sshTarget{
 		IP: "10.0.0.1", User: "pmox", Key: "/home/user/.ssh/id_ed25519",
-	}, nil)
+	}, testInsecureHostKeyOpts, nil)
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "-i /home/user/.ssh/id_ed25519") {
 		t.Errorf("args missing -i: %v", args)
@@ -330,7 +330,7 @@ func TestSSH_BuildArgsWithIdentity(t *testing.T) {
 func TestSSH_BuildArgsWithoutIdentity(t *testing.T) {
 	args := buildSSHArgs("/usr/bin/ssh", &sshTarget{
 		IP: "10.0.0.1", User: "pmox", Key: "",
-	}, nil)
+	}, testInsecureHostKeyOpts, nil)
 	for _, a := range args {
 		if a == "-i" {
 			t.Error("args should not contain -i when key is empty")
@@ -341,11 +341,37 @@ func TestSSH_BuildArgsWithoutIdentity(t *testing.T) {
 func TestSSH_BuildArgsWithExtraArgs(t *testing.T) {
 	args := buildSSHArgs("/usr/bin/ssh", &sshTarget{
 		IP: "10.0.0.1", User: "pmox", Key: "",
-	}, []string{"uname", "-a"})
+	}, testInsecureHostKeyOpts, []string{"uname", "-a"})
 	last2 := args[len(args)-2:]
 	if last2[0] != "uname" || last2[1] != "-a" {
 		t.Errorf("extra args not appended: %v", args)
 	}
+}
+
+func TestGuestHostKeyOpts(t *testing.T) {
+	t.Run("default is TOFU with a pmox known_hosts", func(t *testing.T) {
+		sshInsecure = false
+		sshInsecureWarned = false
+		opts := guestHostKeyOpts()
+		joined := strings.Join(opts, " ")
+		if !strings.Contains(joined, "StrictHostKeyChecking=accept-new") {
+			t.Errorf("default should use accept-new (TOFU), got %v", opts)
+		}
+		if strings.Contains(joined, "/dev/null") {
+			t.Errorf("default must not discard host keys to /dev/null, got %v", opts)
+		}
+	})
+
+	t.Run("--ssh-insecure disables verification", func(t *testing.T) {
+		sshInsecure = true
+		sshInsecureWarned = false
+		defer func() { sshInsecure = false }()
+		opts := guestHostKeyOpts()
+		joined := strings.Join(opts, " ")
+		if !strings.Contains(joined, "StrictHostKeyChecking=no") || !strings.Contains(joined, "UserKnownHostsFile=/dev/null") {
+			t.Errorf("--ssh-insecure should skip verification, got %v", opts)
+		}
+	})
 }
 
 // --- derivePrivateKeyPath tests ---

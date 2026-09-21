@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -127,7 +129,7 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	sshArgs := buildSSHArgs(sshPath, target, nil)
+	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), nil)
 	return sshExecFn(sshPath, sshArgs, os.Environ())
 }
 
@@ -179,7 +181,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	sshArgs := buildSSHArgs(sshPath, target, remoteArgs)
+	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), remoteArgs)
 	return sshRunFn(sshPath, sshArgs)
 }
 
@@ -284,17 +286,53 @@ func derivePrivateKeyPath(pubkeyPath string) string {
 	return strings.TrimSuffix(pubkeyPath, ".pub")
 }
 
-func buildSSHArgs(sshPath string, target *sshTarget, extraArgs []string) []string {
-	args := []string{
-		sshPath,
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-	}
+func buildSSHArgs(sshPath string, target *sshTarget, hostKeyOpts, extraArgs []string) []string {
+	args := []string{sshPath}
+	args = append(args, hostKeyOpts...)
 	if target.Key != "" {
 		args = append(args, "-i", target.Key)
 	}
 	args = append(args, fmt.Sprintf("%s@%s", target.User, target.IP))
 	args = append(args, extraArgs...)
 	return args
+}
+
+// guestKnownHostsPath returns the pmox-managed known_hosts file used for
+// guest-VM SSH (shell/exec/cp/sync/mount). It is kept separate from the
+// PVE node known_hosts so guest and node host keys don't intermingle.
+func guestKnownHostsPath() (string, error) {
+	base, err := pvessh.KnownHostsPath()
+	if err != nil {
+		return "", err
+	}
+	return base + "_guests", nil
+}
+
+// guestHostKeyOpts returns the ssh/scp "-o" options controlling host-key
+// verification for guest-VM connections. By default it enables TOFU:
+// an unknown host key is pinned into the pmox-managed known_hosts on
+// first connect, and a later key change aborts the connection
+// (StrictHostKeyChecking=accept-new) — protecting against MITM after the
+// first successful connect. --ssh-insecure (with its one-shot warning)
+// restores the legacy behavior that skips verification entirely.
+func guestHostKeyOpts() []string {
+	if SSHInsecure() {
+		return []string{
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+		}
+	}
+	path, err := guestKnownHostsPath()
+	if err != nil {
+		// Config dir unresolvable — fail closed to accept-new against
+		// ssh's default known_hosts rather than silently skipping
+		// verification.
+		return []string{"-o", "StrictHostKeyChecking=accept-new"}
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	return []string{
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=" + path,
+	}
 }
 

@@ -130,7 +130,7 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			args := buildMountRsyncArgs("/usr/bin/rsync", target, tt.localPath, tt.remotePath,
-				tt.noGitignore, tt.noDelete, tt.excludes, tt.extra)
+				tt.noGitignore, tt.noDelete, tt.excludes, testInsecureHostKeyOpts, tt.extra)
 			joined := strings.Join(args, " ")
 
 			assert.Equal(t, "/usr/bin/rsync", args[0])
@@ -152,7 +152,7 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 func TestBuildMountRsyncArgs_SSHOptions(t *testing.T) {
 	target := &sshTarget{IP: "10.0.0.5", User: "ubuntu", Key: "/tmp/key"}
 	args := buildMountRsyncArgs("/usr/bin/rsync", target, "./src", "/opt/app",
-		false, false, []string{".git"}, nil)
+		false, false, []string{".git"}, testInsecureHostKeyOpts, nil)
 
 	assert.Equal(t, "-e", args[1])
 	assert.Contains(t, args[2], "ssh")

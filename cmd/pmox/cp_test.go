@@ -140,7 +140,7 @@ func TestBuildScpArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := buildScpArgs("/usr/bin/scp", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, tt.recursive, tt.extra)
+			args := buildScpArgs("/usr/bin/scp", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, tt.recursive, testInsecureHostKeyOpts, tt.extra)
 			joined := strings.Join(args, " ")
 			for _, s := range tt.wantContains {
 				assert.Contains(t, joined, s)
@@ -156,7 +156,7 @@ func TestBuildScpArgs(t *testing.T) {
 }
 
 func TestBuildScpArgs_NoKeyFlag(t *testing.T) {
-	args := buildScpArgs("/usr/bin/scp", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, false, nil)
+	args := buildScpArgs("/usr/bin/scp", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, false, testInsecureHostKeyOpts, nil)
 	for _, a := range args {
 		if a == "-i" {
 			t.Error("-i should not appear when key is empty")
@@ -205,7 +205,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := buildRsyncArgs("/usr/bin/rsync", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, tt.extra)
+			args := buildRsyncArgs("/usr/bin/rsync", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, testInsecureHostKeyOpts, tt.extra)
 			assert.Equal(t, "/usr/bin/rsync", args[0])
 			assert.Equal(t, "-e", args[1])
 			assert.Equal(t, tt.wantE, args[2])
@@ -224,6 +224,11 @@ func TestBuildRsyncArgs(t *testing.T) {
 }
 
 func TestBuildRsyncArgs_NoKeyInE(t *testing.T) {
-	args := buildRsyncArgs("/usr/bin/rsync", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, nil)
+	args := buildRsyncArgs("/usr/bin/rsync", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, testInsecureHostKeyOpts, nil)
 	assert.NotContains(t, args[2], "-i")
 }
+
+// testInsecureHostKeyOpts mirrors guestHostKeyOpts()'s --ssh-insecure
+// output so the builder tests stay deterministic (the TOFU form embeds a
+// machine-specific known_hosts path).
+var testInsecureHostKeyOpts = []string{"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}

@@ -180,7 +180,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	excludes := resolveExcludes(f.excludes)
-	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, extraArgsAfterDash())
+	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash())
 
 	stderr := os.Stderr
 
@@ -251,9 +251,9 @@ func configPathForMount() string {
 	return filepath.Join(home, ".config", "pmox", "config.yaml")
 }
 
-func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, noGitignore, noDelete bool, excludes, extra []string) []string {
+func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, noGitignore, noDelete bool, excludes, hostKeyOpts, extra []string) []string {
 	args := []string{rsyncPath}
-	args = append(args, "-e", sshOptionString(target))
+	args = append(args, "-e", rsyncSSHOption(target, hostKeyOpts))
 	args = append(args, "-az", "--partial")
 
 	if !noDelete {
@@ -434,6 +434,11 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 	}
 	if f.force {
 		childArgs = append(childArgs, "--force")
+	}
+	if sshInsecure {
+		// Propagate the host-key mode so the detached daemon uses the
+		// same verification behavior the operator chose for the parent.
+		childArgs = append(childArgs, "--ssh-insecure")
 	}
 	if f.noGitignore {
 		childArgs = append(childArgs, "--no-gitignore")
