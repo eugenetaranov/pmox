@@ -5,8 +5,11 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,9 +17,64 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
+
+// spawnDetachedSleep starts a `sleep` reparented to init (via a
+// short-lived sh) so it is NOT a child of the test process — matching
+// how a real mount daemon is detached, so mount.Alive/Stop behave as in
+// production. Returns the sleep's PID.
+func spawnDetachedSleep(t *testing.T) int {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("sh not on PATH: %v", err)
+	}
+	out, err := exec.Command(sh, "-c", "sleep 30 >/dev/null 2>&1 & echo $!").Output()
+	if err != nil {
+		t.Fatalf("spawn detached sleep: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("bad pid: %q", out)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Signal(syscall.SIGKILL)
+		}
+	})
+	for i := 0; i < 50 && !mount.Alive(pid); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return pid
+}
+
+// The P1 regression: `pmox umount web1:/opt/a` must stop only that mount,
+// not every mount for web1. The registry records both endpoints, so
+// umountByRemote can target one exactly.
+func TestUmountByRemote_TargetsOnlyMatchingMount(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := mountStateDir()
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+
+	pidA := spawnDetachedSleep(t)
+	pidB := spawnDetachedSleep(t)
+	_, err := mount.Save(dir, mount.Record{VMName: "web1", LocalPath: "/src/a", RemotePath: "/opt/a", PID: pidA})
+	require.NoError(t, err)
+	_, err = mount.Save(dir, mount.Record{VMName: "web1", LocalPath: "/src/b", RemotePath: "/opt/b", PID: pidB})
+	require.NoError(t, err)
+
+	require.NoError(t, umountByRemote(newTestUmountCmd(), "web1", "/opt/a"))
+
+	assert.False(t, mount.Alive(pidA), "targeted mount should be stopped")
+	assert.True(t, mount.Alive(pidB), "other mount for the same VM must be left running")
+
+	recs, _ := mount.ForVM(dir, "web1")
+	require.Len(t, recs, 1, "only the targeted record should be removed")
+	assert.Equal(t, "/opt/b", recs[0].RemotePath)
+}
 
 func TestBuildMountRsyncArgs(t *testing.T) {
 	target := &sshTarget{IP: "10.0.0.1", User: "pmox", Key: "/home/user/.ssh/id"}
@@ -189,30 +247,30 @@ func TestResolveExcludes(t *testing.T) {
 	})
 }
 
-func TestPidFilePath(t *testing.T) {
+func TestLogFilePath(t *testing.T) {
 	t.Run("deterministic", func(t *testing.T) {
-		p1 := pidFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := pidFilePath("web1", "/home/user/src", "/opt/app")
+		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
+		p2 := logFilePath("web1", "/home/user/src", "/opt/app")
 		assert.Equal(t, p1, p2)
 	})
 
-	t.Run("different paths produce different hashes", func(t *testing.T) {
-		p1 := pidFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := pidFilePath("web1", "/home/user/other", "/opt/app")
+	t.Run("different paths produce different names", func(t *testing.T) {
+		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
+		p2 := logFilePath("web1", "/home/user/other", "/opt/app")
 		assert.NotEqual(t, p1, p2)
 	})
 
 	t.Run("different VMs produce different filenames", func(t *testing.T) {
-		p1 := pidFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := pidFilePath("web2", "/home/user/src", "/opt/app")
+		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
+		p2 := logFilePath("web2", "/home/user/src", "/opt/app")
 		assert.NotEqual(t, p1, p2)
 	})
 
 	t.Run("filename contains vm name prefix", func(t *testing.T) {
-		p := pidFilePath("myvm", "/src", "/dst")
+		p := logFilePath("myvm", "/src", "/dst")
 		base := filepath.Base(p)
 		assert.True(t, strings.HasPrefix(base, "myvm-"))
-		assert.True(t, strings.HasSuffix(base, ".pid"))
+		assert.True(t, strings.HasSuffix(base, ".log"))
 	})
 }
 
