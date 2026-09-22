@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/config"
@@ -179,4 +180,42 @@ func TestDoctor_MissingToolWarnsButStaysReady(t *testing.T) {
 	if !r.Ready {
 		t.Error("a missing optional tool must not block launch readiness")
 	}
+}
+
+func TestDoctorCloudInitKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	url := "https://pve.lan:8006/api2/json"
+	ciPath, err := config.CloudInitPath(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cloud-init authorizes keyA.
+	keyA := "ssh-ed25519 AAAAC3keyAbodyaaa me@host"
+	if err := config.WriteCloudInit(ciPath, "ubuntu", keyA); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	pubMatch := dir + "/match.pub"
+	pubDiff := dir + "/diff.pub"
+	if err := os.WriteFile(pubMatch, []byte(keyA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pubDiff, []byte("ssh-rsa AAAAB3differentbody other@host\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("match passes", func(t *testing.T) {
+		cl := &doctor.Checklist{}
+		doctorCloudInitKey(cl, url, pubMatch)
+		if cl.StatusOf("config.cloud_init_key") != doctor.Pass {
+			t.Errorf("want pass, got %q", cl.StatusOf("config.cloud_init_key"))
+		}
+	})
+	t.Run("mismatch warns", func(t *testing.T) {
+		cl := &doctor.Checklist{}
+		doctorCloudInitKey(cl, url, pubDiff)
+		if cl.StatusOf("config.cloud_init_key") != doctor.Warn {
+			t.Errorf("want warn, got %q", cl.StatusOf("config.cloud_init_key"))
+		}
+	})
 }
