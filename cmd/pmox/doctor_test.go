@@ -219,3 +219,22 @@ func TestDoctorCloudInitKey(t *testing.T) {
 		}
 	})
 }
+
+func TestDoctorSecretBackend(t *testing.T) {
+	t.Run("file mode warns (plaintext on disk)", func(t *testing.T) {
+		t.Setenv("PMOX_SECRET_STORE", "file")
+		cl := &doctor.Checklist{}
+		doctorSecretBackend(cl)
+		if cl.StatusOf("config.secret_store") != doctor.Warn {
+			t.Errorf("want warn for file backend, got %q", cl.StatusOf("config.secret_store"))
+		}
+	})
+	t.Run("keychain mode passes", func(t *testing.T) {
+		t.Setenv("PMOX_SECRET_STORE", "keychain")
+		cl := &doctor.Checklist{}
+		doctorSecretBackend(cl)
+		if cl.StatusOf("config.secret_store") != doctor.Pass {
+			t.Errorf("want pass for keychain backend, got %q", cl.StatusOf("config.secret_store"))
+		}
+	})
+}

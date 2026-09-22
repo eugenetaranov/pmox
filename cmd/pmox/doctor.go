@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/doctor"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
@@ -161,6 +162,7 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	doctorConfigDefaults(cl, srv)
 	doctorCloudInit(cl, resolved.URL)
 	doctorCloudInitKey(cl, resolved.URL, srv.SSHPubkey)
+	doctorSecretBackend(cl)
 	doctorTLSMode(ctx, cl, resolved, strict)
 
 	// --- Local tooling (independent of network) ---
@@ -212,6 +214,19 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 		return
 	}
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
+}
+
+// doctorSecretBackend reports which secret store is active and warns when
+// the plaintext file fallback is in use.
+func doctorSecretBackend(cl *doctor.Checklist) {
+	switch credstore.ActiveBackend() {
+	case "keychain":
+		cl.Pass("config.secret_store", "config", "secrets stored in the OS keychain")
+	default:
+		cl.Warn("config.secret_store", "config",
+			"OS keychain unavailable — secrets are in the plaintext file fallback (~/.config/pmox/secrets.yaml, 0600)",
+			"install a keychain (gnome-keyring/KWallet) for encrypted-at-rest storage, or accept the file fallback for headless use")
+	}
 }
 
 // doctorCloudInitKey warns when the configured ssh_pubkey isn't the key

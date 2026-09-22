@@ -254,7 +254,17 @@ mount_excludes:
 
 API token secrets, node SSH passwords, and key passphrases are
 stored in the system keychain via [go-keyring](https://github.com/zalando/go-keyring),
-not in `config.yaml`.
+never in `config.yaml`.
+
+**Headless / no keychain.** When no OS keychain is available (headless
+Linux without a Secret Service, CI, containers), pmox automatically falls
+back to a `0600` file at `~/.config/pmox/secrets.yaml` so it still works —
+secrets are still kept out of `config.yaml`. Force a backend with
+`PMOX_SECRET_STORE=keychain|file` (default `auto`); `keychain` errors if
+none is present, `file` always uses the file. Under `auto`, reads try the
+keychain then the file, so secrets follow you if the environment changes.
+The file fallback is plaintext protected only by file permissions —
+`pmox doctor` warns when it's in use.
 
 Additional useful invocations:
 
@@ -304,6 +314,7 @@ picker. (`pmox configure --list` / `--remove` still work.)
 | `PMOX_SSH_INSECURE` | Skip SSH host-key verification; equivalent to `--ssh-insecure` |
 | `PMOX_ASSUME_YES` | Skip the `pmox delete` confirmation; equivalent to `--yes` |
 | `PMOX_NO_INPUT` | Never prompt; error instead of showing a picker; equivalent to `--no-input` |
+| `PMOX_SECRET_STORE` | Secret backend: `auto` (default), `keychain`, or `file` (`~/.config/pmox/secrets.yaml`, 0600) |
 
 Hook scripts receive `PMOX_IP`, `PMOX_VMID`, `PMOX_NAME`, `PMOX_USER`,
 `PMOX_NODE` from the launcher — see the post-create hooks section.

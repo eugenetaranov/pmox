@@ -48,6 +48,7 @@ part of real user flows:
 | `help-grouping`                     | `pmox --help` grouped into VM lifecycle / Access & files / Setup & diagnostics sections |
 | `contexts`                          | kubectl-style `pmox config get-contexts/use-context/current-context/rename-context/delete-context` + `--context`/`PMOX_CONTEXT`; named contexts with a persisted current context |
 | `interactivity`                     | Optional non-obtrusive pickers: `--no-input`/`PMOX_NO_INPUT` (+ json implies it); cp/sync bare-`:path`, `clone` source, `config use-context` pickers; multi-select `delete`/`stop`; uptime + running-first in the VM picker |
+| `secret-store-fallback`             | Keychain-preferred secrets with an automatic `~/.config/pmox/secrets.yaml` (0600) fallback for headless/CI; `PMOX_SECRET_STORE=auto\|keychain\|file`; tolerant reads, dual-backend removal, `doctor` backend check |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
