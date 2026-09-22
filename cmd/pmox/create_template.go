@@ -87,7 +87,6 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 
 	srv := resolved.Server
-	warnInsecureTLS(cmd.ErrOrStderr(), resolved.URL, srv.Insecure)
 	if err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved); err != nil {
 		return err
 	}

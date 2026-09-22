@@ -32,6 +32,8 @@ func pinCfg(t *testing.T, pin string) (*config.Config, *server.Resolved) {
 }
 
 func TestCheckTLSPin_PinsOnFirstConnect(t *testing.T) {
+	insecureTLSWarned = false
+	t.Cleanup(func() { insecureTLSWarned = false })
 	withStubbedFingerprint(t, "abc123", nil)
 	cfg, resolved := pinCfg(t, "")
 
@@ -41,6 +43,10 @@ func TestCheckTLSPin_PinsOnFirstConnect(t *testing.T) {
 	}
 	if resolved.Server.TLSPinSHA256 != "abc123" {
 		t.Errorf("pin not set on server, got %q", resolved.Server.TLSPinSHA256)
+	}
+	// First connect warns AND pins.
+	if !strings.Contains(buf.String(), "WARNING") {
+		t.Errorf("first connect should warn that TLS is unverified, got %q", buf.String())
 	}
 	if !strings.Contains(buf.String(), "Pinned TLS certificate") {
 		t.Errorf("expected a pinned-cert notice, got %q", buf.String())
@@ -52,6 +58,45 @@ func TestCheckTLSPin_PinsOnFirstConnect(t *testing.T) {
 	}
 	if got := reloaded.Servers[resolved.URL]; got == nil || got.TLSPinSHA256 != "abc123" {
 		t.Errorf("pin not saved to config: %+v", got)
+	}
+}
+
+// The user-reported bug: after the cert is pinned, neither the WARNING
+// nor the "Pinned" line should reappear on subsequent runs.
+func TestCheckTLSPin_SilentOnSubsequentRuns(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	url := "https://192.168.0.185:8006/api2/json"
+	c := &config.Config{Servers: map[string]*config.Server{url: {TokenID: "t", Insecure: true}}}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	withStubbedFingerprint(t, "FP", nil)
+
+	// Run 1: fresh load, first connect — pins and warns.
+	insecureTLSWarned = false
+	l1, _ := config.Load()
+	r1 := &server.Resolved{URL: url, Server: l1.Servers[url]}
+	var b1 bytes.Buffer
+	if err := checkTLSPin(context.Background(), &b1, l1, r1); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+	if b1.Len() == 0 {
+		t.Error("run 1 (first connect) should warn + pin")
+	}
+
+	// Run 2: a brand-new process would reset the once-per-process guard.
+	insecureTLSWarned = false
+	l2, _ := config.Load()
+	if l2.Servers[url].TLSPinSHA256 != "FP" {
+		t.Fatalf("pin not persisted, got %q", l2.Servers[url].TLSPinSHA256)
+	}
+	r2 := &server.Resolved{URL: url, Server: l2.Servers[url]}
+	var b2 bytes.Buffer
+	if err := checkTLSPin(context.Background(), &b2, l2, r2); err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+	if b2.Len() != 0 {
+		t.Errorf("run 2 (pinned cert matches) must be silent, got: %q", b2.String())
 	}
 }
 

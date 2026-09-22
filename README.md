@@ -296,10 +296,11 @@ check, not the prompt.
 ### `TLS certificate for … CHANGED — possible MITM`
 
 When a server is configured with `insecure: true` (self-signed cert),
-pmox pins the certificate's SHA-256 fingerprint in the config on the
-first connect and warns once per command that the transport is
-unverified. If the presented certificate later stops matching the pin,
-pmox refuses to proceed. If you deliberately replaced or renewed the
+pmox warns once — on the first connect — that the transport is
+unverified, then pins the certificate's SHA-256 fingerprint in the
+config. On later runs the pinned cert is verified silently (it is now
+authenticated against the pin, like SSH's known_hosts). If the presented
+certificate ever stops matching the pin, pmox refuses to proceed. If you deliberately replaced or renewed the
 node's certificate, clear `tls_pin_sha256` for that server in
 `~/.config/pmox/config.yaml` (or re-run `pmox configure`) and pmox will
 re-pin on the next connect.
