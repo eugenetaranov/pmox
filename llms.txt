@@ -133,6 +133,7 @@ rewrites it from the stored pubkey.
 - `PMOX_SSH_INSECURE` — equivalent to `--ssh-insecure`.
 - `PMOX_ASSUME_YES` — equivalent to `--yes` for `pmox delete`.
 - `PMOX_NO_INPUT` — equivalent to `--no-input`; disables all interactive pickers/prompts.
+- `PMOX_SECRET_STORE` — secret backend selector: `auto` (default; OS keychain if present, else file), `keychain` (error if unavailable), `file` (always `~/.config/pmox/secrets.yaml`, 0600). Secrets never go in `config.yaml`; under `auto` reads try keychain then file, and removal clears both. `pmox doctor` reports the active backend and warns on the plaintext file fallback.
 - `PMOX_IP`, `PMOX_VMID`, `PMOX_NAME`, `PMOX_USER`, `PMOX_NODE` — set in the environment of `--post-create` hook scripts.
 
 ## Examples
