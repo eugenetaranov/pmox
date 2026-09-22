@@ -8,8 +8,75 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
+
+// pubKeyPrefixes are the OpenSSH public-key type tokens pmox recognizes
+// when scanning cloud-init ssh_authorized_keys entries.
+var pubKeyPrefixes = []string{"ssh-", "ecdsa-", "sk-ssh-", "sk-ecdsa-"}
+
+// pubKeyBody returns the base64 body (the unique middle field) of an
+// OpenSSH public-key line, ignoring the type token and the comment.
+// Returns "" if the line isn't a recognizable public key.
+func pubKeyBody(line string) string {
+	line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	isKey := false
+	for _, p := range pubKeyPrefixes {
+		if strings.HasPrefix(fields[0], p) {
+			isKey = true
+			break
+		}
+	}
+	if !isKey {
+		return ""
+	}
+	return fields[1]
+}
+
+// CloudInitKeyBodies scans a cloud-init file for ssh_authorized_keys
+// entries and returns their key bodies (base64 middles). A missing file
+// returns an empty slice and no error.
+func CloudInitKeyBodies(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if b := pubKeyBody(line); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+
+// CloudInitAuthorizesKey reports whether the cloud-init file at path
+// authorizes the given public key (compared by key body, ignoring the
+// comment). ok is false when the file has no recognizable keys.
+func CloudInitAuthorizesKey(path, pubKeyLine string) (authorized, hasAnyKey bool, err error) {
+	want := pubKeyBody(pubKeyLine)
+	bodies, err := CloudInitKeyBodies(path)
+	if err != nil {
+		return false, false, err
+	}
+	if len(bodies) == 0 {
+		return false, false, nil
+	}
+	for _, b := range bodies {
+		if want != "" && b == want {
+			return true, true, nil
+		}
+	}
+	return false, true, nil
+}
 
 //go:embed cloud-init.template.yaml
 var cloudInitTemplate []byte

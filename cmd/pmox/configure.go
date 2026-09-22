@@ -294,7 +294,7 @@ func runInteractive(ctx context.Context, p prompter) error {
 	}
 
 	// Step 11: SSH key
-	sshKey, err := promptSSHKey(p)
+	sshKey, err := promptSSHKey(p, "")
 	if err != nil {
 		return err
 	}
@@ -387,6 +387,22 @@ func writeInitialCloudInit(p prompter, canonicalURL, user, sshKeyPath string) {
 	case err == nil:
 		p.Printf("wrote cloud-init template to %s — edit it to customize packages, users, runcmd\n", displayPath(path, home))
 	case errors.Is(err, config.ErrCloudInitExists):
+		// The file exists. Only offer to regenerate when the selected key
+		// isn't already authorized (drift) — so re-running configure with
+		// the same key never nags and never clobbers user edits silently.
+		authorized, hasAny, aerr := config.CloudInitAuthorizesKey(path, pubkeyContent)
+		if aerr == nil && hasAny && !authorized {
+			p.Printf("cloud-init at %s authorizes a different SSH key than the one you selected.\n", displayPath(path, home))
+			ans, _ := p.Prompt("Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: ")
+			if strings.EqualFold(strings.TrimSpace(ans), "y") {
+				if werr := config.WriteCloudInit(path, user, pubkeyContent); werr != nil {
+					p.Errf("warning: could not regenerate cloud-init: %v\n", werr)
+				} else {
+					p.Printf("regenerated cloud-init at %s — relaunch existing VMs to apply the new key\n", displayPath(path, home))
+				}
+				return
+			}
+		}
 		p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
 	default:
 		p.Errf("warning: could not write cloud-init template to %s: %v\n", path, err)
@@ -427,16 +443,36 @@ func runRegenCloudInit(ctx context.Context, p prompter) error {
 	if srv == nil {
 		return fmt.Errorf("server %s not found in config", canonical)
 	}
-	if srv.SSHPubkey == "" {
-		return fmt.Errorf("server %s has no ssh_pubkey configured; run 'pmox configure' to set one", canonical)
-	}
 	user := srv.User
 	if user == "" {
 		user = "ubuntu"
 	}
-	pubkeyContent, err := readSSHKey(srv.SSHPubkey)
+
+	// On a terminal, let the operator pick a (possibly different) key,
+	// defaulting to the currently-configured one — so `--regen-cloud-init`
+	// is the one-stop "change the key + rewrite cloud-init" command. A
+	// changed key is persisted so future launches use it too.
+	keyPath := srv.SSHPubkey
+	if tui.Interactive() {
+		picked, perr := promptSSHKey(p, srv.SSHPubkey)
+		if perr != nil {
+			return perr
+		}
+		keyPath = picked
+	}
+	if keyPath == "" {
+		return fmt.Errorf("server %s has no ssh_pubkey configured; run 'pmox configure' to set one", canonical)
+	}
+	if keyPath != srv.SSHPubkey {
+		srv.SSHPubkey = keyPath
+		if serr := cfg.Save(); serr != nil {
+			return fmt.Errorf("save config: %w", serr)
+		}
+		p.Printf("updated ssh_pubkey for %s to %s\n", canonical, keyPath)
+	}
+	pubkeyContent, err := readSSHKey(keyPath)
 	if err != nil {
-		return fmt.Errorf("read ssh pubkey %s: %w", srv.SSHPubkey, err)
+		return fmt.Errorf("read ssh pubkey %s: %w", keyPath, err)
 	}
 
 	path, err := config.CloudInitPath(canonical)
@@ -1029,18 +1065,21 @@ func expandHome(p string) string {
 	return p
 }
 
-func promptSSHKey(p prompter) (string, error) {
+func promptSSHKey(p prompter, current string) (string, error) {
 	home, _ := os.UserHomeDir()
 	sshDir := filepath.Join(home, ".ssh")
-	candidates := []string{
-		filepath.Join(sshDir, "id_ed25519.pub"),
-		filepath.Join(sshDir, "id_rsa.pub"),
-	}
-	var suggest string
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			suggest = c
-			break
+	// Default to the currently-configured key when re-selecting; otherwise
+	// suggest a common default.
+	suggest := current
+	if suggest == "" {
+		for _, c := range []string{
+			filepath.Join(sshDir, "id_ed25519.pub"),
+			filepath.Join(sshDir, "id_rsa.pub"),
+		} {
+			if _, err := os.Stat(c); err == nil {
+				suggest = c
+				break
+			}
 		}
 	}
 

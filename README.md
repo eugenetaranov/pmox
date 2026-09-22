@@ -262,6 +262,15 @@ Additional useful invocations:
 pmox configure --regen-cloud-init    # rewrite the per-server cloud-init
 ```
 
+`--regen-cloud-init` also lets you **pick a different SSH key** (it
+defaults to the current one); a changed key is saved to config and
+written into the cloud-init template. Re-running plain `pmox configure`
+and selecting a new key will likewise offer to regenerate the cloud-init
+when it detects the file authorizes a different key. Either way, relaunch
+existing VMs for a new key to take effect (cloud-init only runs at first
+boot). `pmox doctor` flags this drift (`ssh_pubkey` vs the key in the
+cloud-init file) before it turns into a `Permission denied (publickey)`.
+
 ### Contexts (multiple servers)
 
 Each configured server is a **context** (kubectl-style), addressed by a

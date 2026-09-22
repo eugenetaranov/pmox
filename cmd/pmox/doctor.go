@@ -160,6 +160,7 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	}
 	doctorConfigDefaults(cl, srv)
 	doctorCloudInit(cl, resolved.URL)
+	doctorCloudInitKey(cl, resolved.URL, srv.SSHPubkey)
 	doctorTLSMode(ctx, cl, resolved, strict)
 
 	// --- Local tooling (independent of network) ---
@@ -211,6 +212,35 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 		return
 	}
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
+}
+
+// doctorCloudInitKey warns when the configured ssh_pubkey isn't the key
+// authorized by the per-server cloud-init file — the drift that surfaces
+// only as a Permission denied (publickey) at connect time.
+func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
+	if sshPubkeyPath == "" {
+		return // no configured key to compare; config.default_* covers this
+	}
+	path, err := config.CloudInitPath(serverURL)
+	if err != nil {
+		return
+	}
+	pub, err := os.ReadFile(expandHome(sshPubkeyPath))
+	if err != nil {
+		cl.Warn("config.cloud_init_key", "config", "cannot read ssh_pubkey "+sshPubkeyPath+": "+err.Error(), "fix 'ssh_pubkey' in config or re-run 'pmox configure'")
+		return
+	}
+	authorized, hasAny, err := config.CloudInitAuthorizesKey(path, string(pub))
+	if err != nil || !hasAny {
+		return // no cloud-init keys to compare against (covered by config.cloud_init)
+	}
+	if authorized {
+		cl.Pass("config.cloud_init_key", "config", "cloud-init authorizes the configured ssh_pubkey")
+		return
+	}
+	cl.Warn("config.cloud_init_key", "config",
+		"cloud-init authorizes a different key than ssh_pubkey — new VMs won't accept your configured key",
+		"run 'pmox configure --regen-cloud-init' (then relaunch existing VMs), or point ssh_pubkey at the key the VMs already have")
 }
 
 func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, strict bool) {

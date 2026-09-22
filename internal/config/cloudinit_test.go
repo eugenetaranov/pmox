@@ -185,3 +185,44 @@ func TestTemplateMatchesExample(t *testing.T) {
 		}
 	}
 }
+
+func TestCloudInitAuthorizesKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ci.yaml")
+	edKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleBODYaaa comment@host"
+	rsaKey := "ssh-rsa AAAAB3NzaC1yc2Edifferentbodyzzz other@host"
+	if err := WriteCloudInit(path, "ubuntu", edKey); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// The exact key (even with a different comment) is authorized.
+	auth, hasAny, err := CloudInitAuthorizesKey(path, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleBODYaaa someone-else@elsewhere")
+	if err != nil || !hasAny || !auth {
+		t.Fatalf("expected authorized; auth=%v hasAny=%v err=%v", auth, hasAny, err)
+	}
+	// A different key is not authorized.
+	auth, hasAny, err = CloudInitAuthorizesKey(path, rsaKey)
+	if err != nil || !hasAny || auth {
+		t.Fatalf("expected not-authorized but hasAny; auth=%v hasAny=%v err=%v", auth, hasAny, err)
+	}
+	// A missing file reports no keys, no error.
+	_, hasAny, err = CloudInitAuthorizesKey(filepath.Join(dir, "nope.yaml"), edKey)
+	if err != nil || hasAny {
+		t.Fatalf("missing file: hasAny=%v err=%v", hasAny, err)
+	}
+}
+
+func TestPubKeyBody(t *testing.T) {
+	cases := map[string]string{
+		"ssh-ed25519 BODY comment":       "BODY",
+		"  - ssh-rsa RSABODY a@b":        "RSABODY",
+		"sk-ssh-ed25519@openssh.com X y": "X",
+		"not a key":                      "",
+		"":                              "",
+	}
+	for in, want := range cases {
+		if got := pubKeyBody(in); got != want {
+			t.Errorf("pubKeyBody(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
