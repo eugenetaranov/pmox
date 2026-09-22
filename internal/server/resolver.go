@@ -154,8 +154,9 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
 
-	// Rung 7: interactive picker (TTY only)
-	if opts.Stdin != nil && term.IsTerminal(int(opts.Stdin.Fd())) {
+	// Rung 7: interactive picker (both streams must be a TTY and input
+	// must not be disabled — otherwise fall through to the error).
+	if opts.Stdin != nil && term.IsTerminal(int(opts.Stdin.Fd())) && tui.StderrIsTerminal() && !tui.NoInput() {
 		contexts := opts.Cfg.Contexts()
 		options := make([]huh.Option[string], 0, len(contexts))
 		for _, c := range contexts {

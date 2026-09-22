@@ -17,6 +17,7 @@ type Resource struct {
 	Node   string `json:"node"`
 	Status string `json:"status"`
 	Tags   string `json:"tags"`
+	Uptime int64  `json:"uptime"` // seconds; free from the same response
 }
 
 // ClusterResources issues GET /cluster/resources, optionally filtered

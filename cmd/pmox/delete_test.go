@@ -152,6 +152,11 @@ const taggedStoppedVM = `{"data":[
   {"vmid":100,"name":"web1","node":"pve1","status":"stopped","tags":"pmox"}
 ]}`
 
+const twoTaggedVMs = `{"data":[
+  {"vmid":104,"name":"web1","node":"pve1","status":"stopped","tags":"pmox"},
+  {"vmid":105,"name":"web2","node":"pve1","status":"stopped","tags":"pmox"}
+]}`
+
 const dupeNameVMs = `{"data":[
   {"vmid":104,"name":"web1","node":"pve1","status":"running","tags":"pmox"},
   {"vmid":107,"name":"web1","node":"pve2","status":"running","tags":"pmox"}
@@ -188,7 +193,7 @@ func TestDelete_UntaggedWithoutForceIsRefused(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: true}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"legacy"}, &deleteFlags{}, fc)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -213,7 +218,7 @@ func TestDelete_UntaggedWithForceProceeds(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{force: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"legacy"}, &deleteFlags{force: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -236,7 +241,7 @@ func TestDelete_RunningShutdownThenDestroy(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, out, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -257,7 +262,7 @@ func TestDelete_HardUsesStop(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{hard: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{hard: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -275,7 +280,7 @@ func TestDelete_StoppedVMSkipsShutdown(t *testing.T) {
 	f.vmStatus = "stopped"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -293,7 +298,7 @@ func TestDelete_AlreadyGoneIsSuccess(t *testing.T) {
 	f.vmStatus = "" // triggers 404 on /status/current
 
 	cmd, _, errb := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -311,7 +316,7 @@ func TestDelete_AmbiguousNameFailsEarly(t *testing.T) {
 	f.clusterBody = dupeNameVMs
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, yesConfirmer)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -335,7 +340,7 @@ func TestDelete_DenyNoDestructiveCall(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: false}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, fc)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -355,7 +360,7 @@ func TestDelete_ApproveExistingFlowRuns(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: true}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, fc)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -376,7 +381,7 @@ func TestDelete_YesSkipsPrompt(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, failConfirmer{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{yes: true}, failConfirmer{})
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -394,7 +399,7 @@ func TestDelete_AssumeYesEnvSkipsPrompt(t *testing.T) {
 	f.vmStatus = "running"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, failConfirmer{})
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{yes: true}, failConfirmer{})
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -430,7 +435,7 @@ func TestDelete_TagCheckFailsNoPrompt(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: true}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"legacy"}, &deleteFlags{}, fc)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -448,7 +453,7 @@ func TestDelete_ForceStillPrompts(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: false}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "legacy", &deleteFlags{force: true}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"legacy"}, &deleteFlags{force: true}, fc)
 	if err == nil {
 		t.Fatal("expected error on denial")
 	}
@@ -471,7 +476,7 @@ func TestDelete_SummaryContainsFields(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: true}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, fc)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -489,7 +494,7 @@ func TestDelete_AlreadyGoneShortCircuitsBeforePrompt(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: true}
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{}, fc)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{}, fc)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -508,6 +513,58 @@ func stubDeletePick(t *testing.T, ref *vm.Ref, err error) {
 		return ref, err
 	}
 	t.Cleanup(func() { vmPickFn = orig })
+}
+
+func stubDeletePickMulti(t *testing.T, refs []*vm.Ref, err error) {
+	t.Helper()
+	orig := vmPickMultiFn
+	vmPickMultiFn = func(context.Context, *pveclient.Client, io.Writer) ([]*vm.Ref, error) {
+		return refs, err
+	}
+	t.Cleanup(func() { vmPickMultiFn = orig })
+}
+
+func TestDelete_MultipleExplicitArgs(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = twoTaggedVMs
+	f.vmStatus = "stopped"
+
+	cmd, _, _ := newTestDeleteCmd()
+	fc := &fakeConfirmer{result: true}
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1", "web2"}, &deleteFlags{}, fc)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	// Both VMs destroyed with a single confirmation listing both.
+	if f.deleteHits != 2 {
+		t.Errorf("delete hits = %d, want 2", f.deleteHits)
+	}
+	if !fc.called {
+		t.Error("confirmer should be called once for the set")
+	}
+	for _, want := range []string{"2 VMs", "web1", "web2"} {
+		if !strings.Contains(fc.gotPrompt, want) {
+			t.Errorf("multi-delete prompt missing %q: %q", want, fc.gotPrompt)
+		}
+	}
+}
+
+func TestDelete_ZeroArgsUsesMultiPicker(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = twoTaggedVMs
+	f.vmStatus = "stopped"
+	stubDeletePickMulti(t, []*vm.Ref{
+		{VMID: 104, Name: "web1", Node: "pve1", Tags: "pmox"},
+		{VMID: 105, Name: "web2", Node: "pve1", Tags: "pmox"},
+	}, nil)
+
+	targets, err := resolveTargetArgs(context.Background(), f.client(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveTargetArgs: %v", err)
+	}
+	if len(targets) != 2 || targets[0] != "104" || targets[1] != "105" {
+		t.Fatalf("targets = %v, want [104 105]", targets)
+	}
 }
 
 // Picker runs before the confirmation prompt: with zero positional
@@ -531,7 +588,7 @@ func TestDelete_ZeroArgs_PickerRunsBeforeConfirmation(t *testing.T) {
 
 	cmd, _, _ := newTestDeleteCmd()
 	fc := &fakeConfirmer{result: false}
-	err = executeDelete(cmd.Context(), cmd, f.client(), arg, &deleteFlags{}, fc)
+	err = executeDelete(cmd.Context(), cmd, f.client(), []string{arg}, &deleteFlags{}, fc)
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -564,7 +621,7 @@ func TestDelete_ZeroArgs_YesAutoDeletesAfterAutoSelect(t *testing.T) {
 	}
 
 	cmd, _, _ := newTestDeleteCmd()
-	if err := executeDelete(cmd.Context(), cmd, f.client(), arg, &deleteFlags{yes: true}, failConfirmer{}); err != nil {
+	if err := executeDelete(cmd.Context(), cmd, f.client(), []string{arg}, &deleteFlags{yes: true}, failConfirmer{}); err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
 	if f.deleteHits != 1 {
@@ -579,7 +636,7 @@ func TestDelete_CustomCloudInitRemovesSnippet(t *testing.T) {
 	f.vmCicustom = "user=local:snippets/pmox-100-user-data.yaml"
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{yes: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
@@ -602,7 +659,7 @@ func TestDelete_SnippetCleanedBeforeDestroyFails(t *testing.T) {
 	f.deleteFails = true
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{yes: true}, yesConfirmer)
 	if err == nil {
 		t.Fatal("expected destroy to fail")
 	}
@@ -618,7 +675,7 @@ func TestDelete_BuiltinCloudInitNoSnippetCleanup(t *testing.T) {
 	// vmCicustom left empty — simulates a built-in cloud-init VM.
 
 	cmd, _, _ := newTestDeleteCmd()
-	err := executeDelete(cmd.Context(), cmd, f.client(), "web1", &deleteFlags{yes: true}, yesConfirmer)
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{yes: true}, yesConfirmer)
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}

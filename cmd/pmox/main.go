@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // selfReporter is implemented by errors that have already rendered their
@@ -36,6 +37,7 @@ var (
 	serverFlag  string
 	contextFlag string
 	sshInsecure bool
+	noInput     bool
 )
 
 // sshInsecureWarned tracks whether we've emitted the stderr warning for
@@ -71,6 +73,12 @@ Run ` + "`pmox --help`" + ` to see available commands.`,
 	// suppress noise on Ctrl+C.
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	// Resolve the interactive-input policy once, before any command runs:
+	// --no-input, PMOX_NO_INPUT, and --output json all disable prompts so
+	// pmox stays script/CI-safe and never corrupts JSON on stdout.
+	PersistentPreRun: func(_ *cobra.Command, _ []string) {
+		tui.SetNoInput(noInput || envBool("PMOX_NO_INPUT") || outputMode == "json")
+	},
 }
 
 var versionCmd = &cobra.Command{
@@ -91,6 +99,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Server context name or URL to target (overrides PMOX_SERVER)")
 	rootCmd.PersistentFlags().StringVar(&contextFlag, "context", "", "Context (configured server) to target by name (env: PMOX_CONTEXT)")
 	rootCmd.PersistentFlags().BoolVar(&sshInsecure, "ssh-insecure", envBool("PMOX_SSH_INSECURE"), "Skip SSH host-key verification (env: PMOX_SSH_INSECURE)")
+	rootCmd.PersistentFlags().BoolVar(&noInput, "no-input", false, "Never prompt; error instead of showing an interactive picker (env: PMOX_NO_INPUT)")
 
 	// Group commands so `pmox --help` reads as labeled sections instead of
 	// one flat wall. Grouping is help-presentation only — every command is

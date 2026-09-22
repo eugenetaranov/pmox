@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +17,7 @@ import (
 func newCloneCmd() *cobra.Command {
 	f := &launchFlags{}
 	cmd := &cobra.Command{
-		Use:   "clone <source-name|vmid> <new-name>",
+		Use:   "clone [source-name|vmid] <new-name>",
 		Short: "Clone an existing VM into a new VM",
 		Long: `Clone an existing VM (template or regular VM) into a new VM. This is
 conceptually 'pmox launch', except the template is the resolved
@@ -35,9 +36,13 @@ writes on first run. Edit that file to customize the new VM, or run
 the new VM's disk, the second targets the cloud-init snippet upload
 (must support 'snippets'). --snippet-storage falls back to the
 configured snippet_storage, then to --storage with a warning.`,
-		Args: exactArgs(2, "pmox clone <source-name|vmid> <new-name>", "pmox clone web1 web2"),
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClone(cmd, args[0], args[1], f)
+			src, newName := "", args[0]
+			if len(args) == 2 {
+				src, newName = args[0], args[1]
+			}
+			return runClone(cmd, src, newName, f)
 		},
 	}
 	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPUs (default 2 if not configured)")
@@ -69,6 +74,14 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	}
 	if !resolved.HasNodeSSH() {
 		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+	}
+	// No source given → pick one interactively (like shell/delete do).
+	if srcArg == "" {
+		picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+		if err != nil {
+			return err
+		}
+		srcArg = strconv.Itoa(picked.VMID)
 	}
 	srv := resolved.Server
 

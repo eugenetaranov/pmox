@@ -7,10 +7,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // newConfigCmd is the `pmox config` group: kubectl-style management of
@@ -105,11 +107,19 @@ func runGetContexts(cmd *cobra.Command) error {
 
 func newUseContextCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "use-context <name>",
+		Use:     "use-context [name]",
 		Aliases: []string{"use"},
 		Short:   "Set the current context that commands target",
-		Args:    exactArgs(1, "pmox config use-context <name>", "pmox config use-context prod"),
-		RunE:    func(cmd *cobra.Command, args []string) error { return runUseContext(cmd, args[0]) },
+		Long: `Set the current context. With no argument, pick one interactively
+from the configured contexts (on a terminal).`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			}
+			return runUseContext(cmd, name)
+		},
 	}
 }
 
@@ -117,6 +127,13 @@ func runUseContext(cmd *cobra.Command, name string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	if name == "" {
+		picked, err := pickContext(cfg)
+		if err != nil {
+			return err
+		}
+		name = picked
 	}
 	c, ok := cfg.ContextByName(name)
 	if !ok {
@@ -227,6 +244,36 @@ func newDeleteContextCmd() *cobra.Command {
 			return runRemove(newStdPrompter(ctx), c.URL)
 		},
 	}
+}
+
+// pickContext resolves a context name interactively, honoring the
+// non-obtrusive rules: an explicit name (handled by the caller) always
+// wins; with no name and no interactivity available, it errors with the
+// list of contexts rather than prompting.
+func pickContext(cfg *config.Config) (string, error) {
+	contexts := cfg.Contexts()
+	switch len(contexts) {
+	case 0:
+		return "", fmt.Errorf("%w: no contexts configured — run 'pmox configure'", exitcode.ErrNotFound)
+	case 1:
+		return contexts[0].Name, nil
+	}
+	if !tui.Interactive() {
+		var b strings.Builder
+		for _, c := range contexts {
+			fmt.Fprintf(&b, "  - %s (%s)\n", c.Name, c.URL)
+		}
+		return "", fmt.Errorf("%w: pass a context name — no terminal for the interactive picker. contexts:\n%s", exitcode.ErrUserInput, strings.TrimRight(b.String(), "\n"))
+	}
+	opts := make([]huh.Option[string], 0, len(contexts))
+	for _, c := range contexts {
+		label := fmt.Sprintf("%s (%s)", c.Name, c.URL)
+		if c.Current {
+			label += " (current)"
+		}
+		opts = append(opts, huh.NewOption(label, c.Name))
+	}
+	return tui.Select("Select a context", opts)
 }
 
 func newConfigPathCmd() *cobra.Command {

@@ -54,6 +54,38 @@ func TestUseContext_SetsAndMaterializesCurrent(t *testing.T) {
 	}
 }
 
+func TestUseContext_NoArgNonInteractiveErrors(t *testing.T) {
+	seedTwoServers(t)
+	// Tests don't run under a TTY, so pickContext can't prompt: it must
+	// error and list the contexts rather than hang or pick arbitrarily.
+	cmd, _ := newCapturedCmd()
+	err := runUseContext(cmd, "")
+	if err == nil || !strings.Contains(err.Error(), "pass a context name") {
+		t.Fatalf("expected a non-interactive error listing contexts, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "a.lan") || !strings.Contains(err.Error(), "b.lan") {
+		t.Errorf("error should list the contexts, got %v", err)
+	}
+}
+
+func TestUseContext_NoArgSingleContextAutoSelects(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		"https://only.lan:8006/api2/json": {TokenID: "t@pam!x"},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := newCapturedCmd()
+	if err := runUseContext(cmd, ""); err != nil {
+		t.Fatalf("runUseContext: %v", err)
+	}
+	reloaded, _ := config.Load()
+	if reloaded.CurrentContext != "only.lan" {
+		t.Errorf("current_context = %q, want only.lan (auto-selected)", reloaded.CurrentContext)
+	}
+}
+
 func TestUseContext_UnknownErrors(t *testing.T) {
 	seedTwoServers(t)
 	cmd, _ := newCapturedCmd()
