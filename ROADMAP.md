@@ -47,6 +47,7 @@ part of real user flows:
 | `ssh-config`                        | `pmox ssh-config` — print an OpenSSH config block or full ssh command for a VM (Vagrant-style) |
 | `help-grouping`                     | `pmox --help` grouped into VM lifecycle / Access & files / Setup & diagnostics sections |
 | `contexts`                          | kubectl-style `pmox config get-contexts/use-context/current-context/rename-context/delete-context` + `--context`/`PMOX_CONTEXT`; named contexts with a persisted current context |
+| `interactivity`                     | Optional non-obtrusive pickers: `--no-input`/`PMOX_NO_INPUT` (+ json implies it); cp/sync bare-`:path`, `clone` source, `config use-context` pickers; multi-select `delete`/`stop`; uptime + running-first in the VM picker |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.

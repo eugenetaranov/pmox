@@ -71,10 +71,10 @@ just for readability.
 | Command | Summary | Example |
 | --- | --- | --- |
 | `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox launch web1` |
-| `clone` | Clone any existing VM or template into a new VM | `pmox clone web1 web2` |
+| `clone` | Clone an existing VM/template into a new VM (source optional → picker) | `pmox clone web1 web2` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox start web1` |
-| `stop` | ACPI graceful shutdown (`--force` for hard stop) | `pmox stop web1` |
-| `delete` | Stop + destroy with y/N confirmation (`--yes` to skip) | `pmox delete web1` |
+| `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox stop web1 web2` |
+| `delete` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox delete web1 web2` |
 | `list` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox list` |
 | `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox info web1` |
 
@@ -99,12 +99,24 @@ just for readability.
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 
-Single-target commands (`info`, `start`, `stop`, `delete`, `shell`,
-`exec`, `ssh-config`) accept an optional `[name|vmid]` argument. Omit it and pmox
-auto-selects the only pmox-tagged VM when exactly one exists, or
-shows an interactive picker when several do. `mount` and `umount`
-follow the same auto-select rule when the VM prefix is omitted from
-the `[<name|vmid>:]<remote_path>` argument.
+### Interactive selection
+
+Most target-taking commands work without typing a VM name. Omit it and
+pmox auto-selects the only pmox-tagged VM when exactly one exists, or
+shows an **arrow-key picker** when several do:
+
+- `info`, `start`, `stop`, `delete`, `shell`, `exec`, `ssh-config` — omit the `[name|vmid]`.
+- `stop` and `delete` show a **multi-select** picker (space to toggle, enter to confirm) and also accept several names at once.
+- `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM.
+- `clone <new-name>` — omit the source to pick it.
+- `mount` / `umount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`.
+- `config use-context` — omit the name to pick a context.
+
+Pickers are strictly non-obtrusive: an explicit arg always skips them,
+they only appear on a terminal, and they never draw in scripts, pipes,
+or `--output json`. Force non-interactive behavior anywhere with
+`--no-input` (or `PMOX_NO_INPUT=1`) — pmox then errors with the exact
+argument to pass instead of prompting.
 
 Run `pmox <command> --help` for the full flag set of any command.
 
@@ -282,6 +294,7 @@ picker. (`pmox configure --list` / `--remove` still work.)
 | `PMOX_CONTEXT` | Select the target context by name (overridden by `--context`) |
 | `PMOX_SSH_INSECURE` | Skip SSH host-key verification; equivalent to `--ssh-insecure` |
 | `PMOX_ASSUME_YES` | Skip the `pmox delete` confirmation; equivalent to `--yes` |
+| `PMOX_NO_INPUT` | Never prompt; error instead of showing a picker; equivalent to `--no-input` |
 
 Hook scripts receive `PMOX_IP`, `PMOX_VMID`, `PMOX_NAME`, `PMOX_USER`,
 `PMOX_NODE` from the launcher — see the post-create hooks section.

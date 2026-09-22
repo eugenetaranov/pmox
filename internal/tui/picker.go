@@ -11,11 +11,35 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// SelectOne runs a huh.Select with arrow-key navigation (no filter input).
-// Returns the chosen value, or the fallback on error. On user-abort
-// (Ctrl+C / Esc) it re-raises SIGINT so the root signal handler cancels the
-// process context — huh/bubbletea traps the signal itself, so we have to
-// synthesise it for our own code.
+// ErrCancelled is returned by pickers when the user aborts (Esc/Ctrl-C).
+var ErrCancelled = errors.New("selection cancelled")
+
+// filterThreshold is the option count above which pickers enable huh's
+// type-to-filter — below it, plain arrow-key nav is faster and avoids
+// capturing stray keystrokes.
+const filterThreshold = 8
+
+// noInput, when true, disables all interactive prompts regardless of TTY
+// state. Set by the CLI from --no-input / PMOX_NO_INPUT / --output json.
+var noInput bool
+
+// SetNoInput enables or disables interactive prompts process-wide.
+func SetNoInput(v bool) { noInput = v }
+
+// NoInput reports whether interactive prompts are disabled.
+func NoInput() bool { return noInput }
+
+// Interactive reports whether a picker/prompt may be drawn: input is not
+// disabled and both stdin and stderr are terminals.
+func Interactive() bool {
+	return !noInput && StdinIsTerminal() && StderrIsTerminal()
+}
+
+// SelectOne runs a huh.Select with arrow-key navigation. Returns the
+// chosen value, or the fallback on error. On user-abort (Ctrl+C / Esc) it
+// re-raises SIGINT so the root signal handler cancels the process context.
+// Kept for the configure/create-template wizards, where cancelling accepts
+// the fallback default; standalone target pickers should use Select.
 func SelectOne(title string, opts []huh.Option[string], fallback string) string {
 	if len(opts) == 0 {
 		return fallback
@@ -29,7 +53,7 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 		Title(title).
 		Options(opts...).
 		Value(&selected).
-		Filtering(false).
+		Filtering(len(opts) > filterThreshold).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -38,4 +62,59 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 		return fallback
 	}
 	return selected
+}
+
+// Select runs a single-choice picker and reports cancellation explicitly
+// via ErrCancelled (rather than overloading a fallback value). Use it for
+// standalone target selection (VMs, contexts) where an abort must not be
+// mistaken for a real choice.
+func Select(title string, opts []huh.Option[string]) (string, error) {
+	if len(opts) == 0 {
+		return "", ErrCancelled
+	}
+	if len(opts) == 1 {
+		return opts[0].Value, nil
+	}
+	fmt.Println()
+	selected := opts[0].Value
+	err := huh.NewSelect[string]().
+		Title(title).
+		Options(opts...).
+		Value(&selected).
+		Filtering(len(opts) > filterThreshold).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		}
+		return "", ErrCancelled
+	}
+	return selected, nil
+}
+
+// SelectMulti runs a multi-choice picker (space toggles, enter confirms)
+// and returns the chosen values. An empty selection or abort returns
+// ErrCancelled so callers never proceed on "nothing selected".
+func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
+	if len(opts) == 0 {
+		return nil, ErrCancelled
+	}
+	fmt.Println()
+	var selected []string
+	err := huh.NewMultiSelect[string]().
+		Title(title).
+		Options(opts...).
+		Value(&selected).
+		Filterable(len(opts) > filterThreshold).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		}
+		return nil, ErrCancelled
+	}
+	if len(selected) == 0 {
+		return nil, ErrCancelled
+	}
+	return selected, nil
 }

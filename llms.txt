@@ -11,21 +11,21 @@
 - `pmox configure`: interactive setup — API URL, token, node SSH credentials, default node/template/storage/bridge, SSH public key; writes `~/.config/pmox/cloud-init/<slug>.yaml`.
 - `pmox configure --list`: print configured server URLs.
 - `pmox configure --remove <url>`: forget a configured server and its keychain secrets.
-- `pmox config get-contexts|use-context|current-context|rename-context|delete-context|path`: kubectl-style context management. A context = a configured server addressed by a short name (defaults to its host; `rename-context <old> <new>` sets a friendly name). `use-context <name>` sets the current context (persisted as `current_context`) so multi-server setups don't need `--context`/`--server` each time; `get-contexts` prints a CURRENT/NAME/SERVER table marking the current with `*`; `current-context` prints it; `delete-context <name>` forgets a context (+secrets, clearing current if it matched); `path` prints the config file location.
+- `pmox config get-contexts|use-context|current-context|rename-context|delete-context|path`: kubectl-style context management. A context = a configured server addressed by a short name (defaults to its host; `rename-context <old> <new>` sets a friendly name). `use-context [name]` sets the current context (persisted as `current_context`) so multi-server setups don't need `--context`/`--server` each time — omit the name to pick interactively; `get-contexts` prints a CURRENT/NAME/SERVER table marking the current with `*`; `current-context` prints it; `delete-context <name>` forgets a context (+secrets, clearing current if it matched); `path` prints the config file location.
 - `pmox configure --regen-cloud-init`: rewrite the per-server cloud-init file from the current `ssh_pubkey`.
 - `pmox create-template`: download an Ubuntu cloud image, bake `qemu-guest-agent` in, convert to a template in the 9000–9099 VMID range. Requires PVE 8.0+ and a TTY.
 - `pmox launch <name>`: clone the configured template, tag with `pmox`, upload cloud-init snippet, start, wait for guest-agent IP, handshake SSH.
-- `pmox clone <source> <new-name>`: same state machine as launch, but the source is any existing VM or template.
+- `pmox clone [source] <new-name>`: same state machine as launch, but the source is any existing VM or template. Omit the source to pick it interactively.
 - `pmox list`: list pmox-tagged VMs with IPs. `--all` includes every VM on the cluster.
 - `pmox info [name|vmid]`: cpu/mem/disk/status/uptime/interfaces for one VM. Arg optional (picker).
 - `pmox start [name|vmid]`: start a VM and wait for guest-agent IP. `--no-wait` skips the poll.
-- `pmox stop [name|vmid]`: ACPI graceful shutdown. `--force` for hard power-off; `--no-wait` to return as soon as the task is queued.
-- `pmox delete [name|vmid]`: stop + destroy + snippet cleanup. Confirmation prompt by default; `--yes` / `PMOX_ASSUME_YES=1` to skip.
+- `pmox stop [name|vmid ...]`: ACPI graceful shutdown of one or more VMs. `--force` for hard power-off; `--no-wait` to return as soon as the task is queued. No args → multi-select picker.
+- `pmox delete [name|vmid ...]`: stop + destroy + snippet cleanup for one or more VMs. Single confirmation lists all; `--yes` / `PMOX_ASSUME_YES=1` to skip. No args → multi-select picker (space toggles, enter confirms).
 - `pmox shell [name|vmid]`: interactive SSH; auto-starts stopped VMs.
 - `pmox exec [name|vmid] -- <cmd>`: run one command on a VM over SSH; `--` separator required.
 - `pmox ssh-config [name|vmid]`: print SSH connection details for a running VM — an OpenSSH config block by default, the full `ssh` command with `--command`, or JSON with `--output json`. Never starts the VM (stopped = error). Arg optional (picker).
-- `pmox cp <src> <dst>`: scp-based copy; exactly one side uses `<name>:<path>`.
-- `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>`.
+- `pmox cp <src> <dst>`: scp-based copy; exactly one side uses `<name>:<path>` (a bare `:path` picks the VM).
+- `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>` (a bare `:path` picks the VM).
 - `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
 - `pmox umount [<name>:<remote>]`: stop background-mode mounts. Empty arg stops every mount for the picked VM.
 - `pmox doctor`: read-only readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH (strict, never prompts), and local tooling. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report. Never prompts or writes.
@@ -39,7 +39,8 @@ Resolution order: `--server` → `--context` → `PMOX_SERVER` → `PMOX_CONTEXT
 `--debug` / `-d` — detailed debug output.
 `--verbose` / `-v` — verbose progress.
 `--no-color` — disable colored output.
-`--output <text|json>` — machine-readable output where supported.
+`--output <text|json>` — machine-readable output where supported (json implies `--no-input`).
+`--no-input` — never prompt; error (exit 2) with the arg to pass instead of showing a picker (env `PMOX_NO_INPUT`). Pickers otherwise appear only when both stdin and stderr are terminals and the identifying arg is omitted; an explicit arg always skips them.
 `--ssh-insecure` — skip SSH host-key verification (env `PMOX_SSH_INSECURE`). By default guest-VM SSH (shell/exec/cp/sync/mount) pins host keys on first connect (TOFU) into `~/.config/pmox/known_hosts_guests` and aborts if a pinned key later changes; `--ssh-insecure` disables that.
 
 `pmox launch` / `pmox clone`:
@@ -130,6 +131,7 @@ rewrites it from the stored pubkey.
 - `PMOX_CONTEXT` — select the target context by name; overridden by `--context`.
 - `PMOX_SSH_INSECURE` — equivalent to `--ssh-insecure`.
 - `PMOX_ASSUME_YES` — equivalent to `--yes` for `pmox delete`.
+- `PMOX_NO_INPUT` — equivalent to `--no-input`; disables all interactive pickers/prompts.
 - `PMOX_IP`, `PMOX_VMID`, `PMOX_NAME`, `PMOX_USER`, `PMOX_NODE` — set in the environment of `--post-create` hook scripts.
 
 ## Examples

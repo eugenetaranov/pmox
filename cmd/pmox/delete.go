@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,12 +31,12 @@ type deleteFlags struct {
 func newDeleteCmd() *cobra.Command {
 	f := &deleteFlags{}
 	cmd := &cobra.Command{
-		Use:   "delete [name|vmid]",
-		Short: "Stop and destroy a pmox-launched VM",
-		Long: `Delete a VM on the resolved Proxmox cluster. The argument may be
-either the VM name (e.g. "web1") or its numeric VMID (e.g. "104"). If
-omitted, pmox auto-selects the only pmox VM when one exists, or shows
-an interactive picker when there are several.
+		Use:   "delete [name|vmid ...]",
+		Short: "Stop and destroy pmox-launched VMs",
+		Long: `Delete one or more VMs on the resolved Proxmox cluster. Each argument
+may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If none are
+given, pmox auto-selects the only pmox VM when one exists, or shows a
+multi-select picker (space to toggle, enter to confirm) when several do.
 
 Before issuing any destructive API call the command prints a summary of
 the resolved VM and requires an interactive y/N confirmation (default No).
@@ -56,7 +57,7 @@ alone. Both are orthogonal to --yes: using them alone still prompts.
 
 If the VM has already been destroyed, delete exits 0 with a note on
 stderr so scripted loops are idempotent.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDelete(cmd, args, f)
 		},
@@ -75,20 +76,13 @@ func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 
 	assumeYes := f.yes || envBool("PMOX_ASSUME_YES")
 
-	var argDesc string
-	if len(args) == 1 {
-		argDesc = fmt.Sprintf("%q", args[0])
-	} else {
-		argDesc = "(picker)"
-	}
-
 	var confirmer tui.Confirmer
 	if assumeYes {
 		confirmer = tui.AlwaysConfirmer{}
 	} else if tui.StdinIsTerminal() {
 		confirmer = tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr())
 	} else {
-		return fmt.Errorf("refusing to delete VM %s: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use", argDesc)
+		return fmt.Errorf("refusing to delete: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use")
 	}
 
 	client, err := buildDeleteClient(ctx, cmd)
@@ -96,17 +90,19 @@ func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 		return err
 	}
 
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	targets, err := resolveTargetArgs(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	return executeDelete(ctx, cmd, client, arg, f, confirmer)
+	return executeDelete(ctx, cmd, client, targets, f, confirmer)
 }
 
-// vmPickFn is the function used to resolve an implicit target when no
-// positional argument was passed. Tests override this to bypass the
-// real picker and drive deterministic behavior.
-var vmPickFn = vm.Pick
+// vmPickFn / vmPickMultiFn are the single- and multi-select pickers used
+// to resolve implicit targets. Tests override them to bypass the real TUI.
+var (
+	vmPickFn      = vm.Pick
+	vmPickMultiFn = vm.PickMulti
+)
 
 // resolveTargetArg returns a concrete <name|vmid> string for commands
 // that accept an optional positional target. When args has one element
@@ -123,44 +119,116 @@ func resolveTargetArg(ctx context.Context, client *pveclient.Client, args []stri
 	return strconv.Itoa(ref.VMID), nil
 }
 
-// executeDelete holds the command logic without server/config wiring
+// resolveTargetArgs returns one or more <name|vmid> targets for commands
+// that accept multiple. Explicit args pass through; with none, the
+// multi-select picker is consulted.
+func resolveTargetArgs(ctx context.Context, client *pveclient.Client, args []string, stderr io.Writer) ([]string, error) {
+	if len(args) > 0 {
+		return args, nil
+	}
+	refs, err := vmPickMultiFn(ctx, client, stderr)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(refs))
+	for i, r := range refs {
+		out[i] = strconv.Itoa(r.VMID)
+	}
+	return out, nil
+}
+
+// executeDelete resolves one or more targets, confirms once, then
+// destroys each. It holds the command logic without server/config wiring
 // so tests can drive it with a fake client directly.
-func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *deleteFlags, confirmer tui.Confirmer) error {
-	ref, err := vm.Resolve(ctx, client, arg)
+func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, args []string, f *deleteFlags, confirmer tui.Confirmer) error {
+	refs, err := resolveDeleteRefs(ctx, client, args, f)
 	if err != nil {
 		return err
 	}
-
-	if !f.force && !vm.HasPMOXTag(ref.Tags) {
-		return fmt.Errorf("refusing to delete VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	if err := confirmDelete(ctx, cmd, refs, f, confirmer); err != nil {
+		return err
 	}
 
-	if !f.yes {
+	spinner := newDeleteSpinner(cmd.ErrOrStderr())
+	var failed int
+	for _, ref := range refs {
+		if err := destroyVM(ctx, cmd, client, ref, f, spinner); err != nil {
+			if len(refs) == 1 {
+				return err
+			}
+			failed++
+			fmt.Fprintf(cmd.ErrOrStderr(), "delete %q (vmid %d) failed: %v\n", ref.Name, ref.VMID, err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d VMs failed to delete", failed, len(refs))
+	}
+	return nil
+}
+
+// resolveDeleteRefs resolves every target and enforces the pmox-tag guard
+// (unless --force) before anything is destroyed.
+func resolveDeleteRefs(ctx context.Context, client *pveclient.Client, args []string, f *deleteFlags) ([]*vm.Ref, error) {
+	refs := make([]*vm.Ref, 0, len(args))
+	for _, arg := range args {
+		ref, err := vm.Resolve(ctx, client, arg)
+		if err != nil {
+			return nil, err
+		}
+		if !f.force && !vm.HasPMOXTag(ref.Tags) {
+			return nil, fmt.Errorf("refusing to delete VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+// confirmDelete asks once for the whole set. The single-VM prompt keeps
+// its original wording; multiple VMs are listed explicitly so a bulk
+// delete's blast radius is visible before the y/N.
+func confirmDelete(ctx context.Context, cmd *cobra.Command, refs []*vm.Ref, f *deleteFlags, confirmer tui.Confirmer) error {
+	if f.yes {
+		return nil
+	}
+	verb := "delete"
+	if f.force {
+		verb = "FORCE-delete"
+	}
+	var prompt string
+	if len(refs) == 1 {
+		ref := refs[0]
 		tags := ref.Tags
 		if tags == "" {
 			tags = "<none>"
 		}
-		verb := "delete"
-		if f.force {
-			verb = "FORCE-delete"
+		prompt = fmt.Sprintf("About to %s VM %q (vmid %d, node %s, tags %s)\n", verb, ref.Name, ref.VMID, ref.Node, tags)
+	} else {
+		var b strings.Builder
+		fmt.Fprintf(&b, "About to %s %d VMs:\n", verb, len(refs))
+		for _, ref := range refs {
+			fmt.Fprintf(&b, "  - %s (vmid %d, node %s)\n", ref.Name, ref.VMID, ref.Node)
 		}
-		prompt := fmt.Sprintf("About to %s VM %q (vmid %d, node %s, tags %s)\n", verb, ref.Name, ref.VMID, ref.Node, tags)
-		if f.hard {
-			prompt += "This will use hard stop (no graceful shutdown).\n"
-		}
-		if f.force {
-			prompt += "This bypasses the pmox tag check.\n"
-		}
-		prompt += "Continue? [y/N]: "
-		ok, err := confirmer.Confirm(ctx, prompt)
-		if err != nil {
-			return fmt.Errorf("confirmation: %w", err)
-		}
-		if !ok {
-			return fmt.Errorf("delete cancelled")
-		}
+		prompt = b.String()
 	}
+	if f.hard {
+		prompt += "This will use hard stop (no graceful shutdown).\n"
+	}
+	if f.force {
+		prompt += "This bypasses the pmox tag check.\n"
+	}
+	prompt += "Continue? [y/N]: "
+	ok, err := confirmer.Confirm(ctx, prompt)
+	if err != nil {
+		return fmt.Errorf("confirmation: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("delete cancelled")
+	}
+	return nil
+}
 
+// destroyVM stops (if running), cleans the snippet, and destroys one VM.
+func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref, f *deleteFlags, spinner stepProgress) error {
 	status, err := client.GetStatus(ctx, ref.Node, ref.VMID)
 	if err != nil {
 		if errors.Is(err, pveclient.ErrNotFound) {
@@ -177,8 +245,6 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 	if cfg, cfgErr := client.GetConfig(ctx, ref.Node, ref.VMID); cfgErr == nil {
 		cicustom = cfg["cicustom"]
 	}
-
-	spinner := newDeleteSpinner(cmd.ErrOrStderr())
 
 	if status.Status == "running" {
 		label := fmt.Sprintf("Shutting down VM %d", ref.VMID)

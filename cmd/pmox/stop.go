@@ -21,18 +21,18 @@ type stopFlags struct {
 func newStopCmd() *cobra.Command {
 	f := &stopFlags{}
 	cmd := &cobra.Command{
-		Use:   "stop [name|vmid]",
-		Short: "Gracefully shut down a VM (or hard-stop with --force)",
-		Long: `Stop a VM on the resolved Proxmox cluster. Default is ACPI graceful
-shutdown via POST /status/shutdown. --force sends a hard power-off
-via /status/stop — use it when the guest is unresponsive.
+		Use:   "stop [name|vmid ...]",
+		Short: "Gracefully shut down VMs (or hard-stop with --force)",
+		Long: `Stop one or more VMs on the resolved Proxmox cluster. Default is ACPI
+graceful shutdown via POST /status/shutdown. --force sends a hard
+power-off via /status/stop — use it when the guest is unresponsive.
 
-If the argument is omitted, pmox auto-selects the only pmox VM when
-one exists, or shows an interactive picker when there are several.
+If no arguments are given, pmox auto-selects the only pmox VM when one
+exists, or shows a multi-select picker when there are several.
 
 --no-wait returns as soon as the stop task is queued; otherwise
 pmox waits for the PVE task to complete.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStop(cmd, args, f)
 		},
@@ -51,11 +51,24 @@ func runStop(cmd *cobra.Command, args []string, f *stopFlags) error {
 	if err != nil {
 		return err
 	}
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	targets, err := resolveTargetArgs(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	return executeStop(ctx, cmd, client, arg, f)
+	var failed int
+	for _, t := range targets {
+		if err := executeStop(ctx, cmd, client, t, f); err != nil {
+			if len(targets) == 1 {
+				return err
+			}
+			failed++
+			fmt.Fprintf(cmd.ErrOrStderr(), "stop %q failed: %v\n", t, err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d VMs failed to stop", failed, len(targets))
+	}
+	return nil
 }
 
 func executeStop(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *stopFlags) error {

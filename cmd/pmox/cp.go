@@ -1,13 +1,32 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
+
+// ensureVMRef resolves the VM side of a cp/sync transfer. An explicit
+// ref (name or vmid) is returned as-is; an empty ref — the bare ":path"
+// form — triggers the shared VM picker, mirroring how `pmox mount`
+// resolves a bare remote path.
+func ensureVMRef(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref string) (string, error) {
+	if ref != "" {
+		return ref, nil
+	}
+	picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(picked.VMID), nil
+}
 
 type remoteArg struct {
 	vmRef      string
@@ -129,6 +148,11 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 		return err
 	}
 
+	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
+	if err != nil {
+		return err
+	}
+
 	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, srv.User, srv.SSHPubkey)
 	if err != nil {
 		return err
@@ -191,6 +215,11 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 
 	ctx := cmd.Context()
 	client, srv, err := buildSSHClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+
+	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {
 		return err
 	}
