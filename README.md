@@ -62,25 +62,41 @@ public key. It writes a starter cloud-init file to
 
 ## Commands
 
+`pmox --help` groups these into the same three sections shown below.
+Every command is invoked flat — e.g. `pmox launch web1` — grouping is
+just for readability.
+
+### VM lifecycle
+
 | Command | Summary | Example |
 | --- | --- | --- |
-| `configure` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox configure` |
-| `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
-| `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox launch web1` |
 | `clone` | Clone any existing VM or template into a new VM | `pmox clone web1 web2` |
-| `list` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox list` |
-| `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox info web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox start web1` |
 | `stop` | ACPI graceful shutdown (`--force` for hard stop) | `pmox stop web1` |
 | `delete` | Stop + destroy with y/N confirmation (`--yes` to skip) | `pmox delete web1` |
+| `list` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox list` |
+| `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox info web1` |
+
+### Access & files
+
+| Command | Summary | Example |
+| --- | --- | --- |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox shell web1` |
-| `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox ssh-config web1` |
 | `exec` | Run one command on a VM over SSH | `pmox exec web1 -- uname -a` |
 | `cp` | scp-based file copy to or from a VM | `pmox cp ./app.tar web1:/tmp/` |
 | `sync` | rsync-based sync to or from a VM | `pmox sync ./src/ web1:/opt/app/` |
 | `mount` | Watch a local dir and continuously rsync it to a VM | `pmox mount ./src web1:/opt/app` |
 | `umount` | Stop background-mode mounts for a VM | `pmox umount web1` |
+| `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox ssh-config web1` |
+
+### Setup & diagnostics
+
+| Command | Summary | Example |
+| --- | --- | --- |
+| `configure` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox configure` |
+| `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
+| `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 
 Single-target commands (`info`, `start`, `stop`, `delete`, `shell`,
 `exec`, `ssh-config`) accept an optional `[name|vmid]` argument. Omit it and pmox

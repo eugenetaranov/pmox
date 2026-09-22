@@ -90,23 +90,46 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Proxmox server URL (overrides PMOX_SERVER)")
 	rootCmd.PersistentFlags().BoolVar(&sshInsecure, "ssh-insecure", envBool("PMOX_SSH_INSECURE"), "Skip SSH host-key verification (env: PMOX_SSH_INSECURE)")
 
+	// Group commands so `pmox --help` reads as labeled sections instead of
+	// one flat wall. Grouping is help-presentation only — every command is
+	// still invoked exactly as before (e.g. `pmox launch web1`).
+	rootCmd.AddGroup(
+		&cobra.Group{ID: groupLifecycle, Title: "VM lifecycle:"},
+		&cobra.Group{ID: groupAccess, Title: "Access & files:"},
+		&cobra.Group{ID: groupSetup, Title: "Setup & diagnostics:"},
+	)
+
+	addGrouped(groupLifecycle,
+		newLaunchCmd(), newCloneCmd(), newStartCmd(), newStopCmd(),
+		newDeleteCmd(), newListCmd(), newInfoCmd(),
+	)
+	addGrouped(groupAccess,
+		newShellCmd(), newExecCmd(), newCpCmd(), newSyncCmd(),
+		newMountCmd(), newUmountCmd(), newSSHConfigCmd(),
+	)
+	// configureCmd is declared in configure.go; register + group it here so
+	// all command registration lives in one place.
+	addGrouped(groupSetup, configureCmd, newCreateTemplateCmd(), newDoctorCmd())
+
+	// version stays ungrouped and lands under cobra's "Additional Commands"
+	// alongside the built-in help/completion.
 	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(newLaunchCmd())
-	rootCmd.AddCommand(newListCmd())
-	rootCmd.AddCommand(newInfoCmd())
-	rootCmd.AddCommand(newStartCmd())
-	rootCmd.AddCommand(newStopCmd())
-	rootCmd.AddCommand(newDeleteCmd())
-	rootCmd.AddCommand(newCloneCmd())
-	rootCmd.AddCommand(newCreateTemplateCmd())
-	rootCmd.AddCommand(newShellCmd())
-	rootCmd.AddCommand(newExecCmd())
-	rootCmd.AddCommand(newCpCmd())
-	rootCmd.AddCommand(newSyncCmd())
-	rootCmd.AddCommand(newMountCmd())
-	rootCmd.AddCommand(newUmountCmd())
-	rootCmd.AddCommand(newDoctorCmd())
-	rootCmd.AddCommand(newSSHConfigCmd())
+}
+
+const (
+	groupLifecycle = "lifecycle"
+	groupAccess    = "access"
+	groupSetup     = "setup"
+)
+
+// addGrouped assigns a help GroupID to each command and registers it on
+// the root. GroupID affects only how `--help` is sectioned, not how the
+// command is invoked.
+func addGrouped(group string, cmds ...*cobra.Command) {
+	for _, c := range cmds {
+		c.GroupID = group
+		rootCmd.AddCommand(c)
+	}
 }
 
 // signalContext returns a context that is cancelled on the first SIGINT/SIGTERM

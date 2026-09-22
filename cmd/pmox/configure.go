@@ -69,7 +69,8 @@ func init() {
 	configureCmd.Flags().BoolVar(&configureList, "list", false, "List configured server URLs")
 	configureCmd.Flags().StringVar(&configureRemove, "remove", "", "Remove a configured server by URL")
 	configureCmd.Flags().BoolVar(&configureRegenCloudCI, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
-	rootCmd.AddCommand(configureCmd)
+	// Registration (and help grouping) happens in main.go's init so all
+	// command wiring lives in one place.
 }
 
 var tokenIDRegex = regexp.MustCompile(`^[^@!]+@[^@!]+![^@!]+$`)
