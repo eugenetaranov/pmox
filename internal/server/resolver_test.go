@@ -100,6 +100,93 @@ func TestResolve_EnvWhenFlagUnset(t *testing.T) {
 	}
 }
 
+func TestResolve_CurrentContextWhenSet(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	// pve2's derived context name is its host, "pve2.lan".
+	cfg.CurrentContext = "pve2.lan"
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlB || r.Secret != "secret-b" {
+		t.Errorf("resolved %q (secret %q), want %q", r.URL, r.Secret, urlB)
+	}
+	if r.Source != "current context" {
+		t.Errorf("Source = %q, want 'current context'", r.Source)
+	}
+}
+
+func TestResolve_ContextFlagByName(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	cfg.Servers[urlB].Name = "lab" // explicit context name
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	opts.Context = "lab"
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlB {
+		t.Errorf("resolved %q, want %q (--context lab)", r.URL, urlB)
+	}
+	if r.Source != "--context flag" {
+		t.Errorf("Source = %q, want '--context flag'", r.Source)
+	}
+}
+
+func TestResolve_ServerFlagAcceptsContextName(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	cfg.Servers[urlA].Name = "prod"
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	opts.Flag = "prod" // --server accepts a context name too
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlA {
+		t.Errorf("resolved %q, want %q (--server prod)", r.URL, urlA)
+	}
+}
+
+func TestResolve_FlagOverridesCurrentContext(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	cfg.CurrentContext = "pve2.lan"
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	opts.Flag = urlA // explicit flag beats the current context
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlA {
+		t.Errorf("resolved %q, want %q (flag beats current context)", r.URL, urlA)
+	}
+}
+
+func TestResolve_StaleCurrentContextIgnored(t *testing.T) {
+	// A current context naming a server that no longer exists must not
+	// hard-fail; with a single remaining server the ladder falls through.
+	cfg := setupCfg(t, 1)
+	cfg.CurrentContext = "gone"
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlA {
+		t.Errorf("resolved %q, want %q (stale current context ignored)", r.URL, urlA)
+	}
+}
+
 func TestResolve_SingleConfigured(t *testing.T) {
 	cfg := setupCfg(t, 1)
 	opts, cleanup := baseOpts(t, cfg)
@@ -166,7 +253,7 @@ func TestResolve_FlagMissListsCandidates(t *testing.T) {
 		t.Errorf("err = %v, want ErrUserInput", err)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "no configured server matches") {
+	if !strings.Contains(msg, "no configured context or server matches") {
 		t.Errorf("unexpected message: %q", msg)
 	}
 	if !strings.Contains(msg, urlA) {

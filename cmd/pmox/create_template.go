@@ -73,7 +73,9 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	resolved, err := server.Resolve(ctx, server.Options{
 		Cfg:    cfg,
 		Flag:   serverFlag,
+		Context:  contextFlag,
 		Env:    os.Getenv("PMOX_SERVER"),
+		ContextEnv: os.Getenv("PMOX_CONTEXT"),
 		Stdin:  os.Stdin,
 		Stdout: cmd.OutOrStdout(),
 		Stderr: cmd.ErrOrStderr(),

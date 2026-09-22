@@ -34,6 +34,7 @@ var (
 	noColor     bool
 	outputMode  string
 	serverFlag  string
+	contextFlag string
 	sshInsecure bool
 )
 
@@ -87,7 +88,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&outputMode, "output", "text", "Output format: text or json")
 	// --server selects which configured server a command targets. Overrides
 	// PMOX_SERVER. `pmox configure` ignores both the flag and the env var.
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Proxmox server URL (overrides PMOX_SERVER)")
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Server context name or URL to target (overrides PMOX_SERVER)")
+	rootCmd.PersistentFlags().StringVar(&contextFlag, "context", "", "Context (configured server) to target by name (env: PMOX_CONTEXT)")
 	rootCmd.PersistentFlags().BoolVar(&sshInsecure, "ssh-insecure", envBool("PMOX_SSH_INSECURE"), "Skip SSH host-key verification (env: PMOX_SSH_INSECURE)")
 
 	// Group commands so `pmox --help` reads as labeled sections instead of
@@ -109,7 +111,7 @@ func init() {
 	)
 	// configureCmd is declared in configure.go; register + group it here so
 	// all command registration lives in one place.
-	addGrouped(groupSetup, configureCmd, newCreateTemplateCmd(), newDoctorCmd())
+	addGrouped(groupSetup, configureCmd, newConfigCmd(), newCreateTemplateCmd(), newDoctorCmd())
 
 	// version stays ungrouped and lands under cobra's "Additional Commands"
 	// alongside the built-in help/completion.

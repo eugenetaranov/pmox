@@ -1,18 +1,21 @@
 // Package server resolves which configured Proxmox server a pmox
 // command should target.
 //
-// Resolve implements a fixed five-step precedence ladder:
+// Resolve implements a fixed precedence ladder:
 //
-//  1. --server <url> flag  (highest — explicit user intent)
-//  2. PMOX_SERVER env var  (shell session default)
-//  3. exactly one configured server  (obvious default)
-//  4. interactive picker            (TTY only)
-//  5. error                         (non-TTY + ambiguous)
+//  1. --server <name|url> flag   (highest — explicit user intent)
+//  2. --context <name> flag
+//  3. PMOX_SERVER env var        (context name or URL)
+//  4. PMOX_CONTEXT env var       (context name)
+//  5. current context            (set via `pmox config use-context`)
+//  6. exactly one configured server  (obvious default)
+//  7. interactive picker             (TTY only)
+//  8. error                          (non-TTY + ambiguous)
 //
-// Input supplied via the flag or env var is canonicalized via
-// config.CanonicalizeURL before being matched. A bare hostname or
-// hostname:port is accepted — https:// is prepended if the scheme is
-// missing. Prefix / substring matching is deliberately not supported.
+// --server and PMOX_SERVER accept either a context name or a server URL;
+// --context and PMOX_CONTEXT accept a context name only. A URL is
+// canonicalized via config.CanonicalizeURL (https:// prepended when the
+// scheme is missing). Prefix / substring matching is not supported.
 //
 // On success, Resolve returns a Resolved bundle containing the canonical
 // URL, the *config.Server block, and the token secret fetched from the
@@ -40,12 +43,14 @@ import (
 // Options bundles the inputs Resolve needs. Everything is explicit
 // (no implicit os.Stdin / os.Getenv) so tests can run hermetically.
 type Options struct {
-	Cfg    *config.Config
-	Flag   string   // value of --server, empty if unset
-	Env    string   // value of PMOX_SERVER, empty if unset
-	Stdin  *os.File // for TTY detection + picker; os.Stdin in prod
-	Stdout io.Writer
-	Stderr io.Writer
+	Cfg        *config.Config
+	Flag       string   // value of --server (URL or context name), empty if unset
+	Context    string   // value of --context (context name), empty if unset
+	Env        string   // value of PMOX_SERVER (URL or context name)
+	ContextEnv string   // value of PMOX_CONTEXT (context name)
+	Stdin      *os.File // for TTY detection + picker; os.Stdin in prod
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // Resolved is the bundle returned on successful resolution.
@@ -55,7 +60,8 @@ type Resolved struct {
 	Secret string
 	// Source is a human-readable label naming which rung of the
 	// precedence ladder selected this server. One of:
-	// "--server flag", "PMOX_SERVER env var", "single configured",
+	// "--server flag", "--context flag", "PMOX_SERVER env var",
+	// "PMOX_CONTEXT env var", "current context", "single configured",
 	// "interactive picker".
 	Source string
 
@@ -93,27 +99,54 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return nil, fmt.Errorf("%w: no server configured; run 'pmox configure' to add one", exitcode.ErrNotFound)
 	}
 
-	// Rung 1: --server flag
+	// Rung 1: --server flag (context name or URL)
 	if opts.Flag != "" {
-		url, srv, err := matchInput(opts.Flag, opts.Cfg)
+		url, srv, err := matchNameOrURL(opts.Flag, opts.Cfg)
 		if err != nil {
 			return nil, err
 		}
 		return hydrate(url, srv, "--server flag")
 	}
 
-	// Rung 2: PMOX_SERVER env var
+	// Rung 2: --context flag (context name)
+	if opts.Context != "" {
+		url, srv, err := matchName(opts.Context, opts.Cfg)
+		if err != nil {
+			return nil, err
+		}
+		return hydrate(url, srv, "--context flag")
+	}
+
+	// Rung 3: PMOX_SERVER env var (context name or URL)
 	if opts.Env != "" {
-		url, srv, err := matchInput(opts.Env, opts.Cfg)
+		url, srv, err := matchNameOrURL(opts.Env, opts.Cfg)
 		if err != nil {
 			return nil, err
 		}
 		return hydrate(url, srv, "PMOX_SERVER env var")
 	}
 
+	// Rung 4: PMOX_CONTEXT env var (context name)
+	if opts.ContextEnv != "" {
+		url, srv, err := matchName(opts.ContextEnv, opts.Cfg)
+		if err != nil {
+			return nil, err
+		}
+		return hydrate(url, srv, "PMOX_CONTEXT env var")
+	}
+
+	// Rung 5: current context (pmox config use-context). A stale current
+	// context (naming a server that no longer exists) is ignored so the
+	// ladder falls through rather than hard-failing.
+	if cur := opts.Cfg.CurrentContext; cur != "" {
+		if c, ok := opts.Cfg.ContextByName(cur); ok {
+			return hydrate(c.URL, opts.Cfg.Servers[c.URL], "current context")
+		}
+	}
+
 	urls := opts.Cfg.ServerURLs()
 
-	// Rung 3: single / zero configured
+	// Rung 6: single / zero configured
 	switch len(urls) {
 	case 0:
 		return nil, fmt.Errorf("%w: no server configured; run 'pmox configure' to add one", exitcode.ErrNotFound)
@@ -121,22 +154,54 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
 
-	// Rung 4: interactive picker (TTY only)
+	// Rung 7: interactive picker (TTY only)
 	if opts.Stdin != nil && term.IsTerminal(int(opts.Stdin.Fd())) {
-		options := make([]huh.Option[string], 0, len(urls))
-		for _, u := range urls {
-			options = append(options, huh.NewOption(u, u))
+		contexts := opts.Cfg.Contexts()
+		options := make([]huh.Option[string], 0, len(contexts))
+		for _, c := range contexts {
+			options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", c.Name, c.URL), c.URL))
 		}
-		selected := tui.SelectOne("Select server", options, urls[0])
+		selected := tui.SelectOne("Select context", options, contexts[0].URL)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		return hydrate(selected, opts.Cfg.Servers[selected], "interactive picker")
 	}
 
-	// Rung 5: non-TTY ambiguity
-	return nil, fmt.Errorf("%w: multiple servers configured; pick one with --server or PMOX_SERVER\n%s",
-		exitcode.ErrUserInput, candidateList(urls))
+	// Rung 8: non-TTY ambiguity
+	return nil, fmt.Errorf("%w: multiple contexts configured; pick one with --context/--server, PMOX_CONTEXT/PMOX_SERVER, or set one with 'pmox config use-context'\n%s",
+		exitcode.ErrUserInput, candidateList(contextLabels(opts.Cfg)))
+}
+
+// matchNameOrURL resolves input as a context name first, then as a URL.
+func matchNameOrURL(input string, cfg *config.Config) (string, *config.Server, error) {
+	in := strings.TrimSpace(input)
+	if c, ok := cfg.ContextByName(in); ok {
+		return c.URL, cfg.Servers[c.URL], nil
+	}
+	return matchInput(in, cfg)
+}
+
+// matchName resolves input strictly as a context name.
+func matchName(input string, cfg *config.Config) (string, *config.Server, error) {
+	in := strings.TrimSpace(input)
+	c, ok := cfg.ContextByName(in)
+	if !ok {
+		return "", nil, fmt.Errorf("%w: no context named %q\n%s",
+			exitcode.ErrUserInput, in, candidateList(contextLabels(cfg)))
+	}
+	return c.URL, cfg.Servers[c.URL], nil
+}
+
+// contextLabels renders "name (url)" for each configured context, for
+// error messages.
+func contextLabels(cfg *config.Config) []string {
+	contexts := cfg.Contexts()
+	out := make([]string, 0, len(contexts))
+	for _, c := range contexts {
+		out = append(out, fmt.Sprintf("%s (%s)", c.Name, c.URL))
+	}
+	return out
 }
 
 // matchInput canonicalizes raw input (prepending https:// if no scheme
@@ -148,12 +213,12 @@ func matchInput(input string, cfg *config.Config) (string, *config.Server, error
 	}
 	canonical, err := config.CanonicalizeURL(raw)
 	if err != nil {
-		return "", nil, fmt.Errorf("%w: invalid --server/PMOX_SERVER value %q: %w", exitcode.ErrUserInput, input, err)
+		return "", nil, fmt.Errorf("%w: %q is not a known context name or valid server URL: %w", exitcode.ErrUserInput, input, err)
 	}
 	srv, ok := cfg.Servers[canonical]
 	if !ok {
-		return "", nil, fmt.Errorf("%w: no configured server matches %q\n%s",
-			exitcode.ErrUserInput, input, candidateList(cfg.ServerURLs()))
+		return "", nil, fmt.Errorf("%w: no configured context or server matches %q\n%s",
+			exitcode.ErrUserInput, input, candidateList(contextLabels(cfg)))
 	}
 	return canonical, srv, nil
 }
