@@ -207,6 +207,12 @@ func runRemove(p prompter, rawURL string) error {
 	if !cfg.RemoveServer(canonical) {
 		return fmt.Errorf("%w: server %s is not configured", credstore.ErrNotFound, canonical)
 	}
+	// Clear the current context if it no longer resolves after removal.
+	if cfg.CurrentContext != "" {
+		if _, ok := cfg.ContextByName(cfg.CurrentContext); !ok {
+			cfg.CurrentContext = ""
+		}
+	}
 	if err := cfg.Save(); err != nil {
 		return err
 	}

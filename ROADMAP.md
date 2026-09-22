@@ -45,6 +45,8 @@ part of real user flows:
 | `doctor`                           | `pmox doctor` — read-only readiness checks (config, API + privilege probe, node/storage/template, node SSH, tooling) with text/JSON output and exit-code taxonomy |
 | `tls-pinning`                       | Pin the server TLS cert (SHA-256) on first insecure connect; alert on later mismatch (possible MITM) |
 | `ssh-config`                        | `pmox ssh-config` — print an OpenSSH config block or full ssh command for a VM (Vagrant-style) |
+| `help-grouping`                     | `pmox --help` grouped into VM lifecycle / Access & files / Setup & diagnostics sections |
+| `contexts`                          | kubectl-style `pmox config get-contexts/use-context/current-context/rename-context/delete-context` + `--context`/`PMOX_CONTEXT`; named contexts with a persisted current context |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.

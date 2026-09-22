@@ -95,6 +95,7 @@ just for readability.
 | Command | Summary | Example |
 | --- | --- | --- |
 | `configure` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox configure` |
+| `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`delete-context`) | `pmox config use-context prod` |
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 
@@ -246,16 +247,39 @@ not in `config.yaml`.
 Additional useful invocations:
 
 ```
-pmox configure --list                # print configured server URLs
-pmox configure --remove <url>        # forget a server + its secrets
 pmox configure --regen-cloud-init    # rewrite the per-server cloud-init
 ```
+
+### Contexts (multiple servers)
+
+Each configured server is a **context** (kubectl-style), addressed by a
+short name. When you have more than one, switch between them instead of
+passing `--server` every time:
+
+```
+pmox config get-contexts             # table of contexts; current marked *
+pmox config use-context prod         # switch the current context
+pmox config current-context          # print the current context
+pmox config rename-context 192.168.0.185 prod
+pmox config delete-context lab       # forget a context + its secrets
+pmox config path                     # print the config file location
+```
+
+A new context's name defaults to its host; `rename-context` gives it a
+friendly name. Target a specific context for one command with `--context
+<name>` (or `--server <name|url>`).
+
+Each command resolves its target in this order: `--server` (name or URL)
+→ `--context` (name) → `PMOX_SERVER` → `PMOX_CONTEXT` → the current
+context (`use-context`) → the only configured context → an interactive
+picker. (`pmox configure --list` / `--remove` still work.)
 
 ## Environment variables
 
 | Variable | Effect |
 | --- | --- |
-| `PMOX_SERVER` | Select which configured server to use (overrides default; overridden by `--server`) |
+| `PMOX_SERVER` | Select the target context by name or URL (overridden by `--server`) |
+| `PMOX_CONTEXT` | Select the target context by name (overridden by `--context`) |
 | `PMOX_SSH_INSECURE` | Skip SSH host-key verification; equivalent to `--ssh-insecure` |
 | `PMOX_ASSUME_YES` | Skip the `pmox delete` confirmation; equivalent to `--yes` |
 

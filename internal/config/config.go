@@ -20,6 +20,10 @@ import (
 // relation to the NodeSSH block — that one is the *private* key used to
 // SSH into the Proxmox node itself for snippet upload.
 type Server struct {
+	// Name is the kubectl-style context name for this server. When empty,
+	// a name is derived from the host (see Config.Contexts). use-context
+	// and rename-context materialize an explicit name here.
+	Name           string   `yaml:"name,omitempty"`
 	TokenID        string   `yaml:"token_id"`
 	Node           string   `yaml:"node,omitempty"`
 	Template       string   `yaml:"template,omitempty"`
@@ -49,8 +53,81 @@ type NodeSSH struct {
 
 // Config is the top-level YAML shape on disk.
 type Config struct {
-	Servers       map[string]*Server `yaml:"servers"`
-	MountExcludes []string           `yaml:"mount_excludes,omitempty"`
+	Servers map[string]*Server `yaml:"servers"`
+	// CurrentContext is the kubectl-style name of the context (server)
+	// commands target when neither --server/--context nor the matching
+	// env vars are set. Empty means "no current context" (fall back to
+	// the single-configured / picker rules).
+	CurrentContext string   `yaml:"current_context,omitempty"`
+	MountExcludes  []string `yaml:"mount_excludes,omitempty"`
+}
+
+// Context is a named server entry (kubectl-style).
+type Context struct {
+	Name    string
+	URL     string
+	Current bool
+}
+
+// Contexts returns the configured servers as named contexts, sorted by
+// URL. A server's explicit Name wins; otherwise a name is derived from
+// the host, disambiguated by port only when two un-named servers share a
+// host. The Current flag marks the one matching CurrentContext (by name
+// or, for older configs, by URL).
+func (c *Config) Contexts() []Context {
+	urls := c.ServerURLs()
+	// Count host frequency among servers without an explicit name so we
+	// only append :port when a bare host would be ambiguous.
+	hostCount := map[string]int{}
+	for _, u := range urls {
+		if c.Servers[u].Name == "" {
+			hostCount[hostOnly(u)]++
+		}
+	}
+	out := make([]Context, 0, len(urls))
+	for _, u := range urls {
+		name := c.Servers[u].Name
+		if name == "" {
+			if h := hostOnly(u); hostCount[h] > 1 {
+				name = hostPort(u)
+			} else {
+				name = h
+			}
+		}
+		out = append(out, Context{
+			Name:    name,
+			URL:     u,
+			Current: c.CurrentContext != "" && (name == c.CurrentContext || u == c.CurrentContext),
+		})
+	}
+	return out
+}
+
+// ContextByName looks up a context by its (effective) name. It also
+// accepts a raw context name that matches an explicit Server.Name.
+func (c *Config) ContextByName(name string) (Context, bool) {
+	for _, ctx := range c.Contexts() {
+		if ctx.Name == name {
+			return ctx, true
+		}
+	}
+	return Context{}, false
+}
+
+// hostOnly returns the hostname of a canonical URL (no port).
+func hostOnly(canonicalURL string) string {
+	if u, err := url.Parse(canonicalURL); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return canonicalURL
+}
+
+// hostPort returns host:port of a canonical URL.
+func hostPort(canonicalURL string) string {
+	if u, err := url.Parse(canonicalURL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return canonicalURL
 }
 
 // Path returns the absolute path to the pmox config file.
