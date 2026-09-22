@@ -48,6 +48,8 @@ part of real user flows:
 | `help-grouping`                     | `pmox --help` grouped into VM lifecycle / Access & files / Setup & diagnostics sections |
 | `contexts`                          | kubectl-style `pmox config get-contexts/use-context/current-context/rename-context/delete-context` + `--context`/`PMOX_CONTEXT`; named contexts with a persisted current context |
 | `interactivity`                     | Optional non-obtrusive pickers: `--no-input`/`PMOX_NO_INPUT` (+ json implies it); cp/sync bare-`:path`, `clone` source, `config use-context` pickers; multi-select `delete`/`stop`; uptime + running-first in the VM picker |
+| `cloudinit-key-selection`           | `--regen-cloud-init` picks/persists the SSH key; `configure` offers regen on key drift; `doctor` flags `ssh_pubkey`-vs-cloud-init mismatch |
+| `cleanup`                           | `pmox cleanup [--apply]` — remove orphaned snippets + stale local state (mount records/logs, known_hosts pins) across all contexts; dry-run by default |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.

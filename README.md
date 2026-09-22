@@ -98,6 +98,7 @@ just for readability.
 | `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`delete-context`) | `pmox config use-context prod` |
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
+| `cleanup` | Report/remove pmox leftovers: orphaned snippets + stale local state | `pmox cleanup --apply` |
 
 ### Interactive selection
 
@@ -119,6 +120,23 @@ or `--output json`. Force non-interactive behavior anywhere with
 argument to pass instead of prompting.
 
 Run `pmox <command> --help` for the full flag set of any command.
+
+## Cleaning up leftovers
+
+`pmox cleanup` reclaims cruft pmox can leave behind and is **dry-run by
+default** — it reports what it would remove; pass `--apply` to delete. It
+scans every configured context and only ever touches pmox-owned
+resources (VMs are never removed — use `pmox delete`):
+
+- **orphaned cloud-init snippets** on the cluster (`pmox-<vmid>-…`) whose VM no longer exists (deleted via the web UI, or an interrupted `delete`);
+- **dead mount records** and **orphaned mount logs** in the local state dir;
+- **stale guest `known_hosts` pins** for IPs that no longer belong to a pmox VM (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped).
+
+```
+pmox cleanup            # report only
+pmox cleanup --apply    # actually remove
+pmox cleanup --output json
+```
 
 ## Checking readiness
 

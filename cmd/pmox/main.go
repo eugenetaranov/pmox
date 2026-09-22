@@ -120,7 +120,7 @@ func init() {
 	)
 	// configureCmd is declared in configure.go; register + group it here so
 	// all command registration lives in one place.
-	addGrouped(groupSetup, configureCmd, newConfigCmd(), newCreateTemplateCmd(), newDoctorCmd())
+	addGrouped(groupSetup, configureCmd, newConfigCmd(), newCreateTemplateCmd(), newDoctorCmd(), newCleanupCmd())
 
 	// version stays ungrouped and lands under cobra's "Additional Commands"
 	// alongside the built-in help/completion.
