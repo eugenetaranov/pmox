@@ -95,6 +95,32 @@ func Select(title string, opts []huh.Option[string]) (string, error) {
 // SelectMulti runs a multi-choice picker (space toggles, enter confirms)
 // and returns the chosen values. An empty selection or abort returns
 // ErrCancelled so callers never proceed on "nothing selected".
+// SelectMultiChecked runs a multi-select whose options may arrive
+// pre-checked (via huh.NewOption(...).Selected(true)). Unlike SelectMulti,
+// an empty final selection is returned as an empty slice (nil error), not
+// ErrCancelled — deselecting everything is a valid "do nothing" choice.
+// A user abort (Ctrl-C) still returns ErrCancelled.
+func SelectMultiChecked(title string, opts []huh.Option[string]) ([]string, error) {
+	if len(opts) == 0 {
+		return nil, nil
+	}
+	fmt.Println()
+	var selected []string
+	err := huh.NewMultiSelect[string]().
+		Title(title).
+		Options(opts...).
+		Value(&selected).
+		Filterable(len(opts) > filterThreshold).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		}
+		return nil, ErrCancelled
+	}
+	return selected, nil
+}
+
 func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
 	if len(opts) == 0 {
 		return nil, ErrCancelled

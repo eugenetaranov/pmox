@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // store is the on-disk shape: key -> profile name.
@@ -39,6 +40,47 @@ func Set(stateDir, serverURL string, vmid int, profile string) error {
 		return err
 	}
 	s[key(serverURL, vmid)] = profile
+	return save(stateDir, s)
+}
+
+// Entry is one remembered profile record.
+type Entry struct {
+	ServerURL string
+	VMID      int
+	Profile   string
+}
+
+// All returns every remembered profile entry.
+func All(stateDir string) ([]Entry, error) {
+	s, err := load(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Entry, 0, len(s))
+	for k, profile := range s {
+		i := strings.LastIndex(k, "#")
+		if i < 0 {
+			continue
+		}
+		vmid, err := strconv.Atoi(k[i+1:])
+		if err != nil {
+			continue
+		}
+		out = append(out, Entry{ServerURL: k[:i], VMID: vmid, Profile: profile})
+	}
+	return out, nil
+}
+
+// Delete removes the remembered profile for (serverURL, vmid), if present.
+func Delete(stateDir, serverURL string, vmid int) error {
+	s, err := load(stateDir)
+	if err != nil {
+		return err
+	}
+	if _, ok := s[key(serverURL, vmid)]; !ok {
+		return nil
+	}
+	delete(s, key(serverURL, vmid))
 	return save(stateDir, s)
 }
 

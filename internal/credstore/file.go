@@ -5,10 +5,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// FileStoreURLs returns the canonical server URLs that have entries in
+// the file secret store (secrets.yaml), sorted. It returns an empty slice
+// when the file does not exist. The OS keychain cannot be enumerated, so
+// this covers only the file backend.
+func FileStoreURLs() ([]string, error) {
+	m, err := loadSecrets()
+	if err != nil {
+		return nil, err
+	}
+	urls := make([]string, 0, len(m))
+	for u := range m {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	return urls, nil
+}
 
 // fileBackend persists secrets in <config-dir>/pmox/secrets.yaml as a
 // two-level map: canonical URL -> secret kind -> value. It is the

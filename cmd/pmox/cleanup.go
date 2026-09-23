@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,14 +11,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tackprofile"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -33,28 +39,144 @@ type cleanupItem struct {
 }
 
 func newCleanupCmd() *cobra.Command {
-	var apply bool
+	var (
+		apply            bool
+		only             []string
+		skip             []string
+		includeTemplates bool
+	)
 	cmd := &cobra.Command{
 		Use:   "cleanup",
-		Short: "Remove pmox leftovers: orphaned snippets and stale local state",
-		Long: `Reclaim cruft pmox can leave behind:
+		Short: "Remove pmox leftovers: orphaned snippets, local state, and templates",
+		Long: `Reclaim cruft pmox can leave behind, in selectable categories:
 
-  - cloud-init snippets on the cluster whose VM no longer exists
-    (e.g. a VM deleted via the web UI, or an interrupted 'pmox delete')
-  - dead mount records and orphaned mount logs in the local state dir
-  - guest known_hosts pins for IPs that no longer belong to a pmox VM
+  snippet       cloud-init snippets on the cluster whose VM is gone
+  mount-record  dead mount records in the local state dir
+  log           orphaned mount logs
+  cloud-init    ~/.config/pmox/cloud-init/<slug>.yaml for removed servers
+  tack-profile  remembered tack profiles for servers/VMs that are gone
+  secret        file-backend secrets.yaml entries for removed servers
+  known-host    guest known_hosts pins for IPs no longer on a pmox VM
+  template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
 
-It scans every configured context. Dry-run by default — it only reports
-what it would remove; pass --apply to actually delete. Only pmox-owned
-resources are ever touched; VMs are never removed (use 'pmox delete').`,
+Dry-run by default; pass --apply to delete. On a terminal it shows a
+checklist to pick categories (non-destructive ones pre-checked, template
+unchecked). Non-interactively, use --only / --skip; add --include-templates
+to enable the destructive template category. VMs other than pmox templates
+are never removed (use 'pmox delete').
+
+Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
+are not covered here; they are cleared at removal time by
+'pmox configure --remove' / 'pmox config delete-context'.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runCleanup(cmd, apply) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates})
+		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "actually remove the items (default: dry-run report)")
+	cmd.Flags().StringSliceVar(&only, "only", nil, "only these categories (comma-separated)")
+	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
+	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
 	return cmd
 }
 
-func runCleanup(cmd *cobra.Command, apply bool) error {
+type cleanupOpts struct {
+	apply            bool
+	only             []string
+	skip             []string
+	includeTemplates bool
+}
+
+// cleanupCategory describes a removable-leftover category.
+type cleanupCategory struct {
+	key         string
+	title       string
+	destructive bool
+}
+
+// cleanupCategories is the display/order list of all categories.
+var cleanupCategories = []cleanupCategory{
+	{"snippet", "Orphaned snippets", false},
+	{"template", "pmox templates (DESTRUCTIVE)", true},
+	{"mount-record", "Dead mount records", false},
+	{"log", "Orphaned logs", false},
+	{"cloud-init", "Orphaned cloud-init files", false},
+	{"tack-profile", "Stale tack profiles", false},
+	{"secret", "Orphaned secrets", false},
+	{"known-host", "Stale known_hosts pins", false},
+}
+
+func categoryByKey(k string) (cleanupCategory, bool) {
+	for _, c := range cleanupCategories {
+		if c.key == k {
+			return c, true
+		}
+	}
+	return cleanupCategory{}, false
+}
+
+// selectCategoriesFn is a seam over the interactive checklist so tests can
+// drive selection without a TTY.
+var selectCategoriesFn = tui.SelectMultiChecked
+
+// resolveSelection computes which categories to act on. Precedence:
+// --only (exact) wins; otherwise the default safe (non-destructive) set,
+// minus --skip, plus template when --include-templates; an interactive
+// checklist (when no selection flags and on a TTY) overrides the set.
+func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[string]bool, error) {
+	for _, k := range append(append([]string{}, o.only...), o.skip...) {
+		if _, ok := categoryByKey(k); !ok {
+			return nil, fmt.Errorf("%w: unknown cleanup category %q", exitcode.ErrUserInput, k)
+		}
+	}
+	avail := map[string]bool{}
+	for _, k := range available {
+		avail[k] = true
+	}
+
+	sel := map[string]bool{}
+	if len(o.only) > 0 {
+		for _, k := range o.only {
+			if avail[k] {
+				sel[k] = true
+			}
+		}
+		return sel, nil
+	}
+	for _, c := range cleanupCategories {
+		if !c.destructive && avail[c.key] {
+			sel[c.key] = true
+		}
+	}
+	for _, k := range o.skip {
+		delete(sel, k)
+	}
+	if o.includeTemplates && avail["template"] {
+		sel["template"] = true
+	}
+
+	hasFlags := len(o.skip) > 0 || o.includeTemplates
+	if interactive && !hasFlags {
+		opts := make([]huh.Option[string], 0, len(available))
+		for _, c := range cleanupCategories {
+			if !avail[c.key] {
+				continue
+			}
+			opts = append(opts, huh.NewOption(c.title, c.key).Selected(sel[c.key]))
+		}
+		chosen, err := selectCategoriesFn("Select what to clean", opts)
+		if err != nil {
+			return nil, err
+		}
+		sel = map[string]bool{}
+		for _, k := range chosen {
+			sel[k] = true
+		}
+	}
+	return sel, nil
+}
+
+func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -68,8 +190,10 @@ func runCleanup(cmd *cobra.Command, apply bool) error {
 	var items []cleanupItem
 	liveIPs := map[string]bool{}
 	ipsComplete := true // false if we can't enumerate every live pmox VM IP
+	vmidsByURL := map[string]map[int]bool{}
+	reachableURLs := map[string]bool{}
 
-	// --- Remote: per-context snippet orphans + live pmox VM IPs ---
+	// --- Remote: per-context snippet orphans, templates, live pmox VM IPs ---
 	for _, url := range cfg.ServerURLs() {
 		srv := cfg.Servers[url]
 		label := contextLabelFor(cfg, url)
@@ -85,11 +209,22 @@ func runCleanup(cmd *cobra.Command, apply bool) error {
 			ipsComplete = false
 			continue
 		}
+		reachableURLs[url] = true
 		vmids := make(map[int]bool, len(resources))
 		for _, r := range resources {
 			vmids[r.VMID] = true
 		}
+		vmidsByURL[url] = vmids
 		for _, r := range resources {
+			// pmox-generated templates → destructive template category.
+			if r.Template == 1 && isPMOXTemplate(r.Name, r.VMID) {
+				c, node, vmid, name := client, r.Node, r.VMID, r.Name
+				items = append(items, cleanupItem{
+					Category: "template",
+					Detail:   fmt.Sprintf("%s: %s (vmid %d) on node %s", label, name, vmid, node),
+					apply:    func() error { return deleteTemplate(ctx, c, node, vmid) },
+				})
+			}
 			if !vm.HasPMOXTag(r.Tags) || r.Status != "running" {
 				continue
 			}
@@ -131,13 +266,166 @@ func runCleanup(cmd *cobra.Command, apply bool) error {
 		}
 	}
 
-	// --- Local: mount records + orphaned logs ---
+	// --- Local categories ---
 	items = append(items, localMountItems()...)
-
-	// --- Local: stale guest known_hosts pins ---
 	items = append(items, staleKnownHostItems(liveIPs, ipsComplete, ew)...)
+	items = append(items, cloudInitItems(cfg)...)
+	items = append(items, tackProfileItems(cfg, vmidsByURL, reachableURLs)...)
+	items = append(items, secretItems(cfg)...)
 
-	return reportCleanup(cmd, items, apply)
+	// --- Select which categories to act on ---
+	available := presentCategories(items)
+	interactive := tui.Interactive() && outputMode != "json"
+	selected, err := resolveSelection(available, o, interactive)
+	if err != nil {
+		return err
+	}
+	kept := items[:0:0]
+	for _, it := range items {
+		if selected[it.Category] {
+			kept = append(kept, it)
+		}
+	}
+
+	return reportCleanup(cmd, kept, o.apply)
+}
+
+// presentCategories returns the distinct categories that have ≥1 item, in
+// the canonical category order.
+func presentCategories(items []cleanupItem) []string {
+	have := map[string]bool{}
+	for _, it := range items {
+		have[it.Category] = true
+	}
+	var out []string
+	for _, c := range cleanupCategories {
+		if have[c.key] {
+			out = append(out, c.key)
+		}
+	}
+	return out
+}
+
+// isPMOXTemplate reports whether a template VM was created by pmox: the
+// create-template naming convention (contains "-pmox-") within the
+// 9000–9099 VMID range. Conservative so a user's own template in that
+// range is not matched.
+func isPMOXTemplate(name string, vmid int) bool {
+	return strings.Contains(name, "-pmox-") && vmid >= 9000 && vmid <= 9099
+}
+
+// deleteTemplate destroys a template VM and waits for the task.
+func deleteTemplate(ctx context.Context, c *pveclient.Client, node string, vmid int) error {
+	upid, err := c.Delete(ctx, node, vmid)
+	if err != nil {
+		return err
+	}
+	return c.WaitTask(ctx, node, upid, 120*time.Second)
+}
+
+// cloudInitItems flags per-server cloud-init files whose server is no
+// longer in the config.
+func cloudInitItems(cfg *config.Config) []cleanupItem {
+	dir, err := config.CloudInitDir()
+	if err != nil {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	configured := map[string]bool{}
+	for _, url := range cfg.ServerURLs() {
+		if p, err := config.CloudInitPath(url); err == nil {
+			configured[filepath.Base(p)] = true
+		}
+	}
+	var items []cleanupItem
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		if configured[e.Name()] {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		items = append(items, cleanupItem{
+			Category: "cloud-init",
+			Detail:   "orphaned cloud-init file " + p,
+			apply:    func() error { return os.Remove(p) },
+		})
+	}
+	return items
+}
+
+// tackProfileItems flags remembered tack profiles whose server is gone, or
+// whose VMID no longer exists on a reachable server. Entries for servers
+// that could not be listed this run are left alone.
+func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, reachableURLs map[string]bool) []cleanupItem {
+	entries, err := tackprofile.All(tackStateDir())
+	if err != nil {
+		return nil
+	}
+	var items []cleanupItem
+	for _, e := range entries {
+		_, configured := cfg.Servers[e.ServerURL]
+		stale := false
+		switch {
+		case !configured:
+			stale = true
+		case reachableURLs[e.ServerURL]:
+			if vmids := vmidsByURL[e.ServerURL]; vmids != nil && !vmids[e.VMID] {
+				stale = true
+			}
+		}
+		if !stale {
+			continue
+		}
+		ee := e
+		items = append(items, cleanupItem{
+			Category: "tack-profile",
+			Detail:   fmt.Sprintf("%s vmid %d → profile %q", contextLabelFor(cfg, ee.ServerURL), ee.VMID, ee.Profile),
+			apply:    func() error { return tackprofile.Delete(tackStateDir(), ee.ServerURL, ee.VMID) },
+		})
+	}
+	return items
+}
+
+// secretItems flags file-backend secrets.yaml entries for servers no
+// longer in the config. Keychain entries are not enumerable and are out of
+// scope (handled at removal time).
+func secretItems(cfg *config.Config) []cleanupItem {
+	if credstore.ActiveBackend() != "file" {
+		return nil
+	}
+	urls, err := credstore.FileStoreURLs()
+	if err != nil {
+		return nil
+	}
+	var items []cleanupItem
+	for _, u := range urls {
+		if _, ok := cfg.Servers[u]; ok {
+			continue
+		}
+		uu := u
+		items = append(items, cleanupItem{
+			Category: "secret",
+			Detail:   "orphaned secret for " + uu,
+			apply: func() error {
+				for _, rmErr := range []error{
+					credstore.Remove(uu),
+					credstore.RemoveNodeSSHPassword(uu),
+					credstore.RemoveNodeSSHKeyPassphrase(uu),
+				} {
+					if rmErr != nil && !errors.Is(rmErr, credstore.ErrNotFound) {
+						return rmErr
+					}
+				}
+				return nil
+			},
+		})
+	}
+	return items
 }
 
 // cleanupClient builds a PVE client for a configured server, pulling its
@@ -341,24 +629,17 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 		return nil
 	}
 
-	// Group by category in a stable order.
-	order := []string{"snippet", "mount-record", "log", "known-host"}
-	title := map[string]string{
-		"snippet":      "Orphaned snippets",
-		"mount-record": "Dead mount records",
-		"log":          "Orphaned logs",
-		"known-host":   "Stale known_hosts pins",
-	}
+	// Group by category in the canonical order (from cleanupCategories).
 	byCat := map[string][]cleanupItem{}
 	for _, it := range items {
 		byCat[it.Category] = append(byCat[it.Category], it)
 	}
-	for _, cat := range order {
-		list := byCat[cat]
+	for _, c := range cleanupCategories {
+		list := byCat[c.key]
 		if len(list) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "%s (%d):\n", title[cat], len(list))
+		fmt.Fprintf(w, "%s (%d):\n", c.title, len(list))
 		for _, it := range list {
 			fmt.Fprintf(w, "  - %s\n", it.Detail)
 		}
