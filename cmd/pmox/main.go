@@ -115,7 +115,7 @@ func init() {
 		newDeleteCmd(), newListCmd(), newInfoCmd(),
 	)
 	addGrouped(groupAccess,
-		newShellCmd(), newExecCmd(), newCpCmd(), newSyncCmd(),
+		newShellCmd(), newExecCmd(), newApplyCmd(), newCpCmd(), newSyncCmd(),
 		newMountCmd(), newUmountCmd(), newSSHConfigCmd(),
 	)
 	// configureCmd is declared in configure.go; register + group it here so

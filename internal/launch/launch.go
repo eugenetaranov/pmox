@@ -70,6 +70,8 @@ type Options struct {
 	// SSHKeyPath is the private-key path passed to ansible as
 	// --private-key. Empty if unknown.
 	SSHKeyPath string
+	// SSHInsecure skips SSH host-key verification for the hook (tack).
+	SSHInsecure bool
 	// WaitForSSHFn is a test seam. When non-nil, the launch state
 	// machine calls it instead of the real WaitForSSH so hook tests
 	// can run without a live SSH endpoint. Production code leaves
@@ -248,12 +250,13 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			}
 			hookCtx, cancel := context.WithTimeout(ctx, hookBudget)
 			env := hook.Env{
-				IP:     ip,
-				Name:   opts.Name,
-				VMID:   vmid,
-				User:   opts.User,
-				Node:   opts.Node,
-				SSHKey: opts.SSHKeyPath,
+				IP:       ip,
+				Name:     opts.Name,
+				VMID:     vmid,
+				User:     opts.User,
+				Node:     opts.Node,
+				SSHKey:   opts.SSHKeyPath,
+				Insecure: opts.SSHInsecure,
 			}
 			opts.pStart(fmt.Sprintf("Running %s hook", opts.Hook.Name()))
 			hookErr := opts.Hook.Run(hookCtx, env, os.Stdout, os.Stderr)

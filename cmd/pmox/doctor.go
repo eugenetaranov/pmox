@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -167,6 +168,7 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 
 	// --- Local tooling (independent of network) ---
 	doctorTooling(cl, deps)
+	doctorTack(cl, deps)
 
 	// --- API reachability + auth ---
 	authOK := doctorAPIReach(ctx, cl, client)
@@ -310,6 +312,24 @@ func doctorTooling(cl *doctor.Checklist, deps doctorDeps) {
 			cl.Pass("tooling."+t.bin, "tooling", t.bin+" available")
 		}
 	}
+}
+
+// doctorTack reports whether tack (for 'pmox apply' and '--tack') is
+// available and a default playbook is resolvable. tack is optional, so
+// absence is a warning, not a failure.
+func doctorTack(cl *doctor.Checklist, deps doctorDeps) {
+	if _, err := deps.lookPath("tack"); err != nil {
+		cl.Warn("tooling.tack", "tooling", "tack not found on PATH — 'pmox apply' and '--tack' are unavailable",
+			"install tack from https://github.com/tackhq/tack (optional)")
+		return
+	}
+	pb := filepath.Join(tackDir(), "playbook.yaml")
+	if _, err := os.Stat(pb); err != nil {
+		cl.Warn("tooling.tack", "tooling", "tack available but no default playbook at "+pb,
+			"run 'pmox apply --init' to scaffold one, or use a profile/--playbook")
+		return
+	}
+	cl.Pass("tooling.tack", "tooling", "tack available; default playbook present")
 }
 
 // doctorAPIReach probes GET /version, splitting reachability from auth.

@@ -29,6 +29,9 @@ const (
 	defaultDiskSize = "20G"
 	defaultWait     = 3 * time.Minute
 	defaultUser     = "pmox"
+	// tackDefaultSentinel is the value cobra assigns to --tack when the
+	// flag is given without an argument; it maps to the config playbook.
+	tackDefaultSentinel = "\x00pmox-default-playbook"
 )
 
 // launchFlags holds the raw flag values for a single invocation.
@@ -111,7 +114,9 @@ automatic rollback. If anything after clone fails, run
 // identical.
 func addHookFlags(cmd *cobra.Command, f *launchFlags) {
 	cmd.Flags().StringVar(&f.postCreate, "post-create", "", "path to a script to run after SSH is ready; receives PMOX_IP, PMOX_VMID, PMOX_NAME, PMOX_USER, PMOX_NODE env vars")
-	cmd.Flags().StringVar(&f.tack, "tack", "", "path to a tack config; runs tack apply against the new VM after SSH is ready")
+	cmd.Flags().StringVar(&f.tack, "tack", "", "path to a tack playbook; runs 'tack run' against the new VM after SSH is ready (omit the value to use ~/.config/pmox/tack/playbook.yaml)")
+	// Allow `--tack` with no value → default config playbook.
+	cmd.Flags().Lookup("tack").NoOptDefVal = tackDefaultSentinel
 	cmd.Flags().StringVar(&f.ansible, "ansible", "", "path to an Ansible playbook; runs ansible-playbook against the new VM after SSH is ready")
 	cmd.Flags().BoolVar(&f.strictHooks, "strict-hooks", false, "treat hook failure as fatal (exit ExitHook) instead of a stderr warning")
 }
@@ -138,7 +143,11 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 	case f.postCreate != "":
 		return &hook.PostCreateHook{Path: f.postCreate}, nil
 	case f.tack != "":
-		return &hook.TackHook{ConfigPath: f.tack}, nil
+		path := f.tack
+		if path == tackDefaultSentinel {
+			path = filepath.Join(tackDir(), "playbook.yaml")
+		}
+		return &hook.TackHook{ConfigPath: path}, nil
 	case f.ansible != "":
 		return &hook.AnsibleHook{PlaybookPath: f.ansible}, nil
 	}
@@ -191,6 +200,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 	opts.Hook = hk
 	opts.StrictHooks = f.strictHooks
+	opts.SSHInsecure = SSHInsecure()
 	opts.User, opts.SSHKeyPath = hookSSHDefaults(resolved.Server)
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
