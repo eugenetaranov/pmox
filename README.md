@@ -144,18 +144,31 @@ Run `pmox <command> --help` for the full flag set of any command.
 
 `pmox cleanup` reclaims cruft pmox can leave behind and is **dry-run by
 default** — it reports what it would remove; pass `--apply` to delete. It
-scans every configured context and only ever touches pmox-owned
-resources (VMs are never removed — use `pmox delete`):
+scans every configured context, in selectable categories:
 
-- **orphaned cloud-init snippets** on the cluster (`pmox-<vmid>-…`) whose VM no longer exists (deleted via the web UI, or an interrupted `delete`);
-- **dead mount records** and **orphaned mount logs** in the local state dir;
-- **stale guest `known_hosts` pins** for IPs that no longer belong to a pmox VM (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped).
+- **snippet** — orphaned cloud-init snippets on the cluster (`pmox-<vmid>-…`) whose VM no longer exists;
+- **mount-record** / **log** — dead mount records and orphaned mount logs in the local state dir;
+- **cloud-init** — `~/.config/pmox/cloud-init/<slug>.yaml` files for servers removed from your config;
+- **tack-profile** — remembered tack profiles for servers/VMs that no longer exist;
+- **secret** — file-backend `secrets.yaml` entries for removed servers (OS-keychain secrets can't be enumerated, so they're cleared at removal time by `configure --remove` instead);
+- **known-host** — stale guest `known_hosts` pins (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped);
+- **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates`.
+
+On a terminal, `pmox cleanup` shows a **checklist** to pick categories
+(non-destructive ones pre-checked, `template` unchecked). Non-interactively,
+scope with `--only`/`--skip`:
 
 ```
-pmox cleanup            # report only
-pmox cleanup --apply    # actually remove
+pmox cleanup                          # checklist (or safe categories) — report only
+pmox cleanup --apply                  # remove the selected items
+pmox cleanup --only snippet,log       # just these
+pmox cleanup --skip known-host        # everything safe except this
+pmox cleanup --include-templates --apply   # also delete pmox templates
 pmox cleanup --output json
 ```
+
+Aside from opted-in `template` removal, VMs are never touched — use
+`pmox delete`.
 
 ## Checking readiness
 

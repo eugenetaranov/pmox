@@ -12,12 +12,13 @@ import (
 // layer so callers can distinguish "tags field absent" from "tag field
 // set to empty".
 type Resource struct {
-	VMID   int    `json:"vmid"`
-	Name   string `json:"name"`
-	Node   string `json:"node"`
-	Status string `json:"status"`
-	Tags   string `json:"tags"`
-	Uptime int64  `json:"uptime"` // seconds; free from the same response
+	VMID     int    `json:"vmid"`
+	Name     string `json:"name"`
+	Node     string `json:"node"`
+	Status   string `json:"status"`
+	Tags     string `json:"tags"`
+	Uptime   int64  `json:"uptime"`   // seconds; free from the same response
+	Template int    `json:"template"` // 1 if this VM is a template
 }
 
 // ClusterResources issues GET /cluster/resources, optionally filtered
