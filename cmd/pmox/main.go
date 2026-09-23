@@ -118,7 +118,7 @@ func init() {
 		newShellCmd(), newExecCmd(), newApplyCmd(), newCpCmd(), newSyncCmd(),
 		newMountCmd(), newUmountCmd(), newSSHConfigCmd(),
 	)
-	// initCmd is declared in configure.go; register + group it here so
+	// initCmd is declared in init.go; register + group it here so
 	// all command registration lives in one place.
 	addGrouped(groupSetup, initCmd, newConfigCmd(), newCreateTemplateCmd(), newDoctorCmd(), newCleanupCmd())
 
