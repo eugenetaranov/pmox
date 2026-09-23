@@ -230,7 +230,16 @@ func runRemove(p prompter, rawURL string) error {
 	return nil
 }
 
+// runInteractive dispatches to the form-based flow on a terminal, or the
+// linear prompt flow when input is non-interactive (pipes/CI/--no-input).
 func runInteractive(ctx context.Context, p prompter) error {
+	if interactiveFn() {
+		return runInteractiveForm(ctx, p)
+	}
+	return runInteractiveLinear(ctx, p)
+}
+
+func runInteractiveLinear(ctx context.Context, p prompter) error {
 	// Step 1: URL + reachability probe (before any credential prompt). The
 	// probe's TLS decision (strict vs insecure) is reused below so the user
 	// is never warned or handshaked twice.
@@ -313,55 +322,81 @@ func runInteractive(ctx context.Context, p prompter) error {
 		return err
 	}
 
-	// Step 13: save
+	return persistServer(p, cfg, persistInput{
+		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
+		node: node, template: template, storage: storage, snippetStorage: snippetStorage, bridge: bridge,
+		sshKey: sshKey, user: user, nodeSSH: nodeSSH, sshPassword: sshPassword, sshKeyPass: sshKeyPass,
+	})
+}
+
+// persistInput bundles everything init collects for a server, ready to
+// write to config + the secret store.
+type persistInput struct {
+	canonical      string
+	tokenID        string
+	secret         string
+	insecure       bool
+	node           string
+	template       string
+	storage        string
+	snippetStorage string
+	bridge         string
+	sshKey         string
+	user           string
+	nodeSSH        *config.NodeSSH
+	sshPassword    string
+	sshKeyPass     string
+}
+
+// persistServer writes the collected server config, stores its secrets,
+// and writes the starter cloud-init template. Shared by the linear and
+// form init flows.
+func persistServer(p prompter, cfg *config.Config, in persistInput) error {
 	srv := &config.Server{
-		TokenID:        tokenID,
-		Node:           node,
-		Template:       template,
-		Storage:        storage,
-		SnippetStorage: snippetStorage,
-		Bridge:         bridge,
-		SSHPubkey:      sshKey,
-		User:           user,
-		Insecure:       insecure,
-		NodeSSH:        nodeSSH,
+		TokenID:        in.tokenID,
+		Node:           in.node,
+		Template:       in.template,
+		Storage:        in.storage,
+		SnippetStorage: in.snippetStorage,
+		Bridge:         in.bridge,
+		SSHPubkey:      in.sshKey,
+		User:           in.user,
+		Insecure:       in.insecure,
+		NodeSSH:        in.nodeSSH,
 	}
-	cfg.AddServer(canonical, srv)
+	cfg.AddServer(in.canonical, srv)
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	if err := credstore.Set(canonical, secret); err != nil {
+	if err := credstore.Set(in.canonical, in.secret); err != nil {
 		// Best-effort revert: delete the server we just added and re-save.
-		cfg.RemoveServer(canonical)
+		cfg.RemoveServer(in.canonical)
 		_ = cfg.Save()
 		return fmt.Errorf("save secret to keychain: %w", err)
 	}
-	if sshPassword != "" {
-		if err := credstore.SetNodeSSHPassword(canonical, sshPassword); err != nil {
+	if in.sshPassword != "" {
+		if err := credstore.SetNodeSSHPassword(in.canonical, in.sshPassword); err != nil {
 			return fmt.Errorf("save node ssh password to keychain: %w", err)
 		}
 	} else {
-		_ = credstore.RemoveNodeSSHPassword(canonical)
+		_ = credstore.RemoveNodeSSHPassword(in.canonical)
 	}
-	if sshKeyPass != "" {
-		if err := credstore.SetNodeSSHKeyPassphrase(canonical, sshKeyPass); err != nil {
+	if in.sshKeyPass != "" {
+		if err := credstore.SetNodeSSHKeyPassphrase(in.canonical, in.sshKeyPass); err != nil {
 			return fmt.Errorf("save node ssh key passphrase to keychain: %w", err)
 		}
 	} else {
-		_ = credstore.RemoveNodeSSHKeyPassphrase(canonical)
+		_ = credstore.RemoveNodeSSHKeyPassphrase(in.canonical)
 	}
 
-	// Step 14
-	p.Printf("configured server %s\n", canonical)
+	p.Printf("configured server %s\n", in.canonical)
 	if path, perr := config.Path(); perr == nil {
 		home, _ := os.UserHomeDir()
 		p.Printf("config saved to %s\n", displayPath(path, home))
 	}
-
-	// Step 15: write the starter cloud-init template for this server.
-	// Failures here are non-fatal — the credentials are already saved,
-	// and the user can always rerun with --regen-cloud-init.
-	writeInitialCloudInit(p, canonical, user, sshKey)
+	// Starter cloud-init is non-fatal — creds are saved; user can rerun
+	// with --regen-cloud-init.
+	writeInitialCloudInit(p, in.canonical, in.user, in.sshKey)
 	return nil
 }
 

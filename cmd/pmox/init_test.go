@@ -409,8 +409,9 @@ func TestOverwritePromptRejected(t *testing.T) {
 	}
 
 	p := &fakePrompter{inputs: []string{url, "n"}}
-	if err := runInteractive(context.Background(), p); err != nil {
-		t.Fatalf("runInteractive: %v", err)
+	// Exercise the linear (non-interactive) flow's overwrite behavior directly.
+	if err := runInteractiveLinear(context.Background(), p); err != nil {
+		t.Fatalf("runInteractiveLinear: %v", err)
 	}
 	// Config still has original token ID
 	loaded, _ := config.Load()

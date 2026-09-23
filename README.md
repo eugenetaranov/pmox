@@ -60,6 +60,12 @@ credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to
 `~/.config/pmox/cloud-init/<slug>.yaml` that you can edit in place.
 
+On a terminal, `pmox init` is a **guided form**: a Connection page (URL +
+token), then Defaults (node/template/storage/bridge), then Access (SSH key
+/ user / node SSH), ending in a **review screen** that lists everything and
+lets you jump back and change any answer — nothing is written until you
+confirm. (Piped/`--no-input`/CI use falls back to plain prompts.)
+
 The URL prompt is forgiving — type a bare IP (`10.0.0.5`), a hostname
 (`pve.lan`), `host:port`, or paste the web-UI address; the scheme
 (`https`) and port (`8006`) are filled in for you. configure probes the
