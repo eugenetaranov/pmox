@@ -265,7 +265,7 @@ func TestResolve_InvalidFlagShape(t *testing.T) {
 	cfg := setupCfg(t, 1)
 	opts, cleanup := baseOpts(t, cfg)
 	defer cleanup()
-	opts.Flag = "http://pve1.lan" // wrong scheme
+	opts.Flag = "https://[oops" // unparseable URL (bad IPv6 bracket)
 
 	_, err := Resolve(context.Background(), opts)
 	if err == nil {

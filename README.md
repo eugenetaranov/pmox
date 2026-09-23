@@ -60,6 +60,16 @@ credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to
 `~/.config/pmox/cloud-init/<slug>.yaml` that you can edit in place.
 
+The URL prompt is forgiving — type a bare IP (`10.0.0.5`), a hostname
+(`pve.lan`), `host:port`, or paste the web-UI address; the scheme
+(`https`) and port (`8006`) are filled in for you. configure probes the
+endpoint **before** asking for a token: if nothing is listening it shows
+the error and re-asks the address in place (blank line or Ctrl-C to
+quit). Discovery steps with a single option (node/template/storage/
+bridge) are chosen automatically. At the SSH-key step you can **generate
+a new dedicated bootstrap key**, pick an existing one, or browse the
+filesystem for it.
+
 ## Commands
 
 `pmox --help` groups these into the same three sections shown below.

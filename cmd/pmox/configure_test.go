@@ -156,22 +156,70 @@ func TestRemoveNonCanonicalURLIsCanonicalized(t *testing.T) {
 	}
 }
 
-func TestPromptCanonicalURLRetriesThenSucceeds(t *testing.T) {
-	p := &fakePrompter{inputs: []string{"not-a-url", "http://nope", "https://pve.home.lan:8006/api2/json"}}
-	got, err := promptCanonicalURL(p)
+// stubProbe overrides probeEndpoint/interactiveFn for a test, returning
+// the given statuses in sequence (last one repeats), and restores them.
+func stubProbe(t *testing.T, interactive bool, statuses ...pveclient.ReachStatus) {
+	t.Helper()
+	origProbe, origInteractive := probeEndpoint, interactiveFn
+	i := 0
+	probeEndpoint = func(_ context.Context, _ string, _ bool) (pveclient.ReachStatus, error) {
+		s := statuses[len(statuses)-1]
+		if i < len(statuses) {
+			s = statuses[i]
+		}
+		i++
+		return s, nil
+	}
+	interactiveFn = func() bool { return interactive }
+	t.Cleanup(func() { probeEndpoint, interactiveFn = origProbe, origInteractive })
+}
+
+func TestPromptReachableURLRetriesThenSucceeds(t *testing.T) {
+	stubProbe(t, true, pveclient.ReachUnreachable, pveclient.Reachable)
+	p := &fakePrompter{inputs: []string{"10.0.0.9", "pve.home.lan"}}
+	got, insecure, err := promptReachableURL(context.Background(), p)
 	if err != nil {
-		t.Fatalf("promptCanonicalURL: %v", err)
+		t.Fatalf("promptReachableURL: %v", err)
 	}
 	if got != "https://pve.home.lan:8006/api2/json" {
 		t.Errorf("got %q", got)
 	}
+	if insecure {
+		t.Errorf("insecure = true, want false")
+	}
 }
 
-func TestPromptCanonicalURLExhausted(t *testing.T) {
-	p := &fakePrompter{inputs: []string{"bad1", "bad2", "bad3"}}
-	_, err := promptCanonicalURL(p)
-	if err == nil {
-		t.Fatal("want error")
+func TestPromptReachableURLBlankAborts(t *testing.T) {
+	stubProbe(t, true, pveclient.Reachable)
+	p := &fakePrompter{inputs: []string{""}}
+	if _, _, err := promptReachableURL(context.Background(), p); err == nil {
+		t.Fatal("want error on blank URL")
+	}
+}
+
+func TestPromptReachableURLNonInteractiveFailFast(t *testing.T) {
+	stubProbe(t, false, pveclient.ReachUnreachable)
+	// Only one input: a fail-fast path must not re-prompt (a second read
+	// would return the fakePrompter's "no more inputs" error instead).
+	p := &fakePrompter{inputs: []string{"pve.home.lan"}}
+	if _, _, err := promptReachableURL(context.Background(), p); err == nil {
+		t.Fatal("want error when non-interactive and unreachable")
+	}
+}
+
+func TestPromptReachableURLTLSFallback(t *testing.T) {
+	// Strict probe reports TLS untrusted; the insecure retry reaches it.
+	stubProbe(t, true, pveclient.ReachTLSUntrusted, pveclient.Reachable)
+	p := &fakePrompter{inputs: []string{"pve.home.lan"}}
+	got, insecure, err := promptReachableURL(context.Background(), p)
+	if err != nil {
+		t.Fatalf("promptReachableURL: %v", err)
+	}
+	if !insecure {
+		t.Errorf("insecure = false, want true after TLS fallback")
+	}
+	if got != "https://pve.home.lan:8006/api2/json" {
+		t.Errorf("got %q", got)
 	}
 }
 
@@ -214,7 +262,7 @@ func TestValidateCredentialsStrictSuccess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret")
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -230,7 +278,7 @@ func TestValidateCredentialsTLSFallback(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret")
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -248,14 +296,112 @@ func TestValidateCredentialsUnauthorizedReturnsError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret")
+	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
 	if !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Errorf("want ErrUnauthorized, got %v", err)
 	}
 }
 
+func TestPickOneAutoSingleOption(t *testing.T) {
+	p := &fakePrompter{}
+	opts := []huh.Option[string]{huh.NewOption("pve (online)", "pve")}
+	got := pickOneAuto(p, "Default node", opts, "pve")
+	if got != "pve" {
+		t.Errorf("got %q, want pve", got)
+	}
+	if !strings.Contains(p.out.String(), "Default node: pve (online)") {
+		t.Errorf("single option not reported; stdout: %q", p.out.String())
+	}
+}
+
+func TestPickOneAutoEmptyUsesFallback(t *testing.T) {
+	p := &fakePrompter{}
+	got := pickOneAuto(p, "Default node", nil, "fallback-node")
+	if got != "fallback-node" {
+		t.Errorf("got %q, want fallback-node", got)
+	}
+}
+
+func TestGenerateBootstrapKeyCreatesAndReuses(t *testing.T) {
+	home := t.TempDir()
+	sshDir := filepath.Join(home, ".ssh")
+	p := &fakePrompter{}
+
+	pub, err := generateBootstrapKey(p, sshDir, home)
+	if err != nil {
+		t.Fatalf("generateBootstrapKey: %v", err)
+	}
+	if pub != filepath.Join(sshDir, "pmox_ed25519.pub") {
+		t.Errorf("pub = %q", pub)
+	}
+	if fi, statErr := os.Stat(filepath.Join(sshDir, "pmox_ed25519")); statErr != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("private key missing or wrong perms: %v", statErr)
+	}
+	if !strings.Contains(p.out.String(), "generated new SSH key") {
+		t.Errorf("missing generated message: %q", p.out.String())
+	}
+
+	// Second call reuses without clobbering.
+	p2 := &fakePrompter{}
+	pub2, err := generateBootstrapKey(p2, sshDir, home)
+	if err != nil {
+		t.Fatalf("generateBootstrapKey reuse: %v", err)
+	}
+	if pub2 != pub {
+		t.Errorf("reuse returned %q, want %q", pub2, pub)
+	}
+	if !strings.Contains(p2.out.String(), "reusing existing pmox key") {
+		t.Errorf("missing reuse message: %q", p2.out.String())
+	}
+}
+
+func TestResolveBrowsedKey(t *testing.T) {
+	dir := t.TempDir()
+	priv := filepath.Join(dir, "id_ed25519")
+	pub := priv + ".pub"
+	if err := os.WriteFile(pub, []byte("ssh-ed25519 AAAA x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(priv, []byte("PRIV"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Selecting the private key resolves to its .pub.
+	if got := resolveBrowsedKey(priv); got != pub {
+		t.Errorf("private→pub: got %q, want %q", got, pub)
+	}
+	// Selecting a .pub uses it directly.
+	if got := resolveBrowsedKey(pub); got != pub {
+		t.Errorf(".pub direct: got %q, want %q", got, pub)
+	}
+	// A lone file with no adjacent .pub is used as-is.
+	lone := filepath.Join(dir, "somekey")
+	if got := resolveBrowsedKey(lone); got != lone {
+		t.Errorf("lone: got %q, want %q", got, lone)
+	}
+}
+
+func TestPromptSSHKeyNonInteractiveUsesSuggestion(t *testing.T) {
+	// interactiveFn=false → text fallback; blank input accepts the suggested
+	// key (which must exist on disk to pass the readability check).
+	origInteractive := interactiveFn
+	interactiveFn = func() bool { return false }
+	t.Cleanup(func() { interactiveFn = origInteractive })
+
+	key := writePubKey(t, "ssh-ed25519 AAAA test@host\n")
+	p := &fakePrompter{inputs: []string{""}}
+	got, err := promptSSHKey(p, key)
+	if err != nil {
+		t.Fatalf("promptSSHKey: %v", err)
+	}
+	if got != key {
+		t.Errorf("got %q, want %q", got, key)
+	}
+}
+
 func TestOverwritePromptRejected(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stubProbe(t, true, pveclient.Reachable)
 	url := "https://pve.home.lan:8006/api2/json"
 	cfg := &config.Config{Servers: map[string]*config.Server{url: {TokenID: "original@pve!orig"}}}
 	if err := cfg.Save(); err != nil {

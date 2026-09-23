@@ -20,10 +20,17 @@ func TestCanonicalizeURL(t *testing.T) {
 		{"missing port", "https://pve.home.lan/api2/json", "https://pve.home.lan:8006/api2/json", ""},
 		{"missing path", "https://pve.home.lan:8006", "https://pve.home.lan:8006/api2/json", ""},
 		{"missing port and path", "https://pve.home.lan", "https://pve.home.lan:8006/api2/json", ""},
-		{"http rejected", "http://pve.home.lan:8006/api2/json", "", "requires https"},
+		{"http upgraded", "http://pve.home.lan:8006/api2/json", "https://pve.home.lan:8006/api2/json", ""},
 		{"junk path stripped", "https://pve.home.lan:8006/some/other/path", "https://pve.home.lan:8006/api2/json", ""},
 		{"web ui hash stripped", "https://192.168.0.185:8006/#v1:0:18:4:::::::", "https://192.168.0.185:8006/api2/json", ""},
 		{"query stripped", "https://pve.home.lan:8006/?foo=bar", "https://pve.home.lan:8006/api2/json", ""},
+		{"bare ip", "10.0.0.5", "https://10.0.0.5:8006/api2/json", ""},
+		{"bare hostname", "pve.lan", "https://pve.lan:8006/api2/json", ""},
+		{"host with port", "10.0.0.5:8007", "https://10.0.0.5:8007/api2/json", ""},
+		{"bare hostname uppercase", "PVE.LAN", "https://pve.lan:8006/api2/json", ""},
+		{"ipv6 with port", "[fd00::1]:8006", "https://[fd00::1]:8006/api2/json", ""},
+		{"ipv6 scheme+port", "https://[fd00::1]:8443", "https://[fd00::1]:8443/api2/json", ""},
+		{"unsupported scheme", "ftp://pve.lan", "", "unsupported scheme"},
 		{"empty", "", "", "empty"},
 	}
 	for _, tc := range cases {
@@ -42,6 +49,27 @@ func TestCanonicalizeURL(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalizeURLVerboseHTTPUpgrade(t *testing.T) {
+	got, upgraded, err := CanonicalizeURLVerbose("http://pve.lan:8006")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !upgraded {
+		t.Errorf("upgradedFromHTTP = false, want true for http:// input")
+	}
+	if got != "https://pve.lan:8006/api2/json" {
+		t.Errorf("got %q, want https://pve.lan:8006/api2/json", got)
+	}
+
+	_, upgraded, err = CanonicalizeURLVerbose("10.0.0.5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if upgraded {
+		t.Errorf("upgradedFromHTTP = true, want false for scheme-less input")
 	}
 }
 
