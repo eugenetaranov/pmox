@@ -73,7 +73,7 @@ fix options:
   1. edit /etc/pve/storage.cfg on the PVE host and add snippets
      to the content= line for this storage
   2. re-run with --storage <other-storage> pointing to a storage
-     that supports snippets (see: pmox configure --list-storage)
+     that supports snippets (see: pmox init --list-storage)
 
 see https://pve.proxmox.com/wiki/Storage for content-type details`, storage, s.Content)
 	}

@@ -66,10 +66,10 @@ for the qemu-guest-agent to report an IP, then runs an SSH handshake
 to confirm the VM is reachable.
 
 The cloud-init user-data is read from
-~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox configure'
+~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
 writes on first run. Edit that file to customize packages, users,
 runcmd, or anything else cloud-init supports. To regenerate a fresh
-default, run 'pmox configure --regen-cloud-init'.
+default, run 'pmox init --regen-cloud-init'.
 
 The VM disk and the cloud-init snippet may live on different storage
 pools. --storage targets the disk; --snippet-storage targets the
@@ -191,7 +191,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 
 	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
 	}
 
 	opts, err := resolveLaunchOptions(ctx, name, f, resolved, cmd.ErrOrStderr())
@@ -249,12 +249,12 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
-		return launch.Options{}, fmt.Errorf("%w: no node configured; pass --node or run 'pmox configure'", exitcode.ErrNotFound)
+		return launch.Options{}, fmt.Errorf("%w: no node configured; pass --node or run 'pmox init'", exitcode.ErrNotFound)
 	}
 
 	templateStr := firstNonEmpty(f.template, srv.Template)
 	if templateStr == "" {
-		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template or run 'pmox configure'", exitcode.ErrNotFound)
+		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template or run 'pmox init'", exitcode.ErrNotFound)
 	}
 	templateID, templateName, err := resolveTemplate(ctx, client, node, templateStr)
 	if err != nil {
@@ -263,7 +263,7 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 
 	storage := firstNonEmpty(f.storage, srv.Storage)
 	if storage == "" {
-		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox configure' (required for the cloud-init drive)", exitcode.ErrNotFound)
+		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox init' (required for the cloud-init drive)", exitcode.ErrNotFound)
 	}
 	snippetStorage := resolveSnippetStorage(f.snippetStorage, srv.SnippetStorage, storage, stderr)
 
@@ -309,7 +309,7 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 // resolveSnippetStorage layers --snippet-storage > server.SnippetStorage
 // > VM disk storage. When the final fallback to disk storage kicks in
 // (no flag, no config), it emits a one-shot stderr warning pointing the
-// user at `pmox configure` for a permanent fix.
+// user at `pmox init` for a permanent fix.
 func resolveSnippetStorage(flag, configured, diskStorage string, stderr io.Writer) string {
 	if flag != "" {
 		return flag
@@ -318,7 +318,7 @@ func resolveSnippetStorage(flag, configured, diskStorage string, stderr io.Write
 		return configured
 	}
 	if stderr != nil {
-		fmt.Fprintf(stderr, "warning: no snippet_storage configured; falling back to %q. run 'pmox configure' to set it permanently\n", diskStorage)
+		fmt.Fprintf(stderr, "warning: no snippet_storage configured; falling back to %q. run 'pmox init' to set it permanently\n", diskStorage)
 	}
 	return diskStorage
 }

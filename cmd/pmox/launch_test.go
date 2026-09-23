@@ -78,8 +78,8 @@ func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
 	if !strings.Contains(err.Error(), "template") {
 		t.Errorf("err = %v, want mention of template", err)
 	}
-	if !strings.Contains(err.Error(), "pmox configure") {
-		t.Errorf("err = %v, want suggestion to run pmox configure", err)
+	if !strings.Contains(err.Error(), "pmox init") {
+		t.Errorf("err = %v, want suggestion to run pmox init", err)
 	}
 }
 

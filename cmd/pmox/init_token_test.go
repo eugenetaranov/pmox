@@ -82,11 +82,12 @@ func TestAcquireTokenGenerateRoute(t *testing.T) {
 	defer srv.Close()
 	origInteractive := interactiveFn
 	interactiveFn = func() bool { return true }
-	t.Cleanup(func() { interactiveFn = origInteractive })
+	origSel := selectTokenSourceFn
+	selectTokenSourceFn = func() (string, error) { return "generate", nil }
+	t.Cleanup(func() { interactiveFn = origInteractive; selectTokenSourceFn = origSel })
 
-	// First prompt is the generate/paste choice (blank → generate), then
-	// login user + token name; password via secrets.
-	p := &fakePrompter{inputs: []string{"", "root@pam", "pmox"}, secrets: []string{"pw"}}
+	// Selector picks "generate"; then login user + token name; password via secrets.
+	p := &fakePrompter{inputs: []string{"root@pam", "pmox"}, secrets: []string{"pw"}}
 	tokenID, secret, err := acquireToken(context.Background(), p, srv.URL, false)
 	if err != nil {
 		t.Fatalf("acquireToken: %v", err)
@@ -99,10 +100,12 @@ func TestAcquireTokenGenerateRoute(t *testing.T) {
 func TestAcquireTokenPasteRoute(t *testing.T) {
 	origInteractive := interactiveFn
 	interactiveFn = func() bool { return true }
-	t.Cleanup(func() { interactiveFn = origInteractive })
+	origSel := selectTokenSourceFn
+	selectTokenSourceFn = func() (string, error) { return "paste", nil }
+	t.Cleanup(func() { interactiveFn = origInteractive; selectTokenSourceFn = origSel })
 
-	// Choice "paste" → prompt token id then secret.
-	p := &fakePrompter{inputs: []string{"paste", "root@pam!existing"}, secrets: []string{"tok-secret"}}
+	// Selector picks "paste" → prompt token id then secret.
+	p := &fakePrompter{inputs: []string{"root@pam!existing"}, secrets: []string{"tok-secret"}}
 	tokenID, secret, err := acquireToken(context.Background(), p, "https://unused", false)
 	if err != nil {
 		t.Fatalf("acquireToken: %v", err)

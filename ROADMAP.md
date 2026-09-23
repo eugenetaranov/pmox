@@ -13,7 +13,7 @@ slices under `openspec/changes/`.
 | #  | Slice                         | State       | Notes |
 |----|-------------------------------|-------------|-------|
 | 1  | `project-skeleton`            | ✅ Shipped  | `cmd/pmox`, exit codes, Makefile, goreleaser, CI, release workflow, license, placeholder README |
-| 2  | `configure-and-credstore`     | ✅ Shipped  | `pmox configure` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
+| 2  | `configure-and-credstore`     | ✅ Shipped  | `pmox init` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
 | 3  | `server-resolution`           | ✅ Shipped  | `internal/server.Resolve` + `--server` root flag + `PMOX_SERVER` |
 | 4  | `pveclient-core`              | ✅ Shipped  | Launch/lifecycle endpoints, `WaitTask`, form-body helper, no-retry client |
 | 5  | `launch-default`              | ✅ Shipped  | Happy-path `pmox launch` with built-in cloud-init (`ef5e375`) |

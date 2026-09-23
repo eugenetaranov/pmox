@@ -118,7 +118,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	cloudInitBytes, err := os.ReadFile(opts.CloudInitPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("read cloud-init file %s: %w\n  hint: run 'pmox configure --regen-cloud-init' to write a fresh default, or create the file manually", opts.CloudInitPath, err)
+			return nil, fmt.Errorf("read cloud-init file %s: %w\n  hint: run 'pmox init --regen-cloud-init' to write a fresh default, or create the file manually", opts.CloudInitPath, err)
 		}
 		return nil, fmt.Errorf("read cloud-init file %s: %w", opts.CloudInitPath, err)
 	}

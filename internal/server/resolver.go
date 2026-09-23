@@ -96,7 +96,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return nil, err
 	}
 	if opts.Cfg == nil {
-		return nil, fmt.Errorf("%w: no server configured; run 'pmox configure' to add one", exitcode.ErrNotFound)
+		return nil, fmt.Errorf("%w: no server configured; run 'pmox init' to add one", exitcode.ErrNotFound)
 	}
 
 	// Rung 1: --server flag (context name or URL)
@@ -149,7 +149,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 	// Rung 6: single / zero configured
 	switch len(urls) {
 	case 0:
-		return nil, fmt.Errorf("%w: no server configured; run 'pmox configure' to add one", exitcode.ErrNotFound)
+		return nil, fmt.Errorf("%w: no server configured; run 'pmox init' to add one", exitcode.ErrNotFound)
 	case 1:
 		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
@@ -230,7 +230,7 @@ func hydrate(url string, srv *config.Server, source string) (*Resolved, error) {
 	secret, err := credstore.Get(url)
 	if err != nil {
 		if errors.Is(err, credstore.ErrNotFound) {
-			return nil, fmt.Errorf("%w: secret for %s not found in keychain; re-run 'pmox configure'", exitcode.ErrNotFound, url)
+			return nil, fmt.Errorf("%w: secret for %s not found in keychain; re-run 'pmox init'", exitcode.ErrNotFound, url)
 		}
 		return nil, fmt.Errorf("load secret for %s: %w", url, err)
 	}
@@ -260,7 +260,7 @@ func hydrateNodeSSH(r *Resolved) error {
 		pw, err := credstore.GetNodeSSHPassword(r.URL)
 		if err != nil {
 			if errors.Is(err, credstore.ErrNotFound) {
-				return fmt.Errorf("%w: node SSH password for %s missing from keychain; re-run 'pmox configure'", exitcode.ErrNotFound, r.URL)
+				return fmt.Errorf("%w: node SSH password for %s missing from keychain; re-run 'pmox init'", exitcode.ErrNotFound, r.URL)
 			}
 			return fmt.Errorf("load node SSH password for %s: %w", r.URL, err)
 		}

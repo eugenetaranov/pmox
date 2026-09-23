@@ -87,7 +87,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	// --- Config layer (no network) ---
 	cfg, err := config.Load()
 	if err != nil {
-		cl.Fail("config.file", "config", "no usable pmox config found", "run 'pmox configure' to create one", exitcode.ExitUserError)
+		cl.Fail("config.file", "config", "no usable pmox config found", "run 'pmox init' to create one", exitcode.ExitUserError)
 		return finishDoctor(cmd, f, cl, "", "")
 	}
 	cl.Pass("config.file", "config", "config loaded")
@@ -103,7 +103,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Stderr: cmd.ErrOrStderr(),
 	})
 	if err != nil {
-		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox configure', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
+		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
 		return finishDoctor(cmd, f, cl, "", "")
 	}
 	cl.Pass("config.server", "config", "server resolves: "+resolved.URL)
@@ -151,12 +151,12 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 
 	// --- Config values that gate later checks ---
 	if srv.TokenID == "" {
-		cl.Fail("config.token_id", "config", "API token_id not set", "run 'pmox configure'", exitcode.ExitUserError)
+		cl.Fail("config.token_id", "config", "API token_id not set", "run 'pmox init'", exitcode.ExitUserError)
 	} else {
 		cl.Pass("config.token_id", "config", "token_id set: "+srv.TokenID)
 	}
 	if resolved.Secret == "" {
-		cl.Fail("config.api_secret", "config", "API token secret missing from keychain", "run 'pmox configure' to re-enter it", exitcode.ExitUserError)
+		cl.Fail("config.api_secret", "config", "API token secret missing from keychain", "run 'pmox init' to re-enter it", exitcode.ExitUserError)
 	} else {
 		cl.Pass("config.api_secret", "config", "API secret present in keychain")
 	}
@@ -191,17 +191,17 @@ func doctorConfigDefaults(cl *doctor.Checklist, srv *config.Server) {
 	if srv.Node != "" {
 		cl.Pass("config.default_node", "config", "default node: "+srv.Node)
 	} else {
-		cl.Warn("config.default_node", "config", "no default node configured", "run 'pmox configure' (launch needs a node)")
+		cl.Warn("config.default_node", "config", "no default node configured", "run 'pmox init' (launch needs a node)")
 	}
 	if srv.Template != "" {
 		cl.Pass("config.default_template", "config", "default template: "+srv.Template)
 	} else {
-		cl.Warn("config.default_template", "config", "no default template configured", "run 'pmox create-template', then set it via 'pmox configure'")
+		cl.Warn("config.default_template", "config", "no default template configured", "run 'pmox create-template', then set it via 'pmox init'")
 	}
 	if srv.Storage != "" {
 		cl.Pass("config.default_storage", "config", "default storage: "+srv.Storage)
 	} else {
-		cl.Warn("config.default_storage", "config", "no default storage configured", "run 'pmox configure' (launch needs a disk storage)")
+		cl.Warn("config.default_storage", "config", "no default storage configured", "run 'pmox init' (launch needs a disk storage)")
 	}
 }
 
@@ -212,7 +212,7 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
-		cl.Warn("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox configure --regen-cloud-init'")
+		cl.Warn("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox init --regen-cloud-init'")
 		return
 	}
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
@@ -244,7 +244,7 @@ func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
 	}
 	pub, err := os.ReadFile(expandHome(sshPubkeyPath))
 	if err != nil {
-		cl.Warn("config.cloud_init_key", "config", "cannot read ssh_pubkey "+sshPubkeyPath+": "+err.Error(), "fix 'ssh_pubkey' in config or re-run 'pmox configure'")
+		cl.Warn("config.cloud_init_key", "config", "cannot read ssh_pubkey "+sshPubkeyPath+": "+err.Error(), "fix 'ssh_pubkey' in config or re-run 'pmox init'")
 		return
 	}
 	authorized, hasAny, err := config.CloudInitAuthorizesKey(path, string(pub))
@@ -257,7 +257,7 @@ func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
 	}
 	cl.Warn("config.cloud_init_key", "config",
 		"cloud-init authorizes a different key than ssh_pubkey — new VMs won't accept your configured key",
-		"run 'pmox configure --regen-cloud-init' (then relaunch existing VMs), or point ssh_pubkey at the key the VMs already have")
+		"run 'pmox init --regen-cloud-init' (then relaunch existing VMs), or point ssh_pubkey at the key the VMs already have")
 }
 
 func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, strict bool) {
@@ -293,7 +293,7 @@ func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 	}
 	cl.Fail("config.tls_pin", "config",
 		"TLS certificate CHANGED from the pinned fingerprint (possible MITM)",
-		"if you deliberately replaced the cert, clear tls_pin_sha256 in config (or re-run 'pmox configure')",
+		"if you deliberately replaced the cert, clear tls_pin_sha256 in config (or re-run 'pmox init')",
 		exitcode.ExitNetworkError)
 }
 
@@ -343,7 +343,7 @@ func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient
 		return true
 	case errors.Is(err, pveclient.ErrUnauthorized):
 		cl.Pass("api.reachable", "api", "reached API")
-		cl.Fail("api.auth", "api", "API token rejected (401/403)", "check token_id and secret with 'pmox configure', and the token's privileges", exitcode.ExitUnauthorized)
+		cl.Fail("api.auth", "api", "API token rejected (401/403)", "check token_id and secret with 'pmox init', and the token's privileges", exitcode.ExitUnauthorized)
 		return false
 	case errors.Is(err, pveclient.ErrTLSVerificationFailed):
 		cl.Fail("api.reachable", "api", "TLS verification failed: "+err.Error(), "install a trusted cert, or set insecure: true if this is a self-signed homelab cert", exitcode.ExitNetworkError)
@@ -398,7 +398,7 @@ func doctorNode(ctx context.Context, cl *doctor.Checklist, client *pveclient.Cli
 			return false
 		}
 	}
-	cl.Fail("api.node", "api", "configured node '"+node+"' not found in cluster", "fix the 'node' value in config (see 'pmox configure')", exitcode.ExitNotFound)
+	cl.Fail("api.node", "api", "configured node '"+node+"' not found in cluster", "fix the 'node' value in config (see 'pmox init')", exitcode.ExitNotFound)
 	return false
 }
 
@@ -437,7 +437,7 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 		}
 		switch {
 		case found == nil:
-			cl.Fail("storage.disk", "storage", "disk storage '"+diskStorage+"' not found on node '"+node+"'", "fix 'storage' in config (see 'pmox configure')", exitcode.ExitNotFound)
+			cl.Fail("storage.disk", "storage", "disk storage '"+diskStorage+"' not found on node '"+node+"'", "fix 'storage' in config (see 'pmox init')", exitcode.ExitNotFound)
 		case !found.SupportsVMDisks():
 			cl.Fail("storage.disk", "storage", "storage '"+diskStorage+"' has no 'images' content (can't hold VM disks)", "pick a storage with 'images' content, or add it: pvesm set "+diskStorage+" --content images,...", exitcode.ExitGeneric)
 		default:
@@ -517,7 +517,7 @@ func agentEnabled(v string) bool {
 
 func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, deps doctorDeps) {
 	if !resolved.HasNodeSSH() {
-		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox configure' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
+		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
 		return
 	}
 	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+resolved.NodeSSHAuth+" auth)")
@@ -533,7 +533,7 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		return
 	}
 	if !pinned {
-		cl.Fail("ssh.known_host", "ssh", "no pinned host key for "+host, "doctor won't prompt — run 'pmox configure' (or 'pmox create-template') once to pin the node host key", exitcode.ExitUserError)
+		cl.Fail("ssh.known_host", "ssh", "no pinned host key for "+host, "doctor won't prompt — run 'pmox init' (or 'pmox create-template') once to pin the node host key", exitcode.ExitUserError)
 		return
 	}
 	cl.Pass("ssh.known_host", "ssh", "node host key is pinned")

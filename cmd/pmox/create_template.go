@@ -85,7 +85,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 
 	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload); run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload); run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
 	}
 
 	srv := resolved.Server
@@ -95,7 +95,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
-		return fmt.Errorf("%w: no node configured; pass --node or run 'pmox configure'", exitcode.ErrNotFound)
+		return fmt.Errorf("%w: no node configured; pass --node or run 'pmox init'", exitcode.ErrNotFound)
 	}
 	bridge := firstNonEmpty(f.bridge, srv.Bridge, "vmbr0")
 
