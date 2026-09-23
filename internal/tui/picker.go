@@ -54,6 +54,7 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 		Options(opts...).
 		Value(&selected).
 		Filtering(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -82,6 +83,7 @@ func Select(title string, opts []huh.Option[string]) (string, error) {
 		Options(opts...).
 		Value(&selected).
 		Filtering(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -111,6 +113,7 @@ func SelectMultiChecked(title string, opts []huh.Option[string]) ([]string, erro
 		Options(opts...).
 		Value(&selected).
 		Filterable(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -132,6 +135,7 @@ func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
 		Options(opts...).
 		Value(&selected).
 		Filterable(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {

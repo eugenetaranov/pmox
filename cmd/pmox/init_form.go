@@ -81,6 +81,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 	for {
 		switch stage {
 		case "connection":
+			printTabs(p, "Connection")
 			rc, in, cerr := establishConnectionFn(ctx, p, cfg, prevConn)
 			if cerr != nil {
 				return cerr
@@ -99,6 +100,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			}
 			stage = "defaults"
 		case "defaults":
+			printTabs(p, "Defaults")
 			d, derr := collectDefaultsFn(ctx, p, conn, defs, haveDefs)
 			if derr != nil {
 				return derr
@@ -106,6 +108,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			defs, haveDefs = d, true
 			stage = "access"
 		case "access":
+			printTabs(p, "Access")
 			a, aerr := collectAccessFn(ctx, p, conn.canonical, acc, haveAccess)
 			if aerr != nil {
 				return aerr
@@ -113,6 +116,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			acc, haveAccess = a, true
 			stage = "review"
 		case "review":
+			printTabs(p, "Review")
 			action, rerr := reviewFn(p, reviewRows(conn, defs, acc))
 			if rerr != nil {
 				return rerr
@@ -324,9 +328,15 @@ func runReviewForm(p prompter, rows []string) (string, error) {
 	})
 }
 
-// runForm runs a huh form, mapping a user abort to a clean SIGINT-based exit.
+// printTabs renders the wizard phase tabs above the current page.
+func printTabs(p prompter, active string) {
+	p.Printf("\n%s\n", tui.Steps(active, "Connection", "Defaults", "Access", "Review"))
+}
+
+// runForm runs a huh form (themed), mapping a user abort to a clean
+// SIGINT-based exit.
 func runForm(f *huh.Form) error {
-	if err := f.Run(); err != nil {
+	if err := f.WithTheme(tui.Theme()).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
 			return fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)

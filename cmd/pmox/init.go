@@ -1373,6 +1373,7 @@ func chooseSSHKeyAction(suggest string) (string, error) {
 		).
 		Value(&choice).
 		Filtering(false).
+		WithTheme(tui.Theme()).
 		Run()
 	return choice, err
 }
@@ -1416,6 +1417,7 @@ func browseForKey(home string) (string, bool) {
 		FileAllowed(true).
 		DirAllowed(false).
 		Value(&selected).
+		WithTheme(tui.Theme()).
 		Run()
 	if err != nil || selected == "" {
 		return "", false
@@ -1459,6 +1461,7 @@ func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error)
 			Options(opts...).
 			Value(&picked).
 			Filtering(false).
+			WithTheme(tui.Theme()).
 			Run()
 		if err == nil && picked != "" {
 			if _, rErr := os.ReadFile(picked); rErr == nil {
