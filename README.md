@@ -70,6 +70,14 @@ bridge) are chosen automatically. At the SSH-key step you can **generate
 a new dedicated bootstrap key**, pick an existing one, or browse the
 filesystem for it.
 
+For the API token you can either paste one you created in the web UI, or
+let pmox **generate it for you**: choose "generate", enter a
+`user@realm` (e.g. `root@pam`) and password, and pmox logs in, creates
+the token (with privilege separation off, so it inherits your user's
+rights), and stores only the token secret. Your **password is used once
+to log in and is never saved** — only the generated token secret goes to
+the keyring (or the file fallback).
+
 ## Commands
 
 `pmox --help` groups these into the same three sections shown below.

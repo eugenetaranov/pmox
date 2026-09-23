@@ -255,14 +255,9 @@ func runInteractive(ctx context.Context, p prompter) error {
 		}
 	}
 
-	// Step 3: token ID
-	tokenID, err := promptTokenID(p)
-	if err != nil {
-		return err
-	}
-
-	// Step 4: token secret
-	secret, err := promptSecret(p)
+	// Steps 3–4: acquire an API token — paste an existing one or log in
+	// and generate one.
+	tokenID, secret, err := acquireToken(ctx, p, canonical, insecure)
 	if err != nil {
 		return err
 	}
@@ -584,6 +579,113 @@ func hostPort(canonical string) string {
 		return u.Host
 	}
 	return canonical
+}
+
+// acquireToken obtains an API token id + secret. Interactively it offers
+// a choice between pasting an existing token and logging in to generate
+// one; non-interactively (and on the paste choice) it prompts for the
+// token id and secret directly.
+func acquireToken(ctx context.Context, p prompter, baseURL string, insecure bool) (tokenID, secret string, err error) {
+	if interactiveFn() {
+		choice, cerr := p.Prompt("Create a new API token by logging in, or paste an existing one? [generate/paste] (generate): ")
+		if cerr != nil {
+			return "", "", cerr
+		}
+		choice = strings.ToLower(strings.TrimSpace(choice))
+		if choice == "" || strings.HasPrefix(choice, "g") {
+			tokenID, secret, err = generateToken(ctx, p, baseURL, insecure)
+			if err == nil {
+				return tokenID, secret, nil
+			}
+			if errors.Is(err, pveclient.ErrUnauthorized) {
+				p.Errf("login failed; falling back to pasting an existing token\n")
+				// fall through to the paste path
+			} else {
+				return "", "", err
+			}
+		}
+	}
+	tokenID, err = promptTokenID(p)
+	if err != nil {
+		return "", "", err
+	}
+	secret, err = promptSecret(p)
+	if err != nil {
+		return "", "", err
+	}
+	return tokenID, secret, nil
+}
+
+// generateToken logs in with a username/password and creates a new API
+// token (privsep=0). The password is used only for the login ticket and
+// is never stored. On a name collision it re-prompts for a new name.
+func generateToken(ctx context.Context, p prompter, baseURL string, insecure bool) (tokenID, secret string, err error) {
+	user, err := promptLoginUser(p)
+	if err != nil {
+		return "", "", err
+	}
+	password, err := p.PromptSecret(fmt.Sprintf("Password for %s: ", user))
+	if err != nil {
+		return "", "", err
+	}
+	ticket, err := pveclient.Login(ctx, baseURL, insecure, user, password)
+	if err != nil {
+		return "", "", err
+	}
+	for {
+		name, nerr := promptTokenName(p)
+		if nerr != nil {
+			return "", "", nerr
+		}
+		full, value, cerr := pveclient.CreateToken(ctx, baseURL, insecure, ticket, user, name)
+		if cerr == nil {
+			p.Printf("created API token %s (privilege separation off)\n", full)
+			return full, value, nil
+		}
+		if errors.Is(cerr, pveclient.ErrTokenExists) {
+			p.Errf("a token named %q already exists; choose another name\n", name)
+			continue
+		}
+		return "", "", cerr
+	}
+}
+
+// promptLoginUser prompts for a PVE login in user@realm form.
+func promptLoginUser(p prompter) (string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		s, err := p.Prompt("PVE login (user@realm) [root@pam]: ")
+		if err != nil {
+			return "", err
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			s = "root@pam"
+		}
+		if strings.Contains(s, "@") && !strings.Contains(s, "!") {
+			return s, nil
+		}
+		p.Errf("login must be in the form 'user@realm' (e.g. root@pam)\n")
+	}
+	return "", fmt.Errorf("%w: too many invalid login attempts", exitcode.ErrUserInput)
+}
+
+// promptTokenName prompts for a new API token name (the segment after '!').
+func promptTokenName(p prompter) (string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		s, err := p.Prompt("New API token name [pmox]: ")
+		if err != nil {
+			return "", err
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			s = "pmox"
+		}
+		if !strings.ContainsAny(s, " \t@!") {
+			return s, nil
+		}
+		p.Errf("token name may not contain spaces, '@', or '!'\n")
+	}
+	return "", fmt.Errorf("%w: too many invalid token name attempts", exitcode.ErrUserInput)
 }
 
 func promptTokenID(p prompter) (string, error) {
