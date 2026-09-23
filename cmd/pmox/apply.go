@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/tack"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -71,6 +72,15 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 
 	if f.initCfg {
 		return runApplyInit(cmd)
+	}
+
+	// Onboarding: if there is no tack config at all and the user didn't
+	// point at an explicit playbook, guide them to --init before touching
+	// tack, the cluster, or a picker.
+	if f.playbook == "" {
+		if _, err := os.Stat(tackDir()); os.IsNotExist(err) {
+			return fmt.Errorf("%w: no tack playbooks yet — run 'pmox apply --init' to scaffold %s", exitcode.ErrUserInput, tackDir())
+		}
 	}
 
 	if err := tack.Available(); err != nil {
@@ -165,7 +175,7 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 	}
 
 	if _, statErr := os.Stat(playbook); statErr != nil {
-		return "", "", fmt.Errorf("playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", playbook)
+		return "", "", fmt.Errorf("%w: playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, playbook)
 	}
 	return playbook, recordProfile, nil
 }

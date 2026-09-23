@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
@@ -94,6 +96,24 @@ func TestResolvePlaybookMissingIsFriendly(t *testing.T) {
 	_, _, err := resolvePlaybook(&applyFlags{}, "", testURL, 101)
 	if err == nil || !strings.Contains(err.Error(), "--init") {
 		t.Fatalf("want friendly error mentioning --init, got %v", err)
+	}
+	if !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("missing playbook should map to ErrUserInput, got %v", err)
+	}
+}
+
+func TestApplyNoConfigSuggestsInitEarly(t *testing.T) {
+	// No tack dir at all: apply must guide to --init before touching the
+	// cluster/picker (so this needs no configured server).
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	cmd := newApplyCmd()
+	err := runApply(cmd, nil, &applyFlags{})
+	if err == nil || !strings.Contains(err.Error(), "--init") {
+		t.Fatalf("want early --init hint, got %v", err)
+	}
+	if !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("no-config apply should map to ErrUserInput, got %v", err)
 	}
 }
 
