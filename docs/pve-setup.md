@@ -3,7 +3,7 @@
 pmox talks to a Proxmox VE cluster via the PVE HTTP API (for VM
 operations) and via SSH/SFTP (for cloud-init snippet upload, used by
 `pmox create-template` and every `pmox launch` / `pmox clone`). This
-page walks through preparing a PVE host so that `pmox configure`
+page walks through preparing a PVE host so that `pmox init`
 succeeds on the first try.
 
 - [1. API token](#1-api-token)
@@ -14,7 +14,7 @@ succeeds on the first try.
 
 ## 1. API token
 
-> **Shortcut:** `pmox configure` can create this token for you. Choose
+> **Shortcut:** `pmox init` can create this token for you. Choose
 > "generate", enter a `user@realm` and password, and pmox logs in and
 > creates the token (privilege separation off) over the API, storing only
 > the secret — your password is never saved. The manual steps below are
@@ -70,7 +70,7 @@ only need to apply to the storage pools you actually use.
 
 Proxmox's HTTP upload endpoint hard-codes a rejection of
 `content=snippets`, so pmox uploads cloud-init files over SSH/SFTP.
-`pmox configure` asks for a Linux user on the PVE node (default
+`pmox init` asks for a Linux user on the PVE node (default
 `root`) plus either a password or a private key, and validates both
 with a live handshake before writing the config.
 
@@ -121,7 +121,7 @@ interactive TTY.
 ### `401 Unauthorized` / `403 Forbidden`
 
 The token is missing a privilege from the table above. Re-run
-`pmox configure` in `--debug` mode to see exactly which API call
+`pmox init` in `--debug` mode to see exactly which API call
 failed, then grant the matching privilege to the token's user or
 role.
 
@@ -141,7 +141,7 @@ NFS pools may not. Either pick a different pool with
 pvesm set <pool> --content images,iso,vztmpl,rootdir,snippets
 ```
 
-`pmox configure` can enable this for you on a directory-backed
+`pmox init` can enable this for you on a directory-backed
 pool when you grant it `Datastore.Allocate`.
 
 ### `ssh: handshake failed` during snippet upload

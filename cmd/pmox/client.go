@@ -90,7 +90,7 @@ func checkTLSPin(ctx context.Context, w io.Writer, cfg *config.Config, resolved 
 		fmt.Fprintf(w, "Pinned TLS certificate for %s (sha256:%s). pmox will warn if it changes.\n", resolved.URL, fp)
 		return nil
 	case srv.TLSPinSHA256 != fp:
-		return fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, clear tls_pin_sha256 for this server in the pmox config (or re-run 'pmox configure')",
+		return fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, clear tls_pin_sha256 for this server in the pmox config (or re-run 'pmox init')",
 			pveclient.ErrTLSVerificationFailed, resolved.URL, srv.TLSPinSHA256, fp)
 	default:
 		// Pin matches — authenticated against the pinned cert; stay quiet.

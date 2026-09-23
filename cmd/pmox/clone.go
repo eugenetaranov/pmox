@@ -28,9 +28,9 @@ and are applied to the clone. Flags unset on the command line fall
 back to the configured defaults, same as launch.
 
 Cloud-init user-data comes from
-~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox configure'
+~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
 writes on first run. Edit that file to customize the new VM, or run
-'pmox configure --regen-cloud-init' to rewrite it.
+'pmox init --regen-cloud-init' to rewrite it.
 
 --storage and --snippet-storage are independent: the first targets
 the new VM's disk, the second targets the cloud-init snippet upload
@@ -73,7 +73,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 		return err
 	}
 	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox configure' to add SSH credentials", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
 	}
 	// No source given → pick one interactively (like shell/delete do).
 	if srcArg == "" {

@@ -171,7 +171,7 @@ func WriteStarterCloudInit(path, user, sshPubkey string) error {
 
 // WriteCloudInit unconditionally renders and writes the template at
 // path. Unlike WriteStarterCloudInit it overwrites any existing file.
-// Used by `pmox configure --regen-cloud-init` after the caller has
+// Used by `pmox init --regen-cloud-init` after the caller has
 // obtained overwrite confirmation.
 func WriteCloudInit(path, user, sshPubkey string) error {
 	content, err := RenderTemplate(user, sshPubkey)

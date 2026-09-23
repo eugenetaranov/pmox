@@ -48,14 +48,14 @@ common first-launch errors.
 ## Quick start
 
 ```
-pmox configure                    # walks through API + SSH + defaults
+pmox init                    # walks through API + SSH + defaults
 pmox create-template              # optional: bake an Ubuntu template
 pmox launch web1                  # clone, cloud-init, wait for SSH
 pmox shell web1                   # interactive SSH session
 pmox delete web1                  # stop + destroy + snippet cleanup
 ```
 
-`pmox configure` walks through everything: API URL, token, node SSH
+`pmox init` walks through everything: API URL, token, node SSH
 credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to
 `~/.config/pmox/cloud-init/<slug>.yaml` that you can edit in place.
@@ -113,7 +113,7 @@ just for readability.
 
 | Command | Summary | Example |
 | --- | --- | --- |
-| `configure` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox configure` |
+| `init` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox init` |
 | `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`delete-context`) | `pmox config use-context prod` |
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
@@ -203,7 +203,7 @@ for what ships to the VM — there is no built-in cloud-init mode.
 Per-server file:
 `~/.config/pmox/cloud-init/<host>-<port>.yaml`
 
-A minimal working example (`pmox configure` writes this for you on
+A minimal working example (`pmox init` writes this for you on
 first run, with your selected user and public key substituted in):
 
 ```yaml
@@ -232,7 +232,7 @@ copy-and-edit reference.
 
 **Snippet storage vs disk storage.** The storage that holds the
 cloud-init snippet and the storage that holds the VM disk are
-resolved independently. `pmox configure` picks (or offers to enable
+resolved independently. `pmox init` picks (or offers to enable
 `snippets` content on) a snippet-capable pool and persists it as
 `snippet_storage:` in `config.yaml`; the VM disk still lands on
 `storage:`. Override per invocation with `--snippet-storage` and
@@ -240,7 +240,7 @@ resolved independently. `pmox configure` picks (or offers to enable
 VM's `cicustom` value, so cleanup always targets the right pool.
 
 **Rotating the SSH key.** Edit `ssh_pubkey:` in `config.yaml` (or
-re-run `pmox configure`), then run `pmox configure --regen-cloud-init`
+re-run `pmox init`), then run `pmox init --regen-cloud-init`
 to rewrite the cloud-init file with the new key.
 
 ## Post-create hooks
@@ -316,7 +316,7 @@ Runnable examples of all three hook shapes live in
 
 ## Configuration
 
-`pmox configure` writes to `$XDG_CONFIG_HOME/pmox/config.yaml`,
+`pmox init` writes to `$XDG_CONFIG_HOME/pmox/config.yaml`,
 falling back to `~/.config/pmox/config.yaml`. The file is YAML and
 holds one block per configured server:
 
@@ -358,12 +358,12 @@ The file fallback is plaintext protected only by file permissions —
 Additional useful invocations:
 
 ```
-pmox configure --regen-cloud-init    # rewrite the per-server cloud-init
+pmox init --regen-cloud-init    # rewrite the per-server cloud-init
 ```
 
 `--regen-cloud-init` also lets you **pick a different SSH key** (it
 defaults to the current one); a changed key is saved to config and
-written into the cloud-init template. Re-running plain `pmox configure`
+written into the cloud-init template. Re-running plain `pmox init`
 and selecting a new key will likewise offer to regenerate the cloud-init
 when it detects the file authorizes a different key. Either way, relaunch
 existing VMs for a new key to take effect (cloud-init only runs at first
@@ -392,7 +392,7 @@ friendly name. Target a specific context for one command with `--context
 Each command resolves its target in this order: `--server` (name or URL)
 → `--context` (name) → `PMOX_SERVER` → `PMOX_CONTEXT` → the current
 context (`use-context`) → the only configured context → an interactive
-picker. (`pmox configure --list` / `--remove` still work.)
+picker. (`pmox init --list` / `--remove` still work.)
 
 ## Environment variables
 
@@ -429,7 +429,7 @@ Scripts that wrap pmox can branch on these reliably; see
 
 ## Troubleshooting
 
-### `pmox configure` says "no VMs visible on node …"
+### `pmox init` says "no VMs visible on node …"
 
 The token is missing `VM.Audit` on `/vms`. Grant it via the role or
 disable privilege separation on the token. See
@@ -446,7 +446,7 @@ the template by hand per
 
 Pass `--snippet-storage <pool>` to target a snippet-capable pool, or
 enable snippets on the current pool (`pvesm set <pool> --content
-images,iso,vztmpl,rootdir,snippets`). `pmox configure` can do the
+images,iso,vztmpl,rootdir,snippets`). `pmox init` can do the
 latter if you grant it `Datastore.Allocate`.
 
 ### `pmox delete` exits with "stdin is not a TTY"
@@ -464,7 +464,7 @@ config. On later runs the pinned cert is verified silently (it is now
 authenticated against the pin, like SSH's known_hosts). If the presented
 certificate ever stops matching the pin, pmox refuses to proceed. If you deliberately replaced or renewed the
 node's certificate, clear `tls_pin_sha256` for that server in
-`~/.config/pmox/config.yaml` (or re-run `pmox configure`) and pmox will
+`~/.config/pmox/config.yaml` (or re-run `pmox init`) and pmox will
 re-pin on the next connect.
 
 ### Snippet upload fails with an SSH handshake error

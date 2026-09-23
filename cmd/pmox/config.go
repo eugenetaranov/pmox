@@ -17,7 +17,7 @@ import (
 
 // newConfigCmd is the `pmox config` group: kubectl-style management of
 // contexts (configured servers) and the current context. Interactive
-// setup stays under `pmox configure`; this group is the scriptable
+// setup stays under `pmox init`; this group is the scriptable
 // surface for listing, switching, renaming, and removing contexts.
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -27,7 +27,7 @@ func newConfigCmd() *cobra.Command {
 kubectl-style. A context is a configured server (URL + token + defaults +
 node SSH), addressed by a short name.
 
-Interactive setup lives in 'pmox configure'. Use this group to list,
+Interactive setup lives in 'pmox init'. Use this group to list,
 switch, rename, and remove contexts. Set a current context so multi-server
 setups don't need --context (or --server) every time.
 
@@ -86,7 +86,7 @@ func runGetContexts(cmd *cobra.Command) error {
 	}
 
 	if len(contexts) == 0 {
-		fmt.Fprintln(w, "no contexts configured — run 'pmox configure'")
+		fmt.Fprintln(w, "no contexts configured — run 'pmox init'")
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
@@ -175,7 +175,7 @@ func runCurrentContext(cmd *cobra.Command) error {
 	contexts := cfg.Contexts()
 	switch len(contexts) {
 	case 0:
-		fmt.Fprintln(w, "no contexts configured — run 'pmox configure'")
+		fmt.Fprintln(w, "no contexts configured — run 'pmox init'")
 	case 1:
 		fmt.Fprintf(w, "%s (only context; used automatically)\n", contexts[0].Name)
 	default:
@@ -254,7 +254,7 @@ func pickContext(cfg *config.Config) (string, error) {
 	contexts := cfg.Contexts()
 	switch len(contexts) {
 	case 0:
-		return "", fmt.Errorf("%w: no contexts configured — run 'pmox configure'", exitcode.ErrNotFound)
+		return "", fmt.Errorf("%w: no contexts configured — run 'pmox init'", exitcode.ErrNotFound)
 	case 1:
 		return contexts[0].Name, nil
 	}

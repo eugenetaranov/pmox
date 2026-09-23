@@ -213,7 +213,7 @@ func TestResolve_ZeroServers(t *testing.T) {
 	if !errors.Is(err, exitcode.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
-	if !strings.Contains(err.Error(), "pmox configure") {
+	if !strings.Contains(err.Error(), "pmox init") {
 		t.Errorf("missing hint in %q", err.Error())
 	}
 }
@@ -298,7 +298,7 @@ func TestResolve_KeychainMiss(t *testing.T) {
 	if !errors.Is(err, exitcode.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
-	if !strings.Contains(err.Error(), "re-run 'pmox configure'") {
+	if !strings.Contains(err.Error(), "re-run 'pmox init'") {
 		t.Errorf("missing hint in %q", err.Error())
 	}
 }

@@ -127,7 +127,7 @@ func TestCreateTemplate_MissingSSHFailsFast(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing NodeSSH")
 	}
-	if !strings.Contains(err.Error(), "pmox configure") {
+	if !strings.Contains(err.Error(), "pmox init") {
 		t.Errorf("err = %v, want re-configure hint", err)
 	}
 	if exitcode.From(err) != exitcode.ExitUserError {

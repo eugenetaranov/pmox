@@ -35,9 +35,9 @@ var (
 	configureRegenCloudCI bool
 )
 
-var configureCmd = &cobra.Command{
-	Use:   "configure",
-	Short: "Configure a Proxmox VE server for pmox",
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize pmox: configure a Proxmox VE server",
 	Long: `Interactively configure credentials and defaults for a Proxmox VE server.
 
 Walks through API URL, token, credential validation against /version, and
@@ -63,13 +63,13 @@ Prompts:
   Node SSH secret   password or key passphrase, stored in the OS keyring.
                     First-time connections prompt to pin the host key into
                     ~/.config/pmox/known_hosts (bypass with --ssh-insecure).`,
-	RunE: runConfigure,
+	RunE: runInit,
 }
 
 func init() {
-	configureCmd.Flags().BoolVar(&configureList, "list", false, "List configured server URLs")
-	configureCmd.Flags().StringVar(&configureRemove, "remove", "", "Remove a configured server by URL")
-	configureCmd.Flags().BoolVar(&configureRegenCloudCI, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
+	initCmd.Flags().BoolVar(&configureList, "list", false, "List configured server URLs")
+	initCmd.Flags().StringVar(&configureRemove, "remove", "", "Remove a configured server by URL")
+	initCmd.Flags().BoolVar(&configureRegenCloudCI, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
 	// Registration (and help grouping) happens in main.go's init so all
 	// command wiring lives in one place.
 }
@@ -150,7 +150,7 @@ func (p *stdPrompter) Errf(format string, args ...interface{}) {
 	fmt.Fprintf(p.err, format, args...)
 }
 
-func runConfigure(cmd *cobra.Command, args []string) error {
+func runInit(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -419,7 +419,7 @@ func runRegenCloudInit(ctx context.Context, p prompter) error {
 	}
 	urls := cfg.ServerURLs()
 	if len(urls) == 0 {
-		return fmt.Errorf("no servers configured; run 'pmox configure' first")
+		return fmt.Errorf("no servers configured; run 'pmox init' first")
 	}
 
 	var canonical string
@@ -459,7 +459,7 @@ func runRegenCloudInit(ctx context.Context, p prompter) error {
 		keyPath = picked
 	}
 	if keyPath == "" {
-		return fmt.Errorf("server %s has no ssh_pubkey configured; run 'pmox configure' to set one", canonical)
+		return fmt.Errorf("server %s has no ssh_pubkey configured; run 'pmox init' to set one", canonical)
 	}
 	if keyPath != srv.SSHPubkey {
 		srv.SSHPubkey = keyPath
@@ -585,14 +585,22 @@ func hostPort(canonical string) string {
 // a choice between pasting an existing token and logging in to generate
 // one; non-interactively (and on the paste choice) it prompts for the
 // token id and secret directly.
+// selectTokenSourceFn presents the token-source choice as an up/down
+// selector. It is a seam so tests can drive the choice without a TTY.
+var selectTokenSourceFn = func() (string, error) {
+	return tui.SelectOne("API token", []huh.Option[string]{
+		huh.NewOption("Generate a new token (log in)", "generate"),
+		huh.NewOption("Paste an existing token", "paste"),
+	}, "generate"), nil
+}
+
 func acquireToken(ctx context.Context, p prompter, baseURL string, insecure bool) (tokenID, secret string, err error) {
 	if interactiveFn() {
-		choice, cerr := p.Prompt("Create a new API token by logging in, or paste an existing one? [generate/paste] (generate): ")
+		choice, cerr := selectTokenSourceFn()
 		if cerr != nil {
 			return "", "", cerr
 		}
-		choice = strings.ToLower(strings.TrimSpace(choice))
-		if choice == "" || strings.HasPrefix(choice, "g") {
+		if choice == "generate" {
 			tokenID, secret, err = generateToken(ctx, p, baseURL, insecure)
 			if err == nil {
 				return tokenID, secret, nil
@@ -1002,7 +1010,7 @@ func printSnippetManualRemediation(p prompter) {
 	p.Errf("no snippet storage configured.\n")
 	p.Errf("  Fix: edit /etc/pve/storage.cfg on the PVE host and add 'snippets' to\n")
 	p.Errf("       the content= line of a directory-backed storage, then re-run\n")
-	p.Errf("       'pmox configure' to record it.\n")
+	p.Errf("       'pmox init' to record it.\n")
 }
 
 func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node string) string {

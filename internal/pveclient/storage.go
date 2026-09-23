@@ -72,7 +72,7 @@ func (c *Client) ListStorageContent(ctx context.Context, node, storage, contentF
 // UpdateStorageContent rewrites the `content` list of a cluster-wide
 // storage entry by issuing PUT /storage/{storage} with a form body of
 // `content=<comma-joined>`. The full new list is sent — PVE replaces
-// the existing one. Used by `pmox configure` to enable `snippets` on
+// the existing one. Used by `pmox init` to enable `snippets` on
 // an existing dir-backed storage when no snippet-capable storage is
 // present.
 func (c *Client) UpdateStorageContent(ctx context.Context, storage string, content []string) error {

@@ -67,7 +67,7 @@ are never removed (use 'pmox delete').
 
 Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
 are not covered here; they are cleared at removal time by
-'pmox configure --remove' / 'pmox config delete-context'.`,
+'pmox init --remove' / 'pmox config delete-context'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates})
