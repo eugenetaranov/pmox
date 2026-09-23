@@ -54,22 +54,23 @@ for that VM, then the default `~/.config/pmox/tack/playbook.yaml`.
 - **WHEN** the resolved playbook file does not exist
 - **THEN** pmox prints guidance to create it or run `pmox apply --init`, not a raw tack error
 
-### Requirement: SSH handoff via synthesized inventory
+### Requirement: SSH handoff via tack connection flags
 
-`pmox apply` SHALL convey the VM's SSH user and identity to tack by
-writing a temporary inventory file (mode `0600`) containing the VM under
-`ssh: {user, key}` and invoking `tack run <playbook> -i <inventory>
---hosts <vm>`. The temporary inventory MUST be removed after the run.
+`pmox apply` SHALL convey the VM's SSH user and identity to tack via its
+connection flags, invoking `tack run <playbook> -c ssh://<user>@<ip>
+--ssh-key <identity>`. When pmox runs with `--ssh-insecure` (or
+`PMOX_SSH_INSECURE`), it SHALL pass tack's `--ssh-insecure`; otherwise
+tack verifies the host key against `~/.ssh/known_hosts`.
 
-#### Scenario: Inventory carries pmox's user and key
+#### Scenario: Connection carries pmox's user, IP, and key
 
 - **WHEN** pmox invokes tack for a VM
-- **THEN** the temporary inventory lists that VM with pmox's resolved SSH user and identity path, and tack is called with `-i <inventory> --hosts <vm>`
+- **THEN** tack is called with `-c ssh://<user>@<ip>` and `--ssh-key <identity>` using pmox's resolved values
 
-#### Scenario: Temp inventory is cleaned up
+#### Scenario: Insecure passthrough
 
-- **WHEN** the tack run finishes (success or failure)
-- **THEN** the temporary inventory file is deleted
+- **WHEN** the user runs `pmox apply web1 --ssh-insecure`
+- **THEN** tack is invoked with `--ssh-insecure`
 
 ### Requirement: Plan and apply passthrough
 
@@ -136,7 +137,7 @@ is given without a path.
 #### Scenario: Post-create tack run
 
 - **WHEN** `pmox launch web1 --tack ./p.yaml` completes VM creation and SSH is ready
-- **THEN** pmox runs `tack run ./p.yaml` against the new VM via a synthesized inventory
+- **THEN** pmox runs `tack run ./p.yaml -c ssh://<user>@<ip> --ssh-key <identity>` against the new VM
 
 #### Scenario: --tack without a path uses the default playbook
 

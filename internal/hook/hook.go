@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strconv"
 	"time"
+
+	"github.com/eugenetaranov/pmox/internal/tack"
 )
 
 // waitDelay caps how long Wait blocks after the process exits (or ctx
@@ -22,12 +24,13 @@ const waitDelay = 500 * time.Millisecond
 // Env is the set of values a hook receives about the just-launched VM.
 // It is locked by spec and exposed to shell hooks as PMOX_* env vars.
 type Env struct {
-	IP     string
-	Name   string
-	User   string
-	Node   string
-	VMID   int
-	SSHKey string
+	IP       string
+	Name     string
+	User     string
+	Node     string
+	VMID     int
+	SSHKey   string
+	Insecure bool // skip SSH host-key verification (pmox --ssh-insecure)
 }
 
 // Hook is the interface the launch state machine calls after wait-SSH.
@@ -69,7 +72,9 @@ func (h *PostCreateHook) Run(ctx context.Context, env Env, stdout, stderr io.Wri
 	return cmd.Run()
 }
 
-// TackHook runs `tack apply --host <ip> --user <user> <config>`.
+// TackHook runs `tack run <playbook> -c ssh://<user>@<ip> --ssh-key
+// <identity>` against the new VM. Post-create is non-interactive, so it
+// auto-approves tack's plan.
 type TackHook struct {
 	ConfigPath string
 }
@@ -77,14 +82,17 @@ type TackHook struct {
 func (h *TackHook) Name() string { return "tack" }
 
 func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) error {
-	if _, err := exec.LookPath("tack"); err != nil {
-		return errors.New("tack binary not found on PATH. install tack from https://github.com/tackhq/tack or pass --post-create instead")
+	if err := tack.Available(); err != nil {
+		return fmt.Errorf("%w; or pass --post-create instead", err)
 	}
-	cmd := exec.CommandContext(ctx, "tack", "apply",
-		"--host", env.IP,
-		"--user", env.User,
-		h.ConfigPath,
-	)
+	cmd := exec.CommandContext(ctx, "tack", tack.Args(tack.Options{
+		Playbook:    h.ConfigPath,
+		User:        env.User,
+		IP:          env.IP,
+		KeyPath:     env.SSHKey,
+		Insecure:    env.Insecure,
+		AutoApprove: true,
+	})...)
 	cmd.Env = os.Environ()
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

@@ -111,7 +111,7 @@ printf '%s\n' "$@" > ` + argLogPath + `
 	t.Setenv("PATH", pathDir)
 
 	h := &TackHook{ConfigPath: "./tack.yaml"}
-	err := h.Run(context.Background(), Env{IP: "192.168.1.10", User: "ubuntu"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := h.Run(context.Background(), Env{IP: "192.168.1.10", User: "ubuntu", SSHKey: "/k/id", Insecure: true}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
@@ -120,7 +120,7 @@ printf '%s\n' "$@" > ` + argLogPath + `
 		t.Fatal(err)
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
-	want := []string{"apply", "--host", "192.168.1.10", "--user", "ubuntu", "./tack.yaml"}
+	want := []string{"run", "./tack.yaml", "-c", "ssh://ubuntu@192.168.1.10", "--ssh-key", "/k/id", "--ssh-insecure", "--auto-approve"}
 	if len(got) != len(want) {
 		t.Fatalf("argv = %v, want %v", got, want)
 	}

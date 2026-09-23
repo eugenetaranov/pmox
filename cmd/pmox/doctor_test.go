@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/config"
@@ -235,6 +236,40 @@ func TestDoctorSecretBackend(t *testing.T) {
 		doctorSecretBackend(cl)
 		if cl.StatusOf("config.secret_store") != doctor.Pass {
 			t.Errorf("want pass for keychain backend, got %q", cl.StatusOf("config.secret_store"))
+		}
+	})
+}
+
+func TestDoctorTack(t *testing.T) {
+	t.Run("tack absent warns (optional)", func(t *testing.T) {
+		deps := healthyDeps()
+		deps.lookPath = func(bin string) (string, error) {
+			if bin == "tack" {
+				return "", context.DeadlineExceeded
+			}
+			return "/usr/bin/" + bin, nil
+		}
+		cl := &doctor.Checklist{}
+		doctorTack(cl, deps)
+		if cl.StatusOf("tooling.tack") != doctor.Warn {
+			t.Errorf("want warn when tack absent, got %q", cl.StatusOf("tooling.tack"))
+		}
+	})
+	t.Run("tack present + playbook passes", func(t *testing.T) {
+		cfg := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", cfg)
+		dir := filepath.Join(cfg, "pmox", "tack")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "playbook.yaml"), []byte("name: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		deps := healthyDeps() // lookPath returns success for everything
+		cl := &doctor.Checklist{}
+		doctorTack(cl, deps)
+		if cl.StatusOf("tooling.tack") != doctor.Pass {
+			t.Errorf("want pass when tack + playbook present, got %q", cl.StatusOf("tooling.tack"))
 		}
 	})
 }

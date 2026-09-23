@@ -45,17 +45,20 @@ In order, first match wins:
 If the resolved file is missing, print a helpful message pointing at
 `--init`, not a raw tack error.
 
-### 3. SSH handoff via synthesized inventory
-Write a temporary `0600` inventory to `$TMPDIR`:
-```yaml
-hosts:
-  <vm>:
-    ssh: { user: <user>, key: <identity> }
+### 3. SSH handoff via tack's connection flags
+Modern tack (`tack run`) exposes `-c ssh://user@host:port`, `--ssh-user`,
+`--ssh-key`, `--ssh-port`, `--ssh-insecure`, `--hosts`, `--tags`/`-t`,
+`--skip-tags`, `--check` (alias of `--dry-run`), and `--auto-approve`/`-a`
+(env `TACK_AUTO_APPROVE`). So pmox invokes:
 ```
-Invoke `tack run <playbook> -i <tmp> --hosts <vm> [--check] [--tags …]
-[--skip-tags …] [--auto-approve]`. Delete the temp file on exit
-(defer + best-effort). This conveys pmox's user+key regardless of agent /
-`~/.ssh/config` state and generalizes to multiple hosts later.
+tack run <playbook> -c ssh://<user>@<ip> --ssh-key <identity> \
+     [--ssh-insecure] [--check] [-t <tags>] [--skip-tags <tags>] \
+     [--auto-approve] [--output json]
+```
+This needs no temp file and mirrors the existing `AnsibleHook`
+(`--private-key`). (Earlier drafts synthesized an inventory on the
+assumption tack took a key only via inventory; the CLI flags make that
+unnecessary.)
 
 ### 4. Plan/apply passthrough
 Do not wrap tack's confirmation. Wire tack's stdin/stdout/stderr to the
@@ -72,22 +75,27 @@ extension). Written only when a profile arg is used; a bare `pmox apply
 
 ### 6. Fix + unify the launch `--tack` hook
 Rewrite `TackHook` to build the same argv as `pmox apply` (via a shared
-`internal/tack` helper): `tack run <playbook> -i <tmp> --hosts <name>`.
-`--tack` with no value defaults to the config playbook. Post-create keeps
-`--strict-hooks`/`ExitHook` semantics.
+`internal/tack` helper): `tack run <playbook> -c ssh://<user>@<ip>
+--ssh-key <identity>`. `--tack` with no value defaults to the config
+playbook. Post-create keeps `--strict-hooks`/`ExitHook` semantics. The
+hook's `Env.SSHKey` already carries the identity.
 
 ### 7. `--init` scaffold
 `pmox apply --init` creates `~/.config/pmox/tack/` with a starter
 `playbook.yaml` (references a couple of tack-roles, e.g. docker) and a
 `roles/` dir. Never overwrites existing files.
 
-### 8. Host-key verification (spec task, not a guess)
-tack's host-key policy is undocumented. Implementation MUST first
-determine the actual behavior (read tack source / one empirical test),
-then either (a) seed pmox's pinned guest host key into the inventory if
-tack supports a `known_hosts`/`host_key` field, or (b) expose a
-`--ssh-insecure` passthrough and document that tack performs its own
-verification. The chosen behavior is documented in README.
+### 8. Host-key verification (resolved from tack source)
+tack's SSH connector verifies against `~/.ssh/known_hosts` **fail-closed**
+(a missing/mismatched key aborts), with a `--ssh-insecure` flag (env
+`TACK_SSH_INSECURE`) to skip. There is no option for a custom known_hosts
+path, so tack cannot be pointed at pmox's `known_hosts_guests`. Therefore:
+pmox maps its own `--ssh-insecure` / `PMOX_SSH_INSECURE` to tack's
+`--ssh-insecure`, and documents that tack uses `~/.ssh/known_hosts`
+independently — the first apply to a brand-new VM may require scanning the
+key (`ssh-keyscan -H <ip> >> ~/.ssh/known_hosts`) or `--ssh-insecure`.
+(Seeding pmox's pin into `~/.ssh/known_hosts` automatically is a possible
+future enhancement, deliberately out of scope here.)
 
 ### 9. doctor check
 Add a `config`-phase check: `tack` on PATH (warn if absent — apply is

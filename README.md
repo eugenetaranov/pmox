@@ -94,6 +94,7 @@ just for readability.
 | --- | --- | --- |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox shell web1` |
 | `exec` | Run one command on a VM over SSH | `pmox exec web1 -- uname -a` |
+| `apply` | Run a tack playbook against a VM (reuses pmox's SSH) | `pmox apply web1` |
 | `cp` | scp-based file copy to or from a VM | `pmox cp ./app.tar web1:/tmp/` |
 | `sync` | rsync-based sync to or from a VM | `pmox sync ./src/ web1:/opt/app/` |
 | `mount` | Watch a local dir and continuously rsync it to a VM | `pmox mount ./src web1:/opt/app` |
@@ -236,9 +237,12 @@ pmox launch --ansible ./examples/ansible/playbook.yaml web1
 - `--post-create <script>` runs the script directly (no shell
   wrapper). The environment contains `PMOX_IP`, `PMOX_VMID`,
   `PMOX_NAME`, `PMOX_USER`, `PMOX_NODE`.
-- `--tack <config>` runs `tack apply --host <ip> --user <user> <config>`.
-  Requires `tack` on PATH — install from
-  [tackhq/tack](https://github.com/tackhq/tack).
+- `--tack <playbook>` runs `tack run <playbook> -c ssh://<user>@<ip>
+  --ssh-key <identity>` against the new VM (auto-approved). Omit the
+  value (`--tack`) to use `~/.config/pmox/tack/playbook.yaml`. Requires
+  `tack` on PATH — install from
+  [tackhq/tack](https://github.com/tackhq/tack). See **Provisioning with
+  tack** below for the day-2 `pmox apply` command.
 - `--ansible <playbook>` runs `ansible-playbook` with an inline
   single-host inventory (`-i <ip>,`), the configured SSH user, and
   the derived private key. Requires `ansible-playbook` on PATH.
@@ -249,6 +253,42 @@ By default, hook failure prints a warning to stderr and pmox exits
 
 Hooks are skipped entirely when `--no-wait-ssh` is set — pmox will
 not run a command against a VM it has not verified is reachable.
+
+## Provisioning with tack
+
+`pmox apply [vm]` runs a [tack](https://github.com/tackhq/tack) playbook
+against an existing VM (day-2 convergence), reusing the SSH user and key
+pmox already knows. The VM is auto-started if stopped.
+
+Playbooks and roles live under `~/.config/pmox/tack/`:
+
+```
+~/.config/pmox/tack/
+  playbook.yaml     # default, used by `pmox apply <vm>`
+  web.yaml          # a named profile: `pmox apply <vm> web`
+  roles/            # local roles (or reference tack-roles remotely)
+```
+
+Run `pmox apply --init` to scaffold that layout with a starter playbook.
+The playbook is resolved in order: `--playbook <path>` → a profile
+argument (`<profile>.yaml`) → the profile last used for that VM
+(remembered per VM) → `playbook.yaml`.
+
+```
+pmox apply web1                 # default or remembered profile
+pmox apply web1 web             # ~/.config/pmox/tack/web.yaml (remembered)
+pmox apply web1 --check         # plan only (tack --check)
+pmox apply web1 -t docker       # only tasks tagged 'docker'
+pmox apply web1 --playbook ./p.yaml
+```
+
+tack's own plan/apply confirmation is shown; pass `-y` (or
+`PMOX_ASSUME_YES=1`) to auto-approve. **Host keys:** tack verifies against
+`~/.ssh/known_hosts` (independently of pmox's own `known_hosts_guests`),
+so the first apply to a brand-new VM may report an unknown host key —
+scan it (`ssh-keyscan -H <ip> >> ~/.ssh/known_hosts`) or pass
+`--ssh-insecure`. `pmox doctor` reports whether tack and a default
+playbook are present.
 
 Runnable examples of all three hook shapes live in
 [examples/README.md](./examples/README.md).
