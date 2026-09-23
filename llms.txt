@@ -8,7 +8,7 @@
 
 ## Commands
 
-- `pmox configure`: interactive setup — API URL, token, node SSH credentials, default node/template/storage/bridge, SSH public key; writes `~/.config/pmox/cloud-init/<slug>.yaml`.
+- `pmox configure`: interactive setup — API URL, token, node SSH credentials, default node/template/storage/bridge, SSH public key; writes `~/.config/pmox/cloud-init/<slug>.yaml`. The URL prompt accepts a bare IP/hostname/`host:port`/web-UI paste (scheme→https, port→8006 filled in, `http`→`https`); it probes reachability before asking for a token and re-asks the address on a network failure (blank/Ctrl-C aborts; non-interactive fails fast). Single-option discovery steps auto-select. The SSH-key step offers generate-new-bootstrap-key / use-existing / browse.
 - `pmox configure --list`: print configured server URLs.
 - `pmox configure --remove <url>`: forget a configured server and its keychain secrets.
 - `pmox cleanup [--apply]`: reclaim pmox leftovers across all configured contexts — orphaned cloud-init snippets (`pmox-<vmid>-*` whose VM is gone), dead mount records, orphaned mount logs, and stale guest known_hosts pins (IPs no longer belonging to a pmox VM; skipped unless every running VM's IP could be enumerated). Dry-run by default; `--apply` removes. Never touches VMs or non-pmox resources. `--output json` supported.

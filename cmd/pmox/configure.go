@@ -25,6 +25,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -230,8 +231,10 @@ func runRemove(p prompter, rawURL string) error {
 }
 
 func runInteractive(ctx context.Context, p prompter) error {
-	// Step 1: URL
-	canonical, err := promptCanonicalURL(p)
+	// Step 1: URL + reachability probe (before any credential prompt). The
+	// probe's TLS decision (strict vs insecure) is reused below so the user
+	// is never warned or handshaked twice.
+	canonical, insecure, err := promptReachableURL(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -264,8 +267,8 @@ func runInteractive(ctx context.Context, p prompter) error {
 		return err
 	}
 
-	// Step 5: validate credentials (strict TLS, fall back to insecure)
-	insecure, err := validateCredentials(ctx, p, canonical, tokenID, secret)
+	// Step 5: validate credentials, reusing the probe's TLS decision.
+	insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure)
 	if err != nil {
 		return err
 	}
@@ -501,19 +504,86 @@ func runRegenCloudInit(ctx context.Context, p prompter) error {
 	return nil
 }
 
-func promptCanonicalURL(p prompter) (string, error) {
-	for attempt := 0; attempt < 3; attempt++ {
+// promptReachableURL prompts for the API URL, normalizes it, and probes
+// the endpoint before returning. On a network failure (or a response that
+// isn't a PVE API) in interactive mode it prints a specific error and
+// re-asks; a blank line or Ctrl-C aborts cleanly. In non-interactive mode
+// it fails fast on the first failure instead of looping. The returned
+// bool is the TLS-insecure decision the probe settled on.
+// Injectable for tests.
+var (
+	probeEndpoint = pveclient.Probe
+	interactiveFn = tui.Interactive
+)
+
+func promptReachableURL(ctx context.Context, p prompter) (string, bool, error) {
+	interactive := interactiveFn()
+	for {
 		raw, err := p.Prompt("Proxmox API URL: ")
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
-		c, err := config.CanonicalizeURL(raw)
-		if err == nil {
-			return c, nil
+		if strings.TrimSpace(raw) == "" {
+			return "", false, fmt.Errorf("%w: no URL entered", exitcode.ErrUserInput)
 		}
-		p.Errf("%v\n", err)
+		canonical, upgraded, cerr := config.CanonicalizeURLVerbose(raw)
+		if cerr != nil {
+			p.Errf("%v\n", cerr)
+			if !interactive {
+				return "", false, cerr
+			}
+			continue
+		}
+		if upgraded {
+			p.Errf("note: using https (upgraded from http): %s\n", canonical)
+		}
+
+		insecure, ok := probeURL(ctx, p, canonical)
+		if ok {
+			return canonical, insecure, nil
+		}
+		if !interactive {
+			return "", false, fmt.Errorf("%w: %s is not reachable", exitcode.ErrUserInput, canonical)
+		}
+		// Loop and re-ask.
 	}
-	return "", fmt.Errorf("%w: too many invalid URL attempts", exitcode.ErrUserInput)
+}
+
+// probeURL classifies the endpoint and prints a specific message on
+// failure. It returns (insecure, ok): ok is true when the endpoint is a
+// reachable PVE API, with insecure indicating whether TLS verification
+// had to be skipped.
+func probeURL(ctx context.Context, p prompter, canonical string) (insecure bool, ok bool) {
+	status, perr := probeEndpoint(ctx, canonical, false)
+	switch status {
+	case pveclient.Reachable:
+		return false, true
+	case pveclient.ReachTLSUntrusted:
+		// Confirm the host is actually reachable when we ignore the cert.
+		if s2, _ := probeEndpoint(ctx, canonical, true); s2 == pveclient.Reachable {
+			p.Errf("WARNING: TLS verification failed for %s\n", canonical)
+			p.Errf("         falling back to insecure mode; the certificate will not be verified.\n")
+			p.Errf("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.\n")
+			return true, true
+		}
+		p.Errf("cannot reach %s: %v\n", canonical, perr)
+		return false, false
+	case pveclient.ReachNotPVE:
+		p.Errf("%s responded but does not look like a Proxmox VE API — check the address\n", canonical)
+		return false, false
+	default: // ReachUnreachable / ReachUnknown
+		p.Errf("nothing responding at %s — check the address and that Proxmox is running\n", hostPort(canonical))
+		return false, false
+	}
+}
+
+// hostPort extracts host:port from a canonical URL for error messages,
+// falling back to the full URL if it cannot be parsed.
+func hostPort(canonical string) string {
+	if u, err := url.Parse(canonical); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return canonical
 }
 
 func promptTokenID(p prompter) (string, error) {
@@ -545,9 +615,19 @@ func promptSecret(p prompter) (string, error) {
 	return "", fmt.Errorf("%w: too many empty secret attempts", exitcode.ErrUserInput)
 }
 
-// validateCredentials runs GetVersion with strict TLS, then falls back to
-// insecure on TLS errors. Returns the final insecure flag used.
-func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secret string) (bool, error) {
+// validateCredentials runs GetVersion to confirm the token works. When
+// knownInsecure is true the reachability probe already settled on (and
+// warned about) insecure TLS, so it connects insecurely directly without
+// re-warning. Otherwise it tries strict TLS first and falls back to
+// insecure on a TLS error. Returns the final insecure flag used.
+func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secret string, knownInsecure bool) (bool, error) {
+	if knownInsecure {
+		client := pveclient.New(baseURL, tokenID, secret, true)
+		if _, err := client.GetVersion(ctx); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	client := pveclient.New(baseURL, tokenID, secret, false)
 	_, err := client.GetVersion(ctx)
 	if err == nil {
@@ -569,6 +649,17 @@ func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secr
 
 func discoveryCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, 5*time.Second)
+}
+
+// pickOneAuto returns the sole option, reporting it, when exactly one
+// exists; otherwise it defers to the interactive picker. This keeps
+// configure from prompting for a choice that has only one answer.
+func pickOneAuto(p prompter, title string, opts []huh.Option[string], fallback string) string {
+	if len(opts) == 1 {
+		p.Printf("%s: %s\n", title, opts[0].Key)
+		return opts[0].Value
+	}
+	return tui.SelectOne(title, opts, fallback)
 }
 
 func pickNode(ctx context.Context, p prompter, client *pveclient.Client) string {
@@ -595,7 +686,7 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client) string 
 		}
 		opts = append(opts, huh.NewOption(label, n.Node))
 	}
-	return tui.SelectOne("Default node", opts, nodes[0].Node)
+	return pickOneAuto(p, "Default node", opts, nodes[0].Node)
 }
 
 func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, node string) string {
@@ -629,7 +720,7 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 		label := fmt.Sprintf("%d  %s", t.VMID, t.Name)
 		opts = append(opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
 	}
-	return tui.SelectOne("Default template", opts, strconv.Itoa(tmpls[0].VMID))
+	return pickOneAuto(p, "Default template", opts, strconv.Itoa(tmpls[0].VMID))
 }
 
 func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node string) string {
@@ -665,7 +756,7 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 		label := fmt.Sprintf("%s (%s)", s.Storage, s.Type)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
-	return tui.SelectOne("Default storage", opts, usable[0].Storage)
+	return pickOneAuto(p, "Default storage", opts, usable[0].Storage)
 }
 
 // snippetCapableTypes lists the PVE storage backends that can host the
@@ -834,7 +925,7 @@ func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node 
 	for _, b := range bridges {
 		opts = append(opts, huh.NewOption(b.Iface, b.Iface))
 	}
-	return tui.SelectOne("Default bridge", opts, bridges[0].Iface)
+	return pickOneAuto(p, "Default bridge", opts, bridges[0].Iface)
 }
 
 func displayPath(path, home string) string {
@@ -1065,25 +1156,144 @@ func expandHome(p string) string {
 	return p
 }
 
+// promptSSHKey resolves the SSH public key pmox injects into cloud-init.
+// Interactively it leads with a top-level choice — generate a new
+// dedicated bootstrap key, pick an existing one, or browse the filesystem.
+// Non-interactively it falls back to a plain-text path prompt defaulting
+// to the suggested key.
 func promptSSHKey(p prompter, current string) (string, error) {
 	home, _ := os.UserHomeDir()
 	sshDir := filepath.Join(home, ".ssh")
-	// Default to the currently-configured key when re-selecting; otherwise
-	// suggest a common default.
-	suggest := current
-	if suggest == "" {
-		for _, c := range []string{
-			filepath.Join(sshDir, "id_ed25519.pub"),
-			filepath.Join(sshDir, "id_rsa.pub"),
-		} {
-			if _, err := os.Stat(c); err == nil {
-				suggest = c
-				break
-			}
-		}
+	suggest := defaultSSHKeySuggestion(current, sshDir)
+
+	if !interactiveFn() {
+		return sshKeyTextFallback(p, home, suggest)
 	}
 
-	// Interactive select populated with .pub files found under ~/.ssh.
+	choice, err := chooseSSHKeyAction(suggest)
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
+		}
+		return "", err
+	}
+	switch choice {
+	case "generate":
+		return generateBootstrapKey(p, sshDir, home)
+	case "browse":
+		if path, ok := browseForKey(home); ok {
+			p.Printf("Default SSH public key: %s\n", displayPath(path, home))
+			return path, nil
+		}
+		// Cancelled browse → fall back to picking an existing key.
+		return selectExistingKey(p, sshDir, home, suggest)
+	default: // "existing"
+		return selectExistingKey(p, sshDir, home, suggest)
+	}
+}
+
+// defaultSSHKeySuggestion returns current when set, else the first common
+// default key that exists under sshDir.
+func defaultSSHKeySuggestion(current, sshDir string) string {
+	if current != "" {
+		return current
+	}
+	for _, c := range []string{
+		filepath.Join(sshDir, "id_ed25519.pub"),
+		filepath.Join(sshDir, "id_rsa.pub"),
+	} {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
+
+// chooseSSHKeyAction shows the generate/existing/browse menu and returns
+// the selected action key. The default lands on "existing" when a key is
+// already available, otherwise "generate".
+func chooseSSHKeyAction(suggest string) (string, error) {
+	choice := "existing"
+	if suggest == "" {
+		choice = "generate"
+	}
+	fmt.Println()
+	err := huh.NewSelect[string]().
+		Title("SSH key for VM bootstrap").
+		Options(
+			huh.NewOption("Generate a new dedicated key", "generate"),
+			huh.NewOption("Use an existing key", "existing"),
+			huh.NewOption("Browse for a key…", "browse"),
+		).
+		Value(&choice).
+		Filtering(false).
+		Run()
+	return choice, err
+}
+
+// generateBootstrapKey creates (or reuses) a dedicated pmox ed25519 key at
+// ~/.ssh/pmox_ed25519 and returns its public-key path.
+func generateBootstrapKey(p prompter, sshDir, home string) (string, error) {
+	priv := filepath.Join(sshDir, "pmox_ed25519")
+	pub := priv + ".pub"
+	if _, err := os.Stat(priv); err == nil {
+		// Never clobber an existing key. Reuse its .pub if present.
+		if _, err := os.Stat(pub); err == nil {
+			p.Printf("reusing existing pmox key: %s\n", displayPath(pub, home))
+			return pub, nil
+		}
+		return "", fmt.Errorf("%w: %s exists but %s is missing; remove it or pick another key",
+			exitcode.ErrUserInput, displayPath(priv, home), displayPath(pub, home))
+	}
+	comment := "pmox"
+	if hn, err := os.Hostname(); err == nil && hn != "" {
+		comment = "pmox@" + hn
+	}
+	generated, err := sshkey.Generate(priv, comment)
+	if err != nil {
+		return "", err
+	}
+	p.Printf("generated new SSH key: %s\n", displayPath(generated, home))
+	return generated, nil
+}
+
+// browseForKey opens a filesystem picker rooted at home. It returns the
+// resolved public-key path and ok=true on selection, or ok=false if the
+// user cancels.
+func browseForKey(home string) (string, bool) {
+	var selected string
+	fmt.Println()
+	err := huh.NewFilePicker().
+		Title("Select an SSH key file").
+		CurrentDirectory(home).
+		ShowHidden(true).
+		FileAllowed(true).
+		DirAllowed(false).
+		Value(&selected).
+		Run()
+	if err != nil || selected == "" {
+		return "", false
+	}
+	return resolveBrowsedKey(selected), true
+}
+
+// resolveBrowsedKey maps a selected file to the public key pmox should
+// store: a selected private key resolves to its adjacent .pub when that
+// exists; a .pub (or anything else) is used as-is.
+func resolveBrowsedKey(selected string) string {
+	if strings.HasSuffix(selected, ".pub") {
+		return selected
+	}
+	if _, err := os.Stat(selected + ".pub"); err == nil {
+		return selected + ".pub"
+	}
+	return selected
+}
+
+// selectExistingKey shows a picker of ~/.ssh/*.pub, falling back to a
+// plain-text path prompt.
+func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error) {
 	pubKeys := findPubKeys(sshDir)
 	if len(pubKeys) > 0 {
 		fmt.Println()
@@ -1116,8 +1326,13 @@ func promptSSHKey(p prompter, current string) (string, error) {
 			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
 		}
 	}
+	return sshKeyTextFallback(p, home, suggest)
+}
 
-	// Fallback: plain text prompt with ~ expansion and retries.
+// sshKeyTextFallback is a plain-text path prompt with ~ expansion and
+// retries; blank input accepts the suggested default. It is also the
+// non-interactive path.
+func sshKeyTextFallback(p prompter, home, suggest string) (string, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		label := "Default SSH public key path"
 		if suggest != "" {

@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -240,23 +241,51 @@ func (c *Config) ServerURLs() []string {
 
 // CanonicalizeURL normalizes a user-entered PVE API URL to a single
 // canonical form: https://<lowercase-host>:<port>/api2/json.
+//
+// It is deliberately lenient about input so the common cases just work:
+// a bare IP or hostname, host:port, an IPv6 literal ([::1]:8006), or a
+// full URL (including a pasted web-UI address with a #fragment) are all
+// accepted. A missing scheme becomes https; a missing port becomes 8006;
+// an explicit port is honored. An http:// scheme is upgraded to https
+// (PVE serves its API over TLS); any other scheme is an error.
 func CanonicalizeURL(raw string) (string, error) {
+	c, _, err := canonicalizeURL(raw)
+	return c, err
+}
+
+// CanonicalizeURLVerbose is like CanonicalizeURL but also reports whether
+// the scheme was upgraded from http to https, so interactive callers can
+// print a one-line note.
+func CanonicalizeURLVerbose(raw string) (canonical string, upgradedFromHTTP bool, err error) {
+	return canonicalizeURL(raw)
+}
+
+func canonicalizeURL(raw string) (canonical string, upgradedFromHTTP bool, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", errors.New("url is empty")
+		return "", false, errors.New("url is empty")
+	}
+	// url.Parse treats a scheme-less "10.0.0.5" (or "pve.lan:8006") as a
+	// path, leaving Host empty. Prepend https:// so the host/port parse.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("parse url: %w", err)
+		return "", false, fmt.Errorf("parse url: %w", err)
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if scheme != "https" {
-		return "", fmt.Errorf("pmox requires https; got scheme %q", u.Scheme)
-	}
-	if u.Host == "" {
-		return "", errors.New("url is missing host")
+	switch scheme {
+	case "https":
+	case "http":
+		upgradedFromHTTP = true
+	default:
+		return "", false, fmt.Errorf("unsupported scheme %q; pmox requires https", u.Scheme)
 	}
 	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", false, errors.New("url is missing host")
+	}
 	port := u.Port()
 	if port == "" {
 		port = "8006"
@@ -264,5 +293,6 @@ func CanonicalizeURL(raw string) (string, error) {
 	// Ignore any path, query, or fragment — pmox always targets /api2/json.
 	// This lets users paste the web UI URL (e.g. https://host:8006/#v1:0:...)
 	// or any other variant without needing to trim it first.
-	return fmt.Sprintf("https://%s:%s/api2/json", host, port), nil
+	// net.JoinHostPort re-adds brackets for IPv6 literals.
+	return fmt.Sprintf("https://%s/api2/json", net.JoinHostPort(host, port)), upgradedFromHTTP, nil
 }
