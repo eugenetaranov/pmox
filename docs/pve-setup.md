@@ -14,6 +14,12 @@ succeeds on the first try.
 
 ## 1. API token
 
+> **Shortcut:** `pmox configure` can create this token for you. Choose
+> "generate", enter a `user@realm` and password, and pmox logs in and
+> creates the token (privilege separation off) over the API, storing only
+> the secret — your password is never saved. The manual steps below are
+> the alternative.
+
 In the PVE web UI: **Datacenter → Permissions → API Tokens → Add**.
 
 - Pick a user. `root@pam` is simplest; a dedicated `pmox@pve` user
