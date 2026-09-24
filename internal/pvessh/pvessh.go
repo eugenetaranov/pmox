@@ -74,7 +74,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("ssh dial %s: %w", cfg.Host, scrub(err, cfg))
 	}
 
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, cfg.Host, clientCfg)
+	sshConn, chans, reqs, err := clientHandshake(ctx, conn, cfg.Host, clientCfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("ssh handshake %s: %w", cfg.Host, scrub(err, cfg))
@@ -88,6 +88,51 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return &Client{ssh: sshClient, sftp: sftpClient, host: cfg.Host}, nil
+}
+
+// clientHandshake runs ssh.NewClientConn over an already-dialed conn.
+// ssh.ClientConfig.Timeout only bounds the TCP dial inside ssh.Dial, not
+// a handshake on a caller-supplied conn, so a host that accepts TCP but
+// never sends a banner would block forever. The conn gets an I/O
+// deadline of cfg.Timeout (or ctx's deadline, if sooner) for the
+// handshake only, and ctx cancellation closes the conn to unblock it.
+// A failure caused by ctx wraps ctx.Err().
+func clientHandshake(ctx context.Context, conn net.Conn, addr string, cfg *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	var deadline time.Time
+	if cfg.Timeout > 0 {
+		deadline = time.Now().Add(cfg.Timeout)
+	}
+	if dl, ok := ctx.Deadline(); ok && (deadline.IsZero() || dl.Before(deadline)) {
+		deadline = dl
+	}
+	if !deadline.IsZero() {
+		_ = conn.SetDeadline(deadline)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if !stop() {
+		// ctx fired mid-handshake and closed conn underneath it.
+		if sshConn != nil {
+			_ = sshConn.Close()
+		}
+		if err == nil {
+			return nil, nil, nil, ctx.Err()
+		}
+		return nil, nil, nil, fmt.Errorf("%w (%w)", ctx.Err(), err)
+	}
+	if err != nil {
+		// The I/O deadline can be ctx's own deadline, so the read may
+		// time out a hair before the AfterFunc fires; attribute it to ctx.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, nil, fmt.Errorf("%w (%w)", ctxErr, err)
+		}
+		if dl, ok := ctx.Deadline(); ok && !time.Now().Before(dl) {
+			return nil, nil, nil, fmt.Errorf("%w (%w)", context.DeadlineExceeded, err)
+		}
+		return nil, nil, nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return sshConn, chans, reqs, nil
 }
 
 // Close tears down the SFTP session and then the underlying SSH client.
@@ -175,7 +220,8 @@ func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, error) {
 // scrub returns err unchanged unless it literally contains the password
 // value, in which case it replaces the password with a redaction marker.
 // Defensive — x/crypto/ssh does not leak passwords today, but makes the
-// promise in the spec explicit and survives future changes.
+// promise in the spec explicit and survives future changes. The result
+// still unwraps to err so errors.Is/As keep matching wrapped sentinels.
 func scrub(err error, cfg Config) error {
 	if err == nil || cfg.Password == "" {
 		return err
@@ -185,5 +231,16 @@ func scrub(err error, cfg Config) error {
 	if scrubbed == msg {
 		return err
 	}
-	return errors.New(scrubbed)
+	return &scrubbedError{msg: scrubbed, err: err}
 }
+
+// scrubbedError reports a redacted message while preserving the original
+// error chain for errors.Is/As. Only the redacted text is ever rendered
+// by Error(); callers must not print the unwrapped error.
+type scrubbedError struct {
+	msg string
+	err error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+func (e *scrubbedError) Unwrap() error { return e.err }

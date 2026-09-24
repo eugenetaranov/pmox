@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -32,10 +31,7 @@ one exists, or shows an interactive picker when there are several.`,
 
 func runInfo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	client, err := buildDeleteClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -60,7 +56,7 @@ func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 		return fmt.Errorf("get config for vm %d: %w", ref.VMID, err)
 	}
 	var ifaces []pveclient.AgentIface
-	if status.Status == "running" {
+	if status.IsRunning() {
 		ifaces, err = client.AgentNetwork(ctx, ref.Node, ref.VMID)
 		if err != nil && !errors.Is(err, pveclient.ErrAPIError) {
 			// Non-API errors (network/auth) are hard failures; agent-
@@ -71,9 +67,7 @@ func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	info := vm.BuildInfo(ref, status, cfg, ifaces)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(info)
+		return printJSON(cmd.OutOrStdout(), info)
 	}
 	vm.RenderInfo(cmd.OutOrStdout(), info)
 	return nil

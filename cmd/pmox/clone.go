@@ -7,8 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/config"
-	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -50,7 +48,7 @@ configured snippet_storage, then to --storage with a warning.`,
 	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
-	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
+	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the clone's net0 (default: keep the source VM's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	addHookFlags(cmd, f)
@@ -59,9 +57,7 @@ configured snippet_storage, then to --storage with a warning.`,
 
 func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	f.bridgeSet = cmd.Flags().Changed("bridge")
 	// Resolve hook flags first so mutual-exclusion errors short-circuit
 	// before any config load / server resolution / PVE call.
 	hk, err := resolveHook(f)
@@ -72,63 +68,30 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	if err != nil {
 		return err
 	}
-	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
+	if err := resolved.RequireNodeSSH("clone"); err != nil {
+		return err
+	}
+	// Resolve resources before any picker prompt so a missing storage
+	// fails fast instead of reaching PVE as ide2=":cloudinit".
+	partial, err := resolveVMSpec(f, resolved, cmd.ErrOrStderr())
+	if err != nil {
+		return err
 	}
 	// No source given → pick one interactively (like shell/delete do).
 	if srcArg == "" {
-		picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+		picked, err := vmPickFn(ctx, client)
 		if err != nil {
 			return err
 		}
 		srcArg = strconv.Itoa(picked.VMID)
 	}
-	srv := resolved.Server
-
-	cloudInitPath, err := config.CloudInitPath(resolved.URL)
-	if err != nil {
-		return fmt.Errorf("resolve cloud-init path: %w", err)
-	}
-	cpu := f.cpu
-	if cpu == 0 {
-		cpu = defaultCPU
-	}
-	mem := f.memMB
-	if mem == 0 {
-		mem = defaultMemMB
-	}
-	disk := firstNonEmpty(f.disk, defaultDiskSize)
-	wait := f.wait
-	if wait == 0 {
-		wait = defaultWait
-	}
-
-	storage := firstNonEmpty(f.storage, srv.Storage)
-	snippetStorage := resolveSnippetStorage(f.snippetStorage, srv.SnippetStorage, storage, cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)
 	defer closeUpload()
 
-	user, sshKey := hookSSHDefaults(srv)
-	partial := launch.Options{
-		CPU:            cpu,
-		MemMB:          mem,
-		DiskSize:       disk,
-		Storage:        storage,
-		SnippetStorage: snippetStorage,
-		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:           wait,
-		NoWaitSSH:      f.noWaitSSH,
-		CloudInitPath:  cloudInitPath,
-		UploadSnippet:  upload,
-		Stderr:         cmd.ErrOrStderr(),
-		Verbose:        verbose,
-		Progress:       newLaunchProgress(cmd.ErrOrStderr()),
-		Hook:           hk,
-		StrictHooks:    f.strictHooks,
-		User:           user,
-		SSHKeyPath:     sshKey,
-	}
+	partial.UploadSnippet = upload
+	partial.Progress = newLaunchProgress(cmd.ErrOrStderr())
+	applyHookOptions(&partial, hk, f, resolved.Server, SSHInsecure())
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }
 
@@ -144,7 +107,6 @@ func executeClone(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	partial.Node = ref.Node
 	partial.Name = newName
 	partial.TemplateID = ref.VMID
-	partial.TemplateName = ref.Name
 	r, err := launch.Run(ctx, partial)
 	if err != nil {
 		return err

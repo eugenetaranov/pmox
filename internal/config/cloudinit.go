@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/eugenetaranov/pmox/internal/atomicfile"
+	"github.com/eugenetaranov/pmox/internal/paths"
 )
 
 // pubKeyPrefixes are the OpenSSH public-key type tokens pmox recognizes
@@ -111,14 +114,11 @@ func Slug(canonicalURL string) (string, error) {
 // files live. It respects $XDG_CONFIG_HOME, falling back to
 // $HOME/.config, matching Path().
 func CloudInitDir() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "cloud-init"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := paths.ConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".config", "pmox", "cloud-init"), nil
+	return filepath.Join(dir, "cloud-init"), nil
 }
 
 // CloudInitPath returns the absolute path to the cloud-init file for
@@ -146,7 +146,7 @@ func RenderTemplate(user, sshPubkey string) ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	data := struct {
-		User     string
+		User      string
 		SSHPubkey string
 	}{User: user, SSHPubkey: sshPubkey}
 	if err := tmpl.Execute(&buf, data); err != nil {
@@ -169,6 +169,28 @@ func WriteStarterCloudInit(path, user, sshPubkey string) error {
 	return WriteCloudInit(path, user, sshPubkey)
 }
 
+// ErrCloudInitKeyDrift is returned by EnsureStarterCloudInit when the
+// existing file authorizes SSH keys, but not the selected one. It wraps
+// ErrCloudInitExists.
+var ErrCloudInitKeyDrift = fmt.Errorf("%w and authorizes a different SSH key", ErrCloudInitExists)
+
+// EnsureStarterCloudInit writes the starter template like
+// WriteStarterCloudInit. When the file already exists it is never
+// touched: the result is ErrCloudInitKeyDrift if the file authorizes
+// some SSH key but not sshPubkey (so re-running init with a new key can
+// offer to regenerate it), else ErrCloudInitExists.
+func EnsureStarterCloudInit(path, user, sshPubkey string) error {
+	err := WriteStarterCloudInit(path, user, sshPubkey)
+	if !errors.Is(err, ErrCloudInitExists) {
+		return err
+	}
+	authorized, hasAny, aerr := CloudInitAuthorizesKey(path, sshPubkey)
+	if aerr == nil && hasAny && !authorized {
+		return ErrCloudInitKeyDrift
+	}
+	return ErrCloudInitExists
+}
+
 // WriteCloudInit unconditionally renders and writes the template at
 // path. Unlike WriteStarterCloudInit it overwrites any existing file.
 // Used by `pmox init --regen-cloud-init` after the caller has
@@ -178,33 +200,10 @@ func WriteCloudInit(path, user, sshPubkey string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create cloud-init dir %s: %w", dir, err)
+	if err := atomicfile.Write(path, content, 0o600); err != nil {
+		return fmt.Errorf("write cloud-init %s: %w", path, err)
 	}
-	_ = os.Chmod(dir, 0o700)
-	tmp, err := os.CreateTemp(dir, ".cloud-init-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename temp file: %w", err)
-	}
+	// Tighten a pre-existing cloud-init dir.
+	_ = os.Chmod(filepath.Dir(path), 0o700)
 	return nil
 }

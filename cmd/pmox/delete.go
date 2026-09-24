@@ -70,9 +70,6 @@ stderr so scripted loops are idempotent.`,
 
 func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	assumeYes := f.yes || envBool("PMOX_ASSUME_YES")
 
@@ -85,7 +82,7 @@ func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 		return fmt.Errorf("refusing to delete: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use")
 	}
 
-	client, err := buildDeleteClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -112,7 +109,7 @@ func resolveTargetArg(ctx context.Context, client *pveclient.Client, args []stri
 	if len(args) == 1 {
 		return args[0], nil
 	}
-	ref, err := vmPickFn(ctx, client, stderr)
+	ref, err := vmPickFn(ctx, client)
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +123,7 @@ func resolveTargetArgs(ctx context.Context, client *pveclient.Client, args []str
 	if len(args) > 0 {
 		return args, nil
 	}
-	refs, err := vmPickMultiFn(ctx, client, stderr)
+	refs, err := vmPickMultiFn(ctx, client)
 	if err != nil {
 		return nil, err
 	}
@@ -175,8 +172,8 @@ func resolveDeleteRefs(ctx context.Context, client *pveclient.Client, args []str
 		if err != nil {
 			return nil, err
 		}
-		if !f.force && !vm.HasPMOXTag(ref.Tags) {
-			return nil, fmt.Errorf("refusing to delete VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+		if err := ref.RequirePMOXTag("delete", f.force); err != nil {
+			return nil, err
 		}
 		refs = append(refs, ref)
 	}
@@ -246,7 +243,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 		cicustom = cfg["cicustom"]
 	}
 
-	if status.Status == "running" {
+	if status.IsRunning() {
 		label := fmt.Sprintf("Shutting down VM %d", ref.VMID)
 		stopFn := client.Shutdown
 		if f.hard {

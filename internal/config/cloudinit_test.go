@@ -212,13 +212,48 @@ func TestCloudInitAuthorizesKey(t *testing.T) {
 	}
 }
 
+func TestEnsureStarterCloudInit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ci.yaml")
+	edKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleBODYaaa comment@host"
+	rsaKey := "ssh-rsa AAAAB3NzaC1yc2Edifferentbodyzzz other@host"
+
+	if err := EnsureStarterCloudInit(path, "ubuntu", edKey); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	before, _ := os.ReadFile(path)
+
+	// Same key: exists, no drift.
+	err := EnsureStarterCloudInit(path, "ubuntu", edKey)
+	if !errors.Is(err, ErrCloudInitExists) || errors.Is(err, ErrCloudInitKeyDrift) {
+		t.Fatalf("same key: err = %v, want ErrCloudInitExists only", err)
+	}
+	// Different key: drift, which is also an "exists".
+	err = EnsureStarterCloudInit(path, "ubuntu", rsaKey)
+	if !errors.Is(err, ErrCloudInitKeyDrift) || !errors.Is(err, ErrCloudInitExists) {
+		t.Fatalf("different key: err = %v, want ErrCloudInitKeyDrift", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Error("existing file was modified")
+	}
+
+	// A file with no recognizable keys is never reported as drift.
+	bare := filepath.Join(dir, "bare.yaml")
+	if err := os.WriteFile(bare, []byte("#cloud-config\npackages: [git]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureStarterCloudInit(bare, "ubuntu", rsaKey); errors.Is(err, ErrCloudInitKeyDrift) || !errors.Is(err, ErrCloudInitExists) {
+		t.Fatalf("keyless file: err = %v, want ErrCloudInitExists only", err)
+	}
+}
+
 func TestPubKeyBody(t *testing.T) {
 	cases := map[string]string{
 		"ssh-ed25519 BODY comment":       "BODY",
 		"  - ssh-rsa RSABODY a@b":        "RSABODY",
 		"sk-ssh-ed25519@openssh.com X y": "X",
 		"not a key":                      "",
-		"":                              "",
+		"":                               "",
 	}
 	for in, want := range cases {
 		if got := pubKeyBody(in); got != want {

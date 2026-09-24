@@ -23,7 +23,7 @@ func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
 		Source: "single configured",
 	}
 	f := &launchFlags{}
-	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved, &bytes.Buffer{})
+	opts, err := resolveLaunchOptions(context.Background(), nil, "web1", f, resolved, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
 		Secret: "s",
 	}
 	f := &launchFlags{cpu: 8, memMB: 16384, disk: "80G", wait: 2 * time.Minute}
-	opts, err := resolveLaunchOptions(context.Background(), "web1", f, resolved, &bytes.Buffer{})
+	opts, err := resolveLaunchOptions(context.Background(), nil, "web1", f, resolved, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestResolveLaunchOptions_MissingTemplateIsConfigError(t *testing.T) {
 		Server: &config.Server{TokenID: "t@pam!x", Node: "pve"},
 		Secret: "s",
 	}
-	_, err := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved, &bytes.Buffer{})
+	_, err := resolveLaunchOptions(context.Background(), nil, "web1", &launchFlags{}, resolved, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("resolveLaunchOptions err=nil, want missing template error")
 	}

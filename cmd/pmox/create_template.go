@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
@@ -56,9 +54,6 @@ Requires PVE 8.0+ and an interactive TTY.`,
 
 func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Enforce interactive TTY — the flow has picker prompts that
 	// cannot be driven from a pipe or file.
@@ -66,129 +61,87 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 		return fmt.Errorf("%w: interactive TTY required for pmox create-template", exitcode.ErrUserInput)
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Context:  contextFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
-		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
-	})
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
 
-	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: create-template needs SSH access to the Proxmox node (for snippet upload); run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
+	if err := resolved.RequireNodeSSH("create-template"); err != nil {
+		return err
 	}
 
 	srv := resolved.Server
-	if err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved); err != nil {
-		return err
-	}
-	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
 		return fmt.Errorf("%w: no node configured; pass --node or run 'pmox init'", exitcode.ErrNotFound)
 	}
 	bridge := firstNonEmpty(f.bridge, srv.Bridge, "vmbr0")
 
-	// Lazily dial SSH: only phase 5 (upload snippet) actually needs it,
-	// so failures in earlier phases surface cleanly without paying the
-	// SSH handshake cost or its failure modes.
-	var sshClient *pvessh.Client
-	defer func() {
-		if sshClient != nil {
-			_ = sshClient.Close()
-		}
-	}()
-	upload := func(ctx context.Context, storagePath, filename string, content []byte) error {
-		if sshClient == nil {
-			c, err := dialPvessh(ctx, resolved)
-			if err != nil {
-				return fmt.Errorf("ssh to %s: %w", resolved.URL, err)
-			}
-			sshClient = c
-		}
-		return sshClient.UploadSnippet(ctx, storagePath, filename, content)
-	}
+	// Lazily dial SSH: only phase 5 (upload snippet) actually needs it.
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
 
-	return runCreateTemplateWithClient(ctx, cmd, client, resolved.URL, resolved.Source, node, bridge, f.wait, upload)
+	return runCreateTemplateWithClient(ctx, cmd, client, node, bridge, f.wait, upload)
 }
 
 // dialPvessh opens an SSH+SFTP session to the PVE node named in the
 // resolved server record. The SSH host is derived from the API URL's
 // hostname on port 22.
 func dialPvessh(ctx context.Context, resolved *server.Resolved) (*pvessh.Client, error) {
-	u, err := url.Parse(resolved.URL)
-	if err != nil {
-		return nil, fmt.Errorf("parse server url: %w", err)
-	}
-	host := u.Hostname() + ":22"
-	kh, err := pvessh.KnownHostsPath()
+	cfg, err := resolved.NodeSSHConfig(SSHInsecure())
 	if err != nil {
 		return nil, err
 	}
-	return pvessh.Dial(ctx, pvessh.Config{
-		Host:       host,
-		User:       resolved.NodeSSHUser,
-		Password:   resolved.NodeSSHPassword,
-		KeyPath:    resolved.NodeSSHKeyPath,
-		KeyPass:    resolved.NodeSSHKeyPassphrase,
-		Insecure:   SSHInsecure(),
-		KnownHosts: kh,
-	})
+	return pvessh.Dial(ctx, cfg)
 }
 
-// runCreateTemplateWithClient runs everything from the verbose log
-// line onward. Extracted so tests can drive it with a fake PVE server
-// and without touching config loading.
-func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, resolvedURL, resolvedSource, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolvedURL, resolvedSource)
+// pickIndex shows labels in a picker and returns the chosen index,
+// defaulting to 0. An aborted picker returns tui.ErrAborted.
+func pickIndex(title string, labels []string) (int, error) {
+	options := make([]huh.Option[string], 0, len(labels))
+	for i, l := range labels {
+		options = append(options, huh.NewOption(l, strconv.Itoa(i)))
 	}
+	picked, err := tui.SelectOne(title, options, "0")
+	if err != nil {
+		return 0, err
+	}
+	idx, _ := strconv.Atoi(picked)
+	return idx, nil
+}
 
+// storageLabels renders "name (type)" picker labels for pools.
+func storageLabels(pools []pveclient.Storage) []string {
+	labels := make([]string, 0, len(pools))
+	for _, s := range pools {
+		labels = append(labels, fmt.Sprintf("%s (%s)", s.Storage, s.Type))
+	}
+	return labels
+}
+
+// runCreateTemplateWithClient runs everything after server resolution
+// (buildClient already emitted the --verbose server line). Extracted so
+// tests can drive it with a fake PVE server and without touching config
+// loading.
+func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
 	opts := template.Options{
 		Client:   client,
 		Node:     node,
 		Bridge:   bridge,
 		Wait:     wait,
-		Stderr:   cmd.ErrOrStderr(),
-		Verbose:  verbose,
 		Progress: newTemplateProgress(cmd.ErrOrStderr()),
-		PickImage: func(entries []template.ImageEntry) int {
-			options := make([]huh.Option[string], 0, len(entries))
-			for i, e := range entries {
-				options = append(options, huh.NewOption(e.Label, strconv.Itoa(i)))
+		PickImage: func(entries []template.ImageEntry) (int, error) {
+			labels := make([]string, 0, len(entries))
+			for _, e := range entries {
+				labels = append(labels, e.Label)
 			}
-			fallback := strconv.Itoa(0)
-			picked := tui.SelectOne("Ubuntu image", options, fallback)
-			idx, _ := strconv.Atoi(picked)
-			return idx
+			return pickIndex("Ubuntu image", labels)
 		},
-		PickTargetStorage: func(pools []pveclient.Storage) int {
-			options := make([]huh.Option[string], 0, len(pools))
-			for i, s := range pools {
-				options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", s.Storage, s.Type), strconv.Itoa(i)))
-			}
-			picked := tui.SelectOne("Target storage for the template disk", options, "0")
-			idx, _ := strconv.Atoi(picked)
-			return idx
+		PickTargetStorage: func(pools []pveclient.Storage) (int, error) {
+			return pickIndex("Target storage for the template disk", storageLabels(pools))
 		},
-		PickSnippetsStorage: func(pools []pveclient.Storage) int {
-			options := make([]huh.Option[string], 0, len(pools))
-			for i, s := range pools {
-				options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", s.Storage, s.Type), strconv.Itoa(i)))
-			}
-			picked := tui.SelectOne("Snippets storage", options, "0")
-			idx, _ := strconv.Atoi(picked)
-			return idx
+		PickSnippetsStorage: func(pools []pveclient.Storage) (int, error) {
+			return pickIndex("Snippets storage", storageLabels(pools))
 		},
 		UploadSnippet: upload,
 	}
@@ -200,4 +153,3 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 	fmt.Fprintf(cmd.OutOrStdout(), "created template %s (vmid=%d); launch with: pmox launch <name> --template %d\n", r.Name, r.VMID, r.VMID)
 	return nil
 }
-

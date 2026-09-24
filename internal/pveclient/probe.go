@@ -2,9 +2,6 @@ package pveclient
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 )
@@ -41,27 +38,20 @@ func Probe(ctx context.Context, baseURL string, insecure bool) (ReachStatus, err
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}, //nolint:gosec // homelab fallback per D4
-		},
-	}
+	client := &http.Client{Transport: newTransport(insecure, "")}
 	req, err := http.NewRequestWithContext(pctx, http.MethodGet, baseURL+"/version", nil)
 	if err != nil {
 		return ReachUnknown, err
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, body, err := send(client, req) //nolint:bodyclose // send reads and closes the body
 	if err != nil {
 		if isTLSError(err) {
 			return ReachTLSUntrusted, err
 		}
 		return ReachUnreachable, err
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		// 401 from /api2/json/version proves a live PVE API that requires auth.
@@ -81,9 +71,9 @@ func Probe(ctx context.Context, baseURL string, insecure bool) (ReachStatus, err
 // ({"data":{"version":"..."}}). Used only for the rare 200-without-auth
 // case (e.g. a permissive reverse proxy).
 func looksLikePVEVersion(body []byte) bool {
-	var v versionResponse
-	if err := json.Unmarshal(body, &v); err != nil {
+	v, err := decodeData[versionInfo](body, "version response")
+	if err != nil {
 		return false
 	}
-	return v.Data.Version != ""
+	return v.Version != ""
 }

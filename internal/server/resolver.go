@@ -9,7 +9,7 @@
 //  4. PMOX_CONTEXT env var       (context name)
 //  5. current context            (set via `pmox config use-context`)
 //  6. exactly one configured server  (obvious default)
-//  7. interactive picker             (TTY only)
+//  7. interactive picker             (TTY only; Options.Pick)
 //  8. error                          (non-TTY + ambiguous)
 //
 // --server and PMOX_SERVER accept either a context name or a server URL;
@@ -27,30 +27,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
-
-	"github.com/charmbracelet/huh"
-	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
-	"github.com/eugenetaranov/pmox/internal/tui"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 )
 
 // Options bundles the inputs Resolve needs. Everything is explicit
 // (no implicit os.Stdin / os.Getenv) so tests can run hermetically.
 type Options struct {
 	Cfg        *config.Config
-	Flag       string   // value of --server (URL or context name), empty if unset
-	Context    string   // value of --context (context name), empty if unset
-	Env        string   // value of PMOX_SERVER (URL or context name)
-	ContextEnv string   // value of PMOX_CONTEXT (context name)
-	Stdin      *os.File // for TTY detection + picker; os.Stdin in prod
-	Stdout     io.Writer
-	Stderr     io.Writer
+	Flag       string // value of --server (URL or context name), empty if unset
+	Context    string // value of --context (context name), empty if unset
+	Env        string // value of PMOX_SERVER (URL or context name)
+	ContextEnv string // value of PMOX_CONTEXT (context name)
+
+	// Pick draws the interactive context picker (rung 7) and returns the
+	// chosen Choice.Value. Callers set it only when a picker may be shown
+	// (TTY, input not disabled); nil falls through to the ambiguity
+	// error. A non-nil error (e.g. the user aborted) is returned as-is —
+	// Resolve never substitutes a default.
+	Pick func(title string, choices []Choice) (string, error)
+}
+
+// Choice is one entry offered to Options.Pick.
+type Choice struct {
+	Label string
+	Value string
 }
 
 // Resolved is the bundle returned on successful resolution.
@@ -69,25 +74,67 @@ type Resolved struct {
 	// server record has a node_ssh block. Commands that don't need SSH
 	// (everything except create-template) can ignore these fields.
 	NodeSSHUser          string
-	NodeSSHAuth          string // "password" | "key" | "" (unconfigured)
-	NodeSSHPassword      string // populated when NodeSSHAuth == "password"
-	NodeSSHKeyPath       string // populated when NodeSSHAuth == "key"
-	NodeSSHKeyPassphrase string // only when the key is passphrase-protected
+	NodeSSHAuth          config.NodeSSHAuth // AuthPassword | AuthKey | "" (unconfigured)
+	NodeSSHPassword      string             // populated when NodeSSHAuth == AuthPassword
+	NodeSSHKeyPath       string             // populated when NodeSSHAuth == AuthKey
+	NodeSSHKeyPassphrase string             // only when the key is passphrase-protected
+
+	// NodeSSHErr records a node_ssh block pmox cannot act on (an unknown
+	// auth mode). It is not a resolve error: commands that never touch
+	// node SSH work regardless, and HasNodeSSH reports false. Commands
+	// that need node SSH surface it (see RequireNodeSSH).
+	NodeSSHErr error
 }
 
 // HasNodeSSH reports whether this server has SSH credentials resolved
 // and is ready for snippet upload via pvessh.
 func (r *Resolved) HasNodeSSH() bool {
-	if r == nil || r.NodeSSHAuth == "" || r.NodeSSHUser == "" {
+	if r == nil || r.NodeSSHErr != nil || r.NodeSSHAuth == "" || r.NodeSSHUser == "" {
 		return false
 	}
 	switch r.NodeSSHAuth {
-	case "password":
+	case config.AuthPassword:
 		return r.NodeSSHPassword != ""
-	case "key":
+	case config.AuthKey:
 		return r.NodeSSHKeyPath != ""
 	}
 	return false
+}
+
+// RequireNodeSSH returns nil when node SSH is ready to use. Otherwise it
+// returns NodeSSHErr when the configured block is unusable, or an
+// ErrUserInput error saying purpose needs node SSH and how to add it.
+func (r *Resolved) RequireNodeSSH(purpose string) error {
+	if r != nil && r.NodeSSHErr != nil {
+		return r.NodeSSHErr
+	}
+	if !r.HasNodeSSH() {
+		return fmt.Errorf("%w: %s needs SSH access to the Proxmox node (for cloud-init snippet upload); run 'pmox init' to add SSH credentials", exitcode.ErrUserInput, purpose)
+	}
+	return nil
+}
+
+// NodeSSHConfig builds the pvessh.Config for this server's PVE node: the
+// API URL's hostname on port 22, the resolved node-SSH credentials, and
+// the pmox-managed known_hosts file. insecure skips host-key checking.
+func (r *Resolved) NodeSSHConfig(insecure bool) (pvessh.Config, error) {
+	host, err := pvessh.HostFromURL(r.URL)
+	if err != nil {
+		return pvessh.Config{}, err
+	}
+	kh, err := pvessh.KnownHostsPath()
+	if err != nil {
+		return pvessh.Config{}, err
+	}
+	return pvessh.Config{
+		Host:       host,
+		User:       r.NodeSSHUser,
+		Password:   r.NodeSSHPassword,
+		KeyPath:    r.NodeSSHKeyPath,
+		KeyPass:    r.NodeSSHKeyPassphrase,
+		Insecure:   insecure,
+		KnownHosts: kh,
+	}, nil
 }
 
 // Resolve runs the precedence ladder and returns the resolved server.
@@ -154,19 +201,26 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
 
-	// Rung 7: interactive picker (both streams must be a TTY and input
-	// must not be disabled — otherwise fall through to the error).
-	if opts.Stdin != nil && term.IsTerminal(int(opts.Stdin.Fd())) && tui.StderrIsTerminal() && !tui.NoInput() {
+	// Rung 7: interactive picker (only when the caller supplied one —
+	// otherwise fall through to the error).
+	if opts.Pick != nil {
 		contexts := opts.Cfg.Contexts()
-		options := make([]huh.Option[string], 0, len(contexts))
+		choices := make([]Choice, 0, len(contexts))
 		for _, c := range contexts {
-			options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", c.Name, c.URL), c.URL))
+			choices = append(choices, Choice{Label: fmt.Sprintf("%s (%s)", c.Name, c.URL), Value: c.URL})
 		}
-		selected := tui.SelectOne("Select context", options, contexts[0].URL)
+		selected, err := opts.Pick("Select context", choices)
+		if err != nil {
+			return nil, err
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		return hydrate(selected, opts.Cfg.Servers[selected], "interactive picker")
+		srv, ok := opts.Cfg.Servers[selected]
+		if !ok {
+			return nil, fmt.Errorf("picker returned unknown context %q", selected)
+		}
+		return hydrate(selected, srv, "interactive picker")
 	}
 
 	// Rung 8: non-TTY ambiguity
@@ -241,22 +295,26 @@ func hydrate(url string, srv *config.Server, source string) (*Resolved, error) {
 	return r, nil
 }
 
+// getNodeSSHKeyPassphrase is overridable in tests.
+var getNodeSSHKeyPassphrase = credstore.GetNodeSSHKeyPassphrase
+
 // hydrateNodeSSH loads node_ssh fields from config and the keyring into
 // the resolved bundle. A server record without a node_ssh block leaves
-// the fields empty — create-template is the only caller that cares and
-// checks HasNodeSSH() before attempting to use them.
+// the fields empty. Only a missing/unreadable password (required for
+// password auth) is a resolve error; an unusable block is recorded in
+// NodeSSHErr for the commands that need node SSH (RequireNodeSSH).
 func hydrateNodeSSH(r *Resolved) error {
 	if r.Server == nil || r.Server.NodeSSH == nil {
 		return nil
 	}
 	ns := r.Server.NodeSSH
-	r.NodeSSHUser = ns.User
-	if r.NodeSSHUser == "" {
-		r.NodeSSHUser = "root"
-	}
+	r.NodeSSHUser = ns.EffectiveUser()
 	r.NodeSSHAuth = ns.Auth
 	switch ns.Auth {
-	case "password":
+	case "":
+		// Block present but no auth mode: treated as unconfigured
+		// (HasNodeSSH reports false).
+	case config.AuthPassword:
 		pw, err := credstore.GetNodeSSHPassword(r.URL)
 		if err != nil {
 			if errors.Is(err, credstore.ErrNotFound) {
@@ -265,15 +323,19 @@ func hydrateNodeSSH(r *Resolved) error {
 			return fmt.Errorf("load node SSH password for %s: %w", r.URL, err)
 		}
 		r.NodeSSHPassword = pw
-	case "key":
+	case config.AuthKey:
 		r.NodeSSHKeyPath = ns.KeyPath
-		// Passphrase is optional — absent keyring entry is fine.
-		pp, err := credstore.GetNodeSSHKeyPassphrase(r.URL)
-		if err == nil {
+		// The passphrase is optional and this runs for every command, so
+		// any lookup failure (absent entry, locked or unavailable
+		// keychain) means "no passphrase". An encrypted key then fails
+		// with a clear error when node SSH is actually dialed.
+		if pp, err := getNodeSSHKeyPassphrase(r.URL); err == nil {
 			r.NodeSSHKeyPassphrase = pp
-		} else if !errors.Is(err, credstore.ErrNotFound) {
-			return fmt.Errorf("load node SSH key passphrase for %s: %w", r.URL, err)
 		}
+	default:
+		// Recorded, not returned: only commands that use node SSH fail.
+		r.NodeSSHErr = fmt.Errorf("%w: server %s has unknown node_ssh.auth %q (want %q or %q); re-run 'pmox init'",
+			exitcode.ErrUserInput, r.URL, ns.Auth, config.AuthPassword, config.AuthKey)
 	}
 	return nil
 }

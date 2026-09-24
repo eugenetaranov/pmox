@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,6 +100,9 @@ func TestResolve_NameAmbiguous(t *testing.T) {
 	if !strings.Contains(msg, "[104 107]") {
 		t.Errorf("vmids not sorted: %v", err)
 	}
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("err = %v, want errors.Is ErrAmbiguous", err)
+	}
 }
 
 func TestResolve_NameNotFound(t *testing.T) {
@@ -110,6 +114,9 @@ func TestResolve_NameNotFound(t *testing.T) {
 	if !strings.Contains(err.Error(), `VM "ghost" not found`) {
 		t.Errorf("err = %v", err)
 	}
+	if !errors.Is(err, pveclient.ErrNotFound) {
+		t.Errorf("err = %v, want errors.Is pveclient.ErrNotFound", err)
+	}
 }
 
 func TestResolve_VMIDNotFound(t *testing.T) {
@@ -120,5 +127,23 @@ func TestResolve_VMIDNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "VM 999 not found") {
 		t.Errorf("err = %v", err)
+	}
+	if !errors.Is(err, pveclient.ErrNotFound) {
+		t.Errorf("err = %v, want errors.Is pveclient.ErrNotFound", err)
+	}
+}
+
+func TestRefRequirePMOXTag(t *testing.T) {
+	tagged := &Ref{VMID: 1, Name: "a", Tags: "pmox"}
+	untagged := &Ref{VMID: 2, Name: "b", Tags: "prod"}
+	if err := tagged.RequirePMOXTag("delete", false); err != nil {
+		t.Errorf("tagged: %v", err)
+	}
+	if err := untagged.RequirePMOXTag("delete", true); err != nil {
+		t.Errorf("untagged+force: %v", err)
+	}
+	err := untagged.RequirePMOXTag("delete", false)
+	if err == nil || !strings.Contains(err.Error(), `refusing to delete VM "b" (vmid 2)`) {
+		t.Errorf("untagged: err = %v", err)
 	}
 }

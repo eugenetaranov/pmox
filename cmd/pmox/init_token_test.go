@@ -44,7 +44,7 @@ func TestGenerateTokenSuccess(t *testing.T) {
 	defer srv.Close()
 
 	p := &fakePrompter{inputs: []string{"root@pam", "pmox"}, secrets: []string{"pw"}}
-	tokenID, secret, err := generateToken(context.Background(), p, srv.URL, false)
+	tokenID, secret, err := generateToken(context.Background(), p, srv.URL, false, "")
 	if err != nil {
 		t.Fatalf("generateToken: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestGenerateTokenCollisionReprompts(t *testing.T) {
 	defer srv.Close()
 
 	p := &fakePrompter{inputs: []string{"root@pam", "pmox", "pmox-laptop"}, secrets: []string{"pw"}}
-	tokenID, secret, err := generateToken(context.Background(), p, srv.URL, false)
+	tokenID, secret, err := generateToken(context.Background(), p, srv.URL, false, "")
 	if err != nil {
 		t.Fatalf("generateToken: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestAcquireTokenGenerateRoute(t *testing.T) {
 
 	// Selector picks "generate"; then login user + token name; password via secrets.
 	p := &fakePrompter{inputs: []string{"root@pam", "pmox"}, secrets: []string{"pw"}}
-	tokenID, secret, err := acquireToken(context.Background(), p, srv.URL, false)
+	tokenID, secret, err := acquireToken(context.Background(), p, srv.URL, false, "")
 	if err != nil {
 		t.Fatalf("acquireToken: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestAcquireTokenPasteRoute(t *testing.T) {
 
 	// Selector picks "paste" → prompt token id then secret.
 	p := &fakePrompter{inputs: []string{"root@pam!existing"}, secrets: []string{"tok-secret"}}
-	tokenID, secret, err := acquireToken(context.Background(), p, "https://unused", false)
+	tokenID, secret, err := acquireToken(context.Background(), p, "https://unused", false, "")
 	if err != nil {
 		t.Fatalf("acquireToken: %v", err)
 	}

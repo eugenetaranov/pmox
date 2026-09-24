@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrNotInstalled is returned when the tack binary is not on PATH.
@@ -80,21 +81,38 @@ func Args(o Options) []string {
 	return args
 }
 
+// waitDelay caps how long Wait blocks after tack exits (or ctx is
+// cancelled) while a descendant still holds stdout/stderr open, so a
+// backgrounded child can't hang pmox.
+const waitDelay = 500 * time.Millisecond
+
+// Command validates o and returns a ready-to-run `tack run` command with
+// the process environment inherited and WaitDelay set. Callers wire
+// stdio. It returns ErrNotInstalled if tack is absent.
+func Command(ctx context.Context, o Options) (*exec.Cmd, error) {
+	if err := Available(); err != nil {
+		return nil, err
+	}
+	if o.Playbook == "" {
+		return nil, fmt.Errorf("tack: no playbook specified")
+	}
+	if o.IP == "" {
+		return nil, fmt.Errorf("tack: no target host specified")
+	}
+	cmd := exec.CommandContext(ctx, "tack", Args(o)...)
+	cmd.Env = os.Environ()
+	cmd.WaitDelay = waitDelay
+	return cmd, nil
+}
+
 // Run executes `tack run` with the given options, wiring stdio through so
 // tack's own plan/apply confirmation is visible to (and driven by) the
 // user. It returns ErrNotInstalled if tack is absent.
 func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writer) error {
-	if err := Available(); err != nil {
+	cmd, err := Command(ctx, o)
+	if err != nil {
 		return err
 	}
-	if o.Playbook == "" {
-		return fmt.Errorf("tack: no playbook specified")
-	}
-	if o.IP == "" {
-		return fmt.Errorf("tack: no target host specified")
-	}
-	cmd := exec.CommandContext(ctx, "tack", Args(o)...)
-	cmd.Env = os.Environ()
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

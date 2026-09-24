@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -80,9 +78,7 @@ func runGetContexts(cmd *cobra.Command) error {
 		for _, c := range contexts {
 			out.Contexts = append(out.Contexts, row{c.Name, c.URL, c.Current})
 		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		return printJSON(w, out)
 	}
 
 	if len(contexts) == 0 {
@@ -230,9 +226,6 @@ func newDeleteContextCmd() *cobra.Command {
 		Args:    exactArgs(1, "pmox config delete-context <name>", "pmox config delete-context lab"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err

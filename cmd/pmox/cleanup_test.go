@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 )
 
@@ -42,23 +46,9 @@ func TestSnippetStoragesFor(t *testing.T) {
 	}
 }
 
-func TestKnownHostToken(t *testing.T) {
-	cases := map[string]string{
-		"192.168.0.60 ssh-ed25519 AAAA":     "192.168.0.60",
-		"[192.168.0.60]:22 ssh-rsa BBBB":    "192.168.0.60",
-		"host.lan,10.0.0.1 ssh-ed25519 C":   "host.lan",
-		"":                                  "",
-	}
-	for in, want := range cases {
-		if got := knownHostToken(in); got != want {
-			t.Errorf("knownHostToken(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestLocalMountItems_DeadRecordAndOrphanLog(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := mountStateDir()
+	dir := testMountStateDir(t)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -146,5 +136,62 @@ func TestStaleKnownHostItems(t *testing.T) {
 	}
 	if !strings.Contains(string(after), "192.168.0.99") {
 		t.Error("live pin must be kept")
+	}
+}
+
+func TestReportCleanup_JSONApplyReportsFailures(t *testing.T) {
+	orig := outputMode
+	outputMode = "json"
+	t.Cleanup(func() { outputMode = orig })
+
+	items := []cleanupItem{
+		{Category: "log", Detail: "ok", apply: func() error { return nil }},
+		{Category: "log", Detail: "bad", apply: func() error { return errors.New("permission denied") }},
+	}
+	cmd := newCleanupCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	err := reportCleanup(cmd, items, true)
+	if err == nil || !strings.Contains(err.Error(), "removed 1 of 2 item(s); 1 failed") {
+		t.Fatalf("err = %v, want partial-removal error", err)
+	}
+	if exitcode.From(err) == exitcode.ExitOK {
+		t.Error("partial failure must exit non-zero")
+	}
+	var got struct {
+		Applied bool `json:"applied"`
+		Total   int  `json:"total"`
+		Failed  int  `json:"failed"`
+		Items   []struct {
+			Detail string `json:"detail"`
+			Error  string `json:"error"`
+		} `json:"items"`
+	}
+	if jerr := json.Unmarshal(out.Bytes(), &got); jerr != nil {
+		t.Fatalf("output is not JSON: %v\n%s", jerr, out.String())
+	}
+	if !got.Applied || got.Total != 2 || got.Failed != 1 {
+		t.Errorf("applied/total/failed = %v/%d/%d, want true/2/1", got.Applied, got.Total, got.Failed)
+	}
+	if got.Items[0].Error != "" || got.Items[1].Error != "permission denied" {
+		t.Errorf("per-item errors = %q, %q", got.Items[0].Error, got.Items[1].Error)
+	}
+}
+
+func TestReportCleanup_JSONApplySuccess(t *testing.T) {
+	orig := outputMode
+	outputMode = "json"
+	t.Cleanup(func() { outputMode = orig })
+
+	items := []cleanupItem{{Category: "log", Detail: "ok", apply: func() error { return nil }}}
+	cmd := newCleanupCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := reportCleanup(cmd, items, true); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(out.String(), `"error"`) {
+		t.Errorf("successful item should omit error: %s", out.String())
 	}
 }

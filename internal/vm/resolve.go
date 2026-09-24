@@ -5,6 +5,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -36,7 +37,7 @@ func Resolve(ctx context.Context, c *pveclient.Client, arg string) (*Ref, error)
 				return refFrom(r), nil
 			}
 		}
-		return nil, fmt.Errorf("VM %d not found", n)
+		return nil, notFound(fmt.Sprintf("VM %d not found", n))
 	}
 
 	var matches []pveclient.Resource
@@ -47,7 +48,7 @@ func Resolve(ctx context.Context, c *pveclient.Client, arg string) (*Ref, error)
 	}
 	switch len(matches) {
 	case 0:
-		return nil, fmt.Errorf("VM %q not found", arg)
+		return nil, notFound(fmt.Sprintf("VM %q not found", arg))
 	case 1:
 		return refFrom(matches[0]), nil
 	default:
@@ -56,8 +57,39 @@ func Resolve(ctx context.Context, c *pveclient.Client, arg string) (*Ref, error)
 			vmids[i] = m.VMID
 		}
 		sort.Ints(vmids)
-		return nil, fmt.Errorf("multiple VMs named %q: vmids %v — pass the VMID instead", arg, vmids)
+		return nil, &sentinelError{
+			msg:      fmt.Sprintf("multiple VMs named %q: vmids %v — pass the VMID instead", arg, vmids),
+			sentinel: ErrAmbiguous,
+		}
 	}
+}
+
+// ErrAmbiguous is wrapped by Resolve when a name matches more than one
+// VM. Resolve's not-found errors wrap pveclient.ErrNotFound.
+var ErrAmbiguous = errors.New("ambiguous VM name")
+
+// sentinelError keeps a human-facing message while letting errors.Is
+// match a sentinel that the message doesn't repeat.
+type sentinelError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *sentinelError) Error() string { return e.msg }
+func (e *sentinelError) Unwrap() error { return e.sentinel }
+
+func notFound(msg string) error {
+	return &sentinelError{msg: msg, sentinel: pveclient.ErrNotFound}
+}
+
+// RequirePMOXTag returns an error unless r carries the `pmox` tag or
+// force is set. verb completes "refusing to <verb> VM ...", e.g.
+// "delete" or "connect to".
+func (r *Ref) RequirePMOXTag(verb string, force bool) error {
+	if force || HasPMOXTag(r.Tags) {
+		return nil
+	}
+	return fmt.Errorf("refusing to %s VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", verb, r.Name, r.VMID)
 }
 
 func refFrom(r pveclient.Resource) *Ref {

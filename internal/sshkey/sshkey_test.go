@@ -62,3 +62,21 @@ func TestGenerateNoClobber(t *testing.T) {
 		t.Errorf("existing key was modified: %q", got)
 	}
 }
+
+func TestGenerateNoClobberPub(t *testing.T) {
+	dir := t.TempDir()
+	priv := filepath.Join(dir, "k")
+	if err := os.WriteFile(priv+".pub", []byte("stray pub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(priv, "x"); err == nil {
+		t.Fatal("want error when .pub already exists")
+	}
+	if got, _ := os.ReadFile(priv + ".pub"); string(got) != "stray pub" {
+		t.Errorf("existing .pub was modified: %q", got)
+	}
+	// No half state: the private key written first is cleaned up.
+	if _, err := os.Stat(priv); !os.IsNotExist(err) {
+		t.Errorf("private key left behind: %v", err)
+	}
+}

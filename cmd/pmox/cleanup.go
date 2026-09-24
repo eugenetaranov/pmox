@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,12 +17,13 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 // snippetFileRe matches a pmox-owned cloud-init snippet and captures its
@@ -35,7 +34,9 @@ var snippetFileRe = regexp.MustCompile(`(?:^|/)pmox-(\d+)-user-data\.yaml$`)
 type cleanupItem struct {
 	Category string `json:"category"`
 	Detail   string `json:"detail"`
-	apply    func() error
+	// Error is set (JSON output only) when --apply failed to remove it.
+	Error string `json:"error,omitempty"`
+	apply func() error
 }
 
 func newCleanupCmd() *cobra.Command {
@@ -182,9 +183,6 @@ func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[
 
 func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -201,7 +199,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	for _, url := range cfg.ServerURLs() {
 		srv := cfg.Servers[url]
 		label := contextLabelFor(cfg, url)
-		client, cerr := cleanupClient(url, srv)
+		client, cerr := cleanupClient(ctx, url, srv)
 		if cerr != nil {
 			fmt.Fprintf(ew, "cleanup: skipping context %s: %v\n", label, cerr)
 			ipsComplete = false
@@ -229,7 +227,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 					apply:    func() error { return deleteTemplate(ctx, c, node, vmid) },
 				})
 			}
-			if !vm.HasPMOXTag(r.Tags) || r.Status != "running" {
+			if !vm.HasPMOXTag(r.Tags) || !r.IsRunning() {
 				continue
 			}
 			ifaces, aerr := client.AgentNetwork(ctx, r.Node, r.VMID)
@@ -237,7 +235,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 				ipsComplete = false // can't confirm this VM's IP → don't risk pruning its pin
 				continue
 			}
-			if ip := launch.PickIPv4(ifaces); ip != "" {
+			if ip := vmwait.PickIPv4(ifaces); ip != "" {
 				liveIPs[ip] = true
 			}
 		}
@@ -408,7 +406,11 @@ func cloudInitItems(cfg *config.Config) []cleanupItem {
 // whose VMID no longer exists on a reachable server. Entries for servers
 // that could not be listed this run are left alone.
 func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, reachableURLs map[string]bool) []cleanupItem {
-	entries, err := tackprofile.All(tackStateDir())
+	stateDir, err := tackStateDir()
+	if err != nil {
+		return nil
+	}
+	entries, err := tackprofile.All(stateDir)
 	if err != nil {
 		return nil
 	}
@@ -431,7 +433,7 @@ func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, re
 		items = append(items, cleanupItem{
 			Category: "tack-profile",
 			Detail:   fmt.Sprintf("%s vmid %d → profile %q", contextLabelFor(cfg, ee.ServerURL), ee.VMID, ee.Profile),
-			apply:    func() error { return tackprofile.Delete(tackStateDir(), ee.ServerURL, ee.VMID) },
+			apply:    func() error { return tackprofile.Delete(stateDir, ee.ServerURL, ee.VMID) },
 		})
 	}
 	return items
@@ -441,7 +443,7 @@ func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, re
 // longer in the config. Keychain entries are not enumerable and are out of
 // scope (handled at removal time).
 func secretItems(cfg *config.Config) []cleanupItem {
-	if credstore.ActiveBackend() != "file" {
+	if credstore.ActiveBackend() != credstore.BackendFile {
 		return nil
 	}
 	urls, err := credstore.FileStoreURLs()
@@ -458,16 +460,7 @@ func secretItems(cfg *config.Config) []cleanupItem {
 			Category: "secret",
 			Detail:   "orphaned secret for " + uu,
 			apply: func() error {
-				for _, rmErr := range []error{
-					credstore.Remove(uu),
-					credstore.RemoveNodeSSHPassword(uu),
-					credstore.RemoveNodeSSHKeyPassphrase(uu),
-				} {
-					if rmErr != nil && !errors.Is(rmErr, credstore.ErrNotFound) {
-						return rmErr
-					}
-				}
-				return nil
+				return credstore.RemoveAll(uu)
 			},
 		})
 	}
@@ -506,15 +499,21 @@ func sshKeyItems(cfg *config.Config) []cleanupItem {
 	}}
 }
 
-// cleanupClient builds a PVE client for a configured server, pulling its
-// secret from the keychain. Used to scan every context, not just the
-// resolved one.
-func cleanupClient(url string, srv *config.Server) (*pveclient.Client, error) {
+// cleanupClient builds a TLS-pinned PVE client for a configured server,
+// pulling its secret from the keychain. Used to scan every context, not
+// just the resolved one, so it is read-only: it never saves a pin, and a
+// server whose certificate no longer matches its stored pin is refused
+// (the caller skips it with a warning).
+func cleanupClient(ctx context.Context, url string, srv *config.Server) (*pveclient.Client, error) {
 	secret, err := credstore.Get(url)
 	if err != nil {
 		return nil, err
 	}
-	return pveclient.New(url, srv.TokenID, secret, srv.Insecure), nil
+	pin, err := checkTLSPin(ctx, io.Discard, nil, url, srv, pinReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	return newAPIClient(url, srv, secret, pin), nil
 }
 
 // contextLabelFor returns the context name for a URL (for readable output).
@@ -544,7 +543,10 @@ func snippetStoragesFor(srv *config.Server) []string {
 // localMountItems finds dead mount records (and their logs) plus orphaned
 // log files under the mount state dir.
 func localMountItems() []cleanupItem {
-	stateDir := mountStateDir()
+	stateDir, err := mount.StateDir()
+	if err != nil {
+		return nil
+	}
 	records, _ := mount.List(stateDir)
 	// Every log that belongs to a record (live or dead) is handled via its
 	// record, so it must not also be flagged as an orphan.
@@ -554,7 +556,7 @@ func localMountItems() []cleanupItem {
 		if rec.LogPath != "" {
 			recordLogs[rec.LogPath] = true
 		}
-		if mount.Alive(rec.PID) && !mount.LooksReused(rec.PID) {
+		if rec.Live() {
 			continue
 		}
 		r := rec
@@ -615,7 +617,7 @@ func staleKnownHostItems(liveIPs map[string]bool, complete bool, ew io.Writer) [
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		host := knownHostToken(trimmed)
+		host := pvessh.KnownHostToken(trimmed)
 		if host != "" && !liveIPs[host] {
 			staleHosts = append(staleHosts, host)
 		}
@@ -630,56 +632,11 @@ func staleKnownHostItems(liveIPs map[string]bool, complete bool, ew io.Writer) [
 	}}
 }
 
-// knownHostToken returns the host field of a known_hosts line, stripping
-// any [host]:port bracketing and a trailing :port.
-func knownHostToken(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return ""
-	}
-	h := fields[0]
-	// Take the first host if it's a comma-list, and strip [..]:port form.
-	if i := strings.IndexByte(h, ','); i >= 0 {
-		h = h[:i]
-	}
-	h = strings.TrimPrefix(h, "[")
-	h = strings.ReplaceAll(h, "]", "")
-	if i := strings.LastIndex(h, ":"); i >= 0 && !strings.Contains(h[i+1:], ":") {
-		// strip a trailing :port (but not part of an IPv6 literal)
-		if _, err := strconv.Atoi(h[i+1:]); err == nil {
-			h = h[:i]
-		}
-	}
-	return h
-}
-
 // pruneKnownHosts rewrites the known_hosts file, dropping lines whose host
 // is not in liveIPs.
 func pruneKnownHosts(path string, liveIPs map[string]bool) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var kept []string
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#") {
-			kept = append(kept, line)
-			continue
-		}
-		if host := knownHostToken(trimmed); host != "" && !liveIPs[host] {
-			continue // stale — drop
-		}
-		kept = append(kept, line)
-	}
-	out := strings.Join(kept, "\n")
-	if out != "" {
-		out += "\n"
-	}
-	return os.WriteFile(path, []byte(out), 0o600)
+	_, err := pvessh.KnownHostsPrune(path, func(host string) bool { return liveIPs[host] })
+	return err
 }
 
 // reportCleanup prints (and, with apply, performs) the planned removals.
@@ -687,19 +644,25 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 	w := cmd.OutOrStdout()
 
 	if outputMode == "json" {
+		var failed int
+		if apply {
+			for i := range items {
+				if err := items[i].apply(); err != nil {
+					failed++
+					items[i].Error = err.Error()
+				}
+			}
+		}
 		out := struct {
 			Applied bool          `json:"applied"`
 			Items   []cleanupItem `json:"items"`
 			Total   int           `json:"total"`
-		}{Applied: apply, Items: items, Total: len(items)}
-		if apply {
-			for _, it := range items {
-				_ = it.apply()
-			}
+			Failed  int           `json:"failed"`
+		}{Applied: apply, Items: items, Total: len(items), Failed: failed}
+		if err := printJSON(w, out); err != nil {
+			return err
 		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		return removalError(len(items), failed)
 	}
 
 	if len(items) == 0 {
@@ -735,9 +698,17 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "failed to remove %q: %v\n", it.Detail, err)
 		}
 	}
-	if failed > 0 {
-		return fmt.Errorf("removed %d of %d item(s); %d failed", len(items)-failed, len(items), failed)
+	if err := removalError(len(items), failed); err != nil {
+		return err
 	}
 	fmt.Fprintf(w, "\nRemoved %d item(s).\n", len(items))
 	return nil
+}
+
+// removalError reports a partial --apply, or nil when nothing failed.
+func removalError(total, failed int) error {
+	if failed == 0 {
+		return nil
+	}
+	return fmt.Errorf("removed %d of %d item(s); %d failed", total-failed, total, failed)
 }

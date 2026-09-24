@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/paths"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tack"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -66,9 +67,6 @@ Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 
 func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	if f.initCfg {
 		return runApplyInit(cmd)
@@ -78,8 +76,12 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	// point at an explicit playbook, guide them to --init before touching
 	// tack, the cluster, or a picker.
 	if f.playbook == "" {
-		if _, err := os.Stat(tackDir()); os.IsNotExist(err) {
-			return fmt.Errorf("%w: no tack playbooks yet — run 'pmox apply --init' to scaffold %s", exitcode.ErrUserInput, tackDir())
+		dir, err := tackDir()
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			return fmt.Errorf("%w: no tack playbooks yet — run 'pmox apply --init' to scaffold %s", exitcode.ErrUserInput, dir)
 		}
 	}
 
@@ -111,8 +113,8 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	if err != nil {
 		return err
 	}
-	if !f.force && !vm.HasPMOXTag(ref.Tags) {
-		return fmt.Errorf("refusing to apply to VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	if err := ref.RequirePMOXTag("apply to", f.force); err != nil {
+		return err
 	}
 
 	playbook, recordProfile, err := resolvePlaybook(f, profileArg, resolved.URL, ref.VMID)
@@ -148,7 +150,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	// Remember the profile only when one was explicitly named and the run
 	// succeeded; an explicit --playbook never updates the memory.
 	if recordProfile != "" && !f.check {
-		if err := tackprofile.Set(tackStateDir(), resolved.URL, ref.VMID, recordProfile); err != nil {
+		if err := rememberTackProfile(resolved.URL, ref.VMID, recordProfile); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remember profile: %v\n", err)
 		}
 	}
@@ -158,16 +160,24 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 // resolvePlaybook implements the resolution ladder. It returns the
 // playbook path and the profile name to remember ("" = do not record).
 func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (playbook, recordProfile string, err error) {
-	dir := tackDir()
+	if f.playbook != "" {
+		return sshkey.ExpandHome(f.playbook), "", nil
+	}
+	dir, err := tackDir()
+	if err != nil {
+		return "", "", err
+	}
 
 	switch {
-	case f.playbook != "":
-		return expandHome(f.playbook), "", nil
 	case profileArg != "":
 		playbook = filepath.Join(dir, profileArg+".yaml")
 		recordProfile = profileArg
 	default:
-		if prof, ok, _ := tackprofile.Get(tackStateDir(), serverURL, vmid); ok {
+		stateDir, err := tackStateDir()
+		if err != nil {
+			return "", "", err
+		}
+		if prof, ok, _ := tackprofile.Get(stateDir, serverURL, vmid); ok {
 			playbook = filepath.Join(dir, prof+".yaml")
 		} else {
 			playbook = filepath.Join(dir, "playbook.yaml")
@@ -180,8 +190,21 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 	return playbook, recordProfile, nil
 }
 
+// rememberTackProfile records profile as the last-used tack profile for
+// the VM.
+func rememberTackProfile(serverURL string, vmid int, profile string) error {
+	stateDir, err := tackStateDir()
+	if err != nil {
+		return err
+	}
+	return tackprofile.Set(stateDir, serverURL, vmid, profile)
+}
+
 func runApplyInit(cmd *cobra.Command) error {
-	dir := tackDir()
+	dir, err := tackDir()
+	if err != nil {
+		return err
+	}
 	rolesDir := filepath.Join(dir, "roles")
 	if err := os.MkdirAll(rolesDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", rolesDir, err)
@@ -216,20 +239,20 @@ tasks:
 `
 
 // tackDir returns ~/.config/pmox/tack (XDG-aware).
-func tackDir() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "tack")
+func tackDir() (string, error) {
+	dir, err := paths.ConfigDir()
+	if err != nil {
+		return "", err
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "pmox", "tack")
+	return filepath.Join(dir, "tack"), nil
 }
 
 // tackStateDir returns ~/.local/state/pmox/tack (XDG-aware), mirroring the
 // mount state dir.
-func tackStateDir() string {
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "tack")
+func tackStateDir() (string, error) {
+	dir, err := paths.StateDir()
+	if err != nil {
+		return "", err
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "pmox", "tack")
+	return filepath.Join(dir, "tack"), nil
 }

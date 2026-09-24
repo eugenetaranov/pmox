@@ -1,4 +1,4 @@
-package launch
+package vmwait
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
-
-const pollInterval = 1 * time.Second
 
 // skipPrefixes are interface name prefixes that PickIPv4 filters out
 // on the first pass. They correspond to loopback, container runtimes,
@@ -26,8 +24,9 @@ var skipPrefixes = []string{"lo", "docker", "br-", "veth", "cni", "virbr", "tun"
 // successful AgentNetwork call) and "agent answered but no usable
 // IPv4" (typically DHCP/netplan trouble inside the guest), so the
 // caller can tell a missing guest-agent install apart from a guest
-// networking failure.
-func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, timeout time.Duration) (string, error) {
+// networking failure. Both wrap pveclient.ErrTimeout.
+func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, timeout time.Duration, opts ...Option) (string, error) {
+	cfg := newConfig(opts)
 	deadline := time.Now().Add(timeout)
 	var agentAnswered bool
 	for {
@@ -50,14 +49,14 @@ func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, 
 		}
 		if time.Now().After(deadline) {
 			if agentAnswered {
-				return "", fmt.Errorf("VM %d has no usable IPv4 address after %s; guest agent is running but DHCP/network configuration in the guest did not come up (check /etc/netplan and systemd-networkd on the VM)", vmid, timeout)
+				return "", fmt.Errorf("%w: VM %d has no usable IPv4 address after %s; guest agent is running but DHCP/network configuration in the guest did not come up (check /etc/netplan and systemd-networkd on the VM)", pveclient.ErrTimeout, vmid, timeout)
 			}
-			return "", fmt.Errorf("qemu-guest-agent not responding on VM %d; install qemu-guest-agent in your template and re-run launch", vmid)
+			return "", fmt.Errorf("%w: qemu-guest-agent not responding on VM %d; install qemu-guest-agent in your template and re-run launch", pveclient.ErrTimeout, vmid)
 		}
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-time.After(pollInterval):
+		case <-time.After(cfg.pollInterval):
 		}
 	}
 }

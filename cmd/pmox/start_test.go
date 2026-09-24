@@ -53,7 +53,7 @@ func TestStart_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	f.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(web1AgentNet))
 
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		return &vm.Ref{VMID: 104}, nil
 	}
 	t.Cleanup(func() { vmPickFn = orig })

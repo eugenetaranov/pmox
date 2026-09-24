@@ -79,14 +79,14 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 
 	cfg := &Config{Servers: map[string]*Server{}}
 	cfg.AddServer("https://pve.home.lan:8006/api2/json", &Server{
-		TokenID:  "pmox@pve!homelab",
-		Node:     "pve1",
-		Template: "9000",
-		Storage:  "local-lvm",
-		Bridge:   "vmbr0",
-		SSHPubkey:   "~/.ssh/id_ed25519.pub",
-		User:     "ubuntu",
-		Insecure: true,
+		TokenID:   "pmox@pve!homelab",
+		Node:      "pve1",
+		Template:  "9000",
+		Storage:   "local-lvm",
+		Bridge:    "vmbr0",
+		SSHPubkey: "~/.ssh/id_ed25519.pub",
+		User:      "ubuntu",
+		Insecure:  true,
 	})
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -267,5 +267,84 @@ func TestRemoveServer(t *testing.T) {
 	}
 	if cfg.RemoveServer("x") {
 		t.Error("want false for missing server")
+	}
+}
+
+func TestValidateNodeSSHAuth(t *testing.T) {
+	cases := []struct {
+		auth    NodeSSHAuth
+		wantErr bool
+	}{
+		{"", false},
+		{AuthPassword, false},
+		{AuthKey, false},
+		{"passwrd", true},
+	}
+	for _, tc := range cases {
+		cfg := &Config{Servers: map[string]*Server{
+			"https://pve.lan:8006/api2/json":   {NodeSSH: &NodeSSH{Auth: tc.auth}},
+			"https://other.lan:8006/api2/json": {},
+		}}
+		if err := cfg.Validate(); (err != nil) != tc.wantErr {
+			t.Errorf("Validate(auth=%q) = %v, wantErr %v", tc.auth, err, tc.wantErr)
+		}
+	}
+}
+
+func TestLoadAcceptsUnknownNodeSSHAuth(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := filepath.Join(dir, "pmox", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	yml := "servers:\n  https://pve.lan:8006/api2/json:\n    token_id: t@pam!x\n    node_ssh:\n      user: root\n      auth: bogus\n"
+	if err := os.WriteFile(p, []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Load stays lenient so commands that never use node SSH keep
+	// working; Validate still reports the bad value.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "node_ssh.auth") {
+		t.Fatalf("Validate: want node_ssh.auth error, got %v", err)
+	}
+}
+
+func TestNodeSSHEffectiveUser(t *testing.T) {
+	var nilNS *NodeSSH
+	if got := nilNS.EffectiveUser(); got != "root" {
+		t.Errorf("nil EffectiveUser = %q, want root", got)
+	}
+	if got := (&NodeSSH{}).EffectiveUser(); got != "root" {
+		t.Errorf("empty EffectiveUser = %q, want root", got)
+	}
+	if got := (&NodeSSH{User: "admin"}).EffectiveUser(); got != "admin" {
+		t.Errorf("EffectiveUser = %q, want admin", got)
+	}
+}
+
+func TestSaveTightensExistingDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p, _ := Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	cfg := &Config{Servers: map[string]*Server{}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fi, err := os.Stat(filepath.Dir(p))
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("dir mode = %o, want 0700 (pre-existing dir not tightened)", got)
 	}
 }

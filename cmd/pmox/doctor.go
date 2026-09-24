@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/snippet"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -35,6 +35,7 @@ type doctorError struct{ code int }
 
 func (e *doctorError) Error() string { return "doctor found blocking issues" }
 func (e *doctorError) ExitCode() int { return e.code }
+func (e *doctorError) SelfReported() {}
 
 func newDoctorCmd() *cobra.Command {
 	f := &doctorFlags{}
@@ -76,9 +77,6 @@ type doctorDeps struct {
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	parent := cmd.Context()
-	if parent == nil {
-		parent = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
 
@@ -91,16 +89,17 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		return finishDoctor(cmd, f, cl, "", "")
 	}
 	cl.Pass("config.file", "config", "config loaded")
+	if err := cfg.Validate(); err != nil {
+		cl.Warn("config.valid", "config", "config has values pmox cannot act on: "+err.Error(), "run 'pmox init' to reconfigure the affected server")
+	}
 
 	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Context:  contextFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
+		Cfg:        cfg,
+		Flag:       serverFlag,
+		Context:    contextFlag,
+		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
+		Pick:       nil, // doctor never prompts: no interactive picker
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
@@ -116,7 +115,9 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		sshDial: func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
 	}
 
-	client := pveclient.New(resolved.URL, resolved.Server.TokenID, resolved.Secret, resolved.Server.Insecure)
+	// doctor never pins (that's a mutation), but a pin that is already
+	// stored is enforced on the API connection like every other command.
+	client := newAPIClient(resolved.URL, resolved.Server, resolved.Secret, storedPin(resolved.Server))
 	executeDoctor(ctx, cl, client, resolved, deps, f.strict)
 	return finishDoctor(cmd, f, cl, resolved.URL, resolved.Source)
 }
@@ -127,9 +128,7 @@ func finishDoctor(cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serv
 	report := cl.Finalize(serverURL, source, f.strict)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
+		if err := printJSON(cmd.OutOrStdout(), report); err != nil {
 			return err
 		}
 	} else {
@@ -222,7 +221,7 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 // the plaintext file fallback is in use.
 func doctorSecretBackend(cl *doctor.Checklist) {
 	switch credstore.ActiveBackend() {
-	case "keychain":
+	case credstore.BackendKeychain:
 		cl.Pass("config.secret_store", "config", "secrets stored in the OS keychain")
 	default:
 		cl.Warn("config.secret_store", "config",
@@ -242,7 +241,7 @@ func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
 	if err != nil {
 		return
 	}
-	pub, err := os.ReadFile(expandHome(sshPubkeyPath))
+	pub, err := os.ReadFile(sshkey.ExpandHome(sshPubkeyPath))
 	if err != nil {
 		cl.Warn("config.cloud_init_key", "config", "cannot read ssh_pubkey "+sshPubkeyPath+": "+err.Error(), "fix 'ssh_pubkey' in config or re-run 'pmox init'")
 		return
@@ -287,13 +286,13 @@ func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		cl.Info("config.tls_pin", "config", "could not fetch the certificate to compare against the pin: "+err.Error())
 		return
 	}
-	if fp == srv.TLSPinSHA256 {
+	if pveclient.NormalizePin(fp) == pveclient.NormalizePin(srv.TLSPinSHA256) {
 		cl.Pass("config.tls_pin", "config", "TLS certificate matches the pinned fingerprint")
 		return
 	}
 	cl.Fail("config.tls_pin", "config",
 		"TLS certificate CHANGED from the pinned fingerprint (possible MITM)",
-		"if you deliberately replaced the cert, clear tls_pin_sha256 in config (or re-run 'pmox init')",
+		"if you deliberately replaced the cert, re-run 'pmox init' interactively to review and re-pin it, or clear tls_pin_sha256 in config",
 		exitcode.ExitNetworkError)
 }
 
@@ -323,7 +322,13 @@ func doctorTack(cl *doctor.Checklist, deps doctorDeps) {
 			"install tack from https://github.com/tackhq/tack (optional)")
 		return
 	}
-	pb := filepath.Join(tackDir(), "playbook.yaml")
+	dir, err := tackDir()
+	if err != nil {
+		cl.Warn("tooling.tack", "tooling", "tack available but the tack config dir cannot be resolved: "+err.Error(),
+			"set HOME or XDG_CONFIG_HOME")
+		return
+	}
+	pb := filepath.Join(dir, "playbook.yaml")
 	if _, err := os.Stat(pb); err != nil {
 		cl.Warn("tooling.tack", "tooling", "tack available but no default playbook at "+pb,
 			"run 'pmox apply --init' to scaffold one, or use a profile/--playbook")
@@ -349,10 +354,10 @@ func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient
 		cl.Fail("api.reachable", "api", "TLS verification failed: "+err.Error(), "install a trusted cert, or set insecure: true if this is a self-signed homelab cert", exitcode.ExitNetworkError)
 		return false
 	case errors.Is(err, pveclient.ErrNetwork), errors.Is(err, context.DeadlineExceeded):
-		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), "check the host is up and port 8006 is reachable (firewall?)", errExitCode(err))
+		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), "check the host is up and port 8006 is reachable (firewall?)", exitcode.From(err))
 		return false
 	default:
-		cl.Fail("api.reachable", "api", "API error: "+err.Error(), "", errExitCode(err))
+		cl.Fail("api.reachable", "api", "API error: "+err.Error(), "", exitcode.From(err))
 		return false
 	}
 }
@@ -385,7 +390,7 @@ func doctorNode(ctx context.Context, cl *doctor.Checklist, client *pveclient.Cli
 	}
 	resources, err := client.ClusterResources(ctx, "node")
 	if err != nil {
-		cl.Fail("api.node", "api", "could not list cluster nodes: "+err.Error(), "", errExitCode(err))
+		cl.Fail("api.node", "api", "could not list cluster nodes: "+err.Error(), "", exitcode.From(err))
 		return false
 	}
 	for _, r := range resources {
@@ -423,7 +428,7 @@ func doctorBridge(ctx context.Context, cl *doctor.Checklist, client *pveclient.C
 func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, node, diskStorage, snippetStorage string) {
 	storages, err := client.ListStorage(ctx, node)
 	if err != nil {
-		cl.Fail("storage.disk", "storage", "could not list storage: "+err.Error(), "", errExitCode(err))
+		cl.Fail("storage.disk", "storage", "could not list storage: "+err.Error(), "", exitcode.From(err))
 		return
 	}
 
@@ -451,7 +456,7 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 			if alt := firstSnippetStorage(storages); alt != "" && alt != snippetStorage {
 				hint += ", or use --snippet-storage " + alt + " (already snippet-capable)"
 			}
-			cl.Fail("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' does not support 'snippets'", hint, errExitCode(err))
+			cl.Fail("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' does not support 'snippets'", hint, exitcode.From(err))
 		} else {
 			cl.Pass("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' supports 'snippets'")
 		}
@@ -459,12 +464,8 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 }
 
 func firstSnippetStorage(storages []pveclient.Storage) string {
-	for _, s := range storages {
-		for _, c := range strings.Split(s.Content, ",") {
-			if strings.TrimSpace(c) == "snippets" {
-				return s.Storage
-			}
-		}
+	if m := pveclient.FilterStorage(storages, pveclient.Storage.SupportsSnippets); len(m) > 0 {
+		return m[0].Storage
 	}
 	return ""
 }
@@ -475,7 +476,7 @@ func doctorTemplate(ctx context.Context, cl *doctor.Checklist, client *pveclient
 	}
 	id, _, err := resolveTemplate(ctx, client, node, template)
 	if err != nil {
-		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", errExitCode(err))
+		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
 		return
 	}
 
@@ -516,13 +517,17 @@ func agentEnabled(v string) bool {
 }
 
 func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, deps doctorDeps) {
+	if resolved.NodeSSHErr != nil {
+		cl.Fail("ssh.configured", "ssh", "node SSH misconfigured: "+resolved.NodeSSHErr.Error(), "run 'pmox init' to reconfigure node SSH", exitcode.ExitUserError)
+		return
+	}
 	if !resolved.HasNodeSSH() {
 		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
 		return
 	}
-	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+resolved.NodeSSHAuth+" auth)")
+	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+string(resolved.NodeSSHAuth)+" auth)")
 
-	host, err := sshHostFromURL(resolved.URL)
+	host, err := pvessh.HostFromURL(resolved.URL)
 	if err != nil {
 		cl.Warn("ssh.known_host", "ssh", "could not derive SSH host: "+err.Error(), "")
 		return
@@ -539,30 +544,10 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 	cl.Pass("ssh.known_host", "ssh", "node host key is pinned")
 
 	if err := deps.sshDial(ctx); err != nil {
-		cl.Fail("ssh.dial", "ssh", "SSH+SFTP to "+host+" failed: "+err.Error(), "check node SSH credentials and that sshd is reachable on the node", errExitCode(err))
+		cl.Fail("ssh.dial", "ssh", "SSH+SFTP to "+host+" failed: "+err.Error(), "check node SSH credentials and that sshd is reachable on the node", exitcode.From(err))
 		return
 	}
 	cl.Pass("ssh.dial", "ssh", "SSH+SFTP dial ok")
-}
-
-// errExitCode maps a probe error to the closest exit-code category.
-func errExitCode(err error) int {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return exitcode.ExitTimeout
-	case errors.Is(err, pveclient.ErrUnauthorized):
-		return exitcode.ExitUnauthorized
-	case errors.Is(err, pveclient.ErrTLSVerificationFailed), errors.Is(err, pveclient.ErrNetwork):
-		return exitcode.ExitNetworkError
-	case errors.Is(err, pveclient.ErrTimeout):
-		return exitcode.ExitTimeout
-	case errors.Is(err, pveclient.ErrNotFound):
-		return exitcode.ExitNotFound
-	case errors.Is(err, pveclient.ErrAPIError):
-		return exitcode.ExitAPIError
-	default:
-		return exitcode.ExitGeneric
-	}
 }
 
 // knownHostsHasEntry reports whether the pmox-managed known_hosts file
@@ -572,53 +557,18 @@ func knownHostsHasEntry(host string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	bare := strings.TrimSuffix(host, ":22")
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		tok := line
-		if i := strings.IndexAny(line, " \t"); i > 0 {
-			tok = line[:i]
-		}
-		for _, h := range strings.Split(tok, ",") {
-			if h == host || h == bare {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	return pvessh.KnownHostsHas(path, host)
 }
 
 // doctorSSHDial opens a strict (never-prompting) SSH+SFTP session to the
 // node and closes it, returning any dial error. It uses the pmox-managed
 // known_hosts and never falls back to insecure or interactive pinning.
 func doctorSSHDial(ctx context.Context, resolved *server.Resolved) error {
-	kh, err := pvessh.KnownHostsPath()
+	cfg, err := resolved.NodeSSHConfig(false)
 	if err != nil {
 		return err
 	}
-	host, err := sshHostFromURL(resolved.URL)
-	if err != nil {
-		return err
-	}
-	c, err := pvessh.Dial(ctx, pvessh.Config{
-		Host:       host,
-		User:       resolved.NodeSSHUser,
-		Password:   resolved.NodeSSHPassword,
-		KeyPath:    resolved.NodeSSHKeyPath,
-		KeyPass:    resolved.NodeSSHKeyPassphrase,
-		Insecure:   false,
-		KnownHosts: kh,
-	})
+	c, err := pvessh.Dial(ctx, cfg)
 	if err != nil {
 		return err
 	}

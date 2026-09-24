@@ -28,7 +28,7 @@ type Responder func(w http.ResponseWriter, r *http.Request, body string)
 
 // Server is a stateful fake PVE server.
 type Server struct {
-	t   *testing.T
+	t   testing.TB
 	srv *httptest.Server
 
 	mu       sync.Mutex
@@ -38,15 +38,15 @@ type Server struct {
 }
 
 type routeHandler struct {
-	method string // empty matches any method
-	match  string // path substring
+	method string            // empty matches any method
+	match  func(string) bool // path predicate
 	fn     Responder
 }
 
 // New creates a running httptest.Server. It is closed automatically via
 // t.Cleanup. By default, an unhandled request fails the test and returns
 // 404; call SetFallback to customize.
-func New(t *testing.T) *Server {
+func New(t testing.TB) *Server {
 	t.Helper()
 	s := &Server{t: t}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -68,11 +68,62 @@ func (s *Server) Client() *pveclient.Client {
 
 // Handle registers a responder for any request whose method matches and
 // whose path contains the given substring. Handlers are matched in the
-// order they were registered — first match wins.
+// order they were registered — first match wins. Substring matching is
+// loose ("/qemu/100" also matches "/qemu/1000"); prefer HandleExact or
+// HandlePattern when that matters.
 func (s *Server) Handle(method, pathContains string, fn Responder) {
+	s.add(method, func(p string) bool { return strings.Contains(p, pathContains) }, fn)
+}
+
+// HandleExact registers a responder for requests whose method matches
+// (empty means any) and whose path equals path exactly.
+func (s *Server) HandleExact(method, path string, fn Responder) {
+	s.add(method, func(p string) bool { return p == path }, fn)
+}
+
+// HandlePattern registers a responder using a net/http ServeMux-style
+// pattern: "[METHOD ]/path/{name}/..." where {name} matches exactly one
+// path segment and a trailing {name...} matches the remainder (zero or
+// more segments). Literal segments must match exactly, e.g.
+//
+//	s.HandlePattern("GET /nodes/{node}/qemu/100/config", ...)
+//
+// matches /nodes/pve/qemu/100/config but not .../qemu/1000/config.
+func (s *Server) HandlePattern(pattern string, fn Responder) {
+	method, path := "", pattern
+	if i := strings.IndexByte(pattern, ' '); i >= 0 {
+		method, path = pattern[:i], strings.TrimSpace(pattern[i+1:])
+	}
+	want := strings.Split(path, "/")
+	s.add(method, func(p string) bool { return matchSegments(want, strings.Split(p, "/")) }, fn)
+}
+
+// matchSegments reports whether got matches the pattern segments want.
+func matchSegments(want, got []string) bool {
+	for i, w := range want {
+		if strings.HasPrefix(w, "{") && strings.HasSuffix(w, "...}") {
+			return i == len(want)-1
+		}
+		if i >= len(got) {
+			return false
+		}
+		if strings.HasPrefix(w, "{") && strings.HasSuffix(w, "}") {
+			if got[i] == "" {
+				return false
+			}
+			continue
+		}
+		if w != got[i] {
+			return false
+		}
+	}
+	return len(got) == len(want)
+}
+
+func (s *Server) add(method string, match func(string) bool, fn Responder) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.handlers = append(s.handlers, routeHandler{method: method, match: pathContains, fn: fn})
+	s.handlers = append(s.handlers, routeHandler{method: method, match: match, fn: fn})
 }
 
 // SetFallback registers a responder invoked when no Handle rule matches.
@@ -152,7 +203,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if h.method != "" && h.method != r.Method {
 			continue
 		}
-		if !strings.Contains(r.URL.Path, h.match) {
+		if !h.match(r.URL.Path) {
 			continue
 		}
 		h.fn(w, r, bs)

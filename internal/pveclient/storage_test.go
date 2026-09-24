@@ -272,4 +272,3 @@ func TestDownloadURL_Unauthorized(t *testing.T) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 }
-

@@ -59,16 +59,16 @@ func TestFinalize_FailWithZeroExitFallsBackToGeneric(t *testing.T) {
 
 func TestMissingPrivileges(t *testing.T) {
 	perms := pveclient.Permissions{
-		"/":     {"Sys.Audit": true},
-		"/vms":  {"VM.Audit": true, "VM.Allocate": true},
+		"/":              {"Sys.Audit": true},
+		"/vms":           {"VM.Audit": true, "VM.Allocate": true},
 		"/storage/local": {"Datastore.AllocateSpace": true},
 	}
 	required := []RequiredPriv{
-		{"Sys.Audit", "/", ""},                              // present at /
-		{"VM.Audit", "/vms", ""},                            // present at /vms
-		{"VM.Clone", "/vms", ""},                            // MISSING
-		{"Datastore.AllocateSpace", "/storage/local", ""},   // present
-		{"Datastore.Audit", "/storage", ""},                 // MISSING
+		{"Sys.Audit", "/", ""},                            // present at /
+		{"VM.Audit", "/vms", ""},                          // present at /vms
+		{"VM.Clone", "/vms", ""},                          // MISSING
+		{"Datastore.AllocateSpace", "/storage/local", ""}, // present
+		{"Datastore.Audit", "/storage", ""},               // MISSING
 	}
 	missing := MissingPrivileges(perms, required)
 	if len(missing) != 2 {

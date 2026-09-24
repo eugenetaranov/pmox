@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -272,4 +273,33 @@ func TestDoctorTack(t *testing.T) {
 			t.Errorf("want pass when tack + playbook present, got %q", cl.StatusOf("tooling.tack"))
 		}
 	})
+}
+
+func TestDoctorTLSPin_ComparesNormalizedPins(t *testing.T) {
+	withStubbedFingerprint(t, "aabbcc", nil)
+	resolved := doctorResolved("https://pve.lan:8006/api2/json")
+	resolved.Server.Insecure = true
+	resolved.Server.TLSPinSHA256 = "sha256:AA:BB:CC"
+	cl := &doctor.Checklist{}
+	doctorTLSMode(context.Background(), cl, resolved, false)
+	if got := cl.StatusOf("config.tls_pin"); got != doctor.Pass {
+		t.Errorf("tls_pin = %q, want pass for an equivalent pin spelling", got)
+	}
+
+	withStubbedFingerprint(t, "ddeeff", nil)
+	cl = &doctor.Checklist{}
+	doctorTLSMode(context.Background(), cl, resolved, false)
+	if got := cl.StatusOf("config.tls_pin"); got != doctor.Fail {
+		t.Errorf("tls_pin = %q, want fail for a different cert", got)
+	}
+}
+
+func TestDoctorNodeSSH_UnusableBlockFails(t *testing.T) {
+	resolved := doctorResolved("https://pve.lan:8006/api2/json")
+	resolved.NodeSSHErr = errors.New(`unknown node_ssh.auth "kerberos"`)
+	cl := &doctor.Checklist{}
+	doctorNodeSSH(context.Background(), cl, resolved, healthyDeps())
+	if got := cl.StatusOf("ssh.configured"); got != doctor.Fail {
+		t.Errorf("ssh.configured = %q, want fail", got)
+	}
 }

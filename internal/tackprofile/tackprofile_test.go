@@ -55,8 +55,18 @@ func TestCorruptStateIsIgnored(t *testing.T) {
 	if _, ok, err := Get(dir, "https://a:8006/api2/json", 1); ok || err != nil {
 		t.Errorf("corrupt state: ok=%v err=%v, want false/nil", ok, err)
 	}
-	// And Set still works (overwrites corrupt file).
+	// The corrupt file is preserved aside rather than overwritten later.
+	if got, err := os.ReadFile(filepath.Join(dir, "profiles.json.corrupt")); err != nil || string(got) != "{not json" {
+		t.Errorf("corrupt file not moved aside: %q, %v", got, err)
+	}
+	// And Set still works (starts a fresh state file).
 	if err := Set(dir, "https://a:8006/api2/json", 1, "x"); err != nil {
 		t.Fatalf("Set after corrupt: %v", err)
+	}
+	if v, ok, _ := Get(dir, "https://a:8006/api2/json", 1); !ok || v != "x" {
+		t.Errorf("Get after Set = %q, %v", v, ok)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "profiles.json.corrupt")); err != nil {
+		t.Errorf("corrupt backup lost after Set: %v", err)
 	}
 }

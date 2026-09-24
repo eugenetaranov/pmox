@@ -61,7 +61,7 @@ func TestStop_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	f := newStopFake(t)
 
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		return &vm.Ref{VMID: 104}, nil
 	}
 	t.Cleanup(func() { vmPickFn = orig })

@@ -19,6 +19,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 )
 
 // Built-in defaults applied when neither the CLI flag nor the resolved
@@ -52,6 +53,10 @@ type launchFlags struct {
 	tack           string
 	ansible        string
 	strictHooks    bool
+	// bridgeSet is true when --bridge was passed explicitly. Only then is
+	// the new VM's net0 rewritten; the configured default bridge is for
+	// create-template, and a launched/cloned VM keeps its source's NIC.
+	bridgeSet bool
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -102,7 +107,7 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
 	cmd.Flags().StringVar(&f.node, "node", "", "cluster node to launch on (falls back to configured default)")
-	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
+	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the VM's net0 (default: keep the template's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	addHookFlags(cmd, f)
@@ -145,7 +150,11 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 	case f.tack != "":
 		path := f.tack
 		if path == tackDefaultSentinel {
-			path = filepath.Join(tackDir(), "playbook.yaml")
+			dir, err := tackDir()
+			if err != nil {
+				return nil, err
+			}
+			path = filepath.Join(dir, "playbook.yaml")
 		}
 		return &hook.TackHook{ConfigPath: path}, nil
 	case f.ansible != "":
@@ -161,17 +170,24 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 	user = firstNonEmpty(srv.User, defaultUser)
 	if srv.SSHPubkey != "" {
-		sshKey = expandHome(strings.TrimSuffix(srv.SSHPubkey, ".pub"))
+		sshKey = sshkey.ExpandHome(strings.TrimSuffix(srv.SSHPubkey, ".pub"))
 	}
 	return user, sshKey
 }
 
+// applyHookOptions sets the post-create hook fields shared by launch and
+// clone: the hook itself, --strict-hooks, SSH host-key policy, and the
+// SSH user/key hooks connect with.
+func applyHookOptions(opts *launch.Options, hk hook.Hook, f *launchFlags, srv *config.Server, sshInsecure bool) {
+	opts.Hook = hk
+	opts.StrictHooks = f.strictHooks
+	opts.SSHInsecure = sshInsecure
+	opts.User, opts.SSHKeyPath = hookSSHDefaults(srv)
+}
 
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	f.bridgeSet = cmd.Flags().Changed("bridge")
 
 	// Resolve hook flags before any config load / server resolution /
 	// PVE call so --post-create + --tack (etc.) fail immediately with
@@ -182,26 +198,22 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 
 	// buildClient loads config, resolves the server, emits the D-T4
-	// verbose log line, and warns on insecure TLS — all before any PVE
-	// API call. The returned client is discarded here because
-	// resolveLaunchOptions builds its own from the resolved record.
-	_, resolved, err := buildClient(ctx, cmd)
+	// verbose log line, and runs the TLS pin check — all before any PVE
+	// API call.
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
 
-	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
+	if err := resolved.RequireNodeSSH("launch"); err != nil {
+		return err
 	}
 
-	opts, err := resolveLaunchOptions(ctx, name, f, resolved, cmd.ErrOrStderr())
+	opts, err := resolveLaunchOptions(ctx, client, name, f, resolved, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	opts.Hook = hk
-	opts.StrictHooks = f.strictHooks
-	opts.SSHInsecure = SSHInsecure()
-	opts.User, opts.SSHKeyPath = hookSSHDefaults(resolved.Server)
+	applyHookOptions(&opts, hk, f, resolved.Server, SSHInsecure())
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)
@@ -243,9 +255,8 @@ func newSnippetUploader(resolved *server.Resolved) (func(ctx context.Context, st
 
 // resolveLaunchOptions layers flag > configured-default > built-in and
 // produces the launch.Options the state machine consumes.
-func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
+func resolveLaunchOptions(ctx context.Context, client *pveclient.Client, name string, f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
 	srv := resolved.Server
-	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
@@ -256,10 +267,32 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	if templateStr == "" {
 		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template or run 'pmox init'", exitcode.ErrNotFound)
 	}
-	templateID, templateName, err := resolveTemplate(ctx, client, node, templateStr)
+	templateID, _, err := resolveTemplate(ctx, client, node, templateStr)
 	if err != nil {
 		return launch.Options{}, err
 	}
+
+	opts, err := resolveVMSpec(f, resolved, stderr)
+	if err != nil {
+		return launch.Options{}, err
+	}
+	opts.Client = client
+	opts.Node = node
+	opts.Name = name
+	opts.TemplateID = templateID
+	return opts, nil
+}
+
+// resolveVMSpec resolves the per-VM resources shared by launch and
+// clone — CPU, memory, disk, storage, snippet storage, bridge, wait
+// budget and cloud-init path — layering flag > configured default >
+// built-in. The bridge is the exception: it comes only from an explicit
+// --bridge (see explicitBridge). The returned Options has
+// Client/Node/Name/TemplateID unset.
+// An empty storage is rejected: it would otherwise reach PVE as
+// ide2=":cloudinit".
+func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
+	srv := resolved.Server
 
 	storage := firstNonEmpty(f.storage, srv.Storage)
 	if storage == "" {
@@ -280,30 +313,35 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	if mem == 0 {
 		mem = defaultMemMB
 	}
-	disk := firstNonEmpty(f.disk, defaultDiskSize)
 	wait := f.wait
 	if wait == 0 {
 		wait = defaultWait
 	}
 
 	return launch.Options{
-		Client:         client,
-		Node:           node,
-		Name:           name,
-		TemplateName:   templateName,
-		TemplateID:     templateID,
 		CPU:            cpu,
 		MemMB:          mem,
-		DiskSize:       disk,
+		DiskSize:       firstNonEmpty(f.disk, defaultDiskSize),
 		Storage:        storage,
 		SnippetStorage: snippetStorage,
-		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
+		Bridge:         explicitBridge(f),
 		Wait:           wait,
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
 		Stderr:         stderr,
-		Verbose:        verbose,
 	}, nil
+}
+
+// explicitBridge returns the bridge to force onto the new VM's net0: the
+// --bridge value when the flag was passed, else "" (keep the NIC cloned
+// from the template/source VM). The configured server bridge is never
+// applied here — it would silently move clones off their source bridge
+// and needs VM.Config.Network on every launch.
+func explicitBridge(f *launchFlags) string {
+	if !f.bridgeSet {
+		return ""
+	}
+	return f.bridge
 }
 
 // resolveSnippetStorage layers --snippet-storage > server.SnippetStorage
@@ -345,14 +383,7 @@ func resolveTemplate(ctx context.Context, client *pveclient.Client, node, raw st
 // readSSHKey resolves a path (expanding ~) and returns the file
 // contents trimmed of leading/trailing whitespace.
 func readSSHKey(path string) (string, error) {
-	expanded := path
-	if strings.HasPrefix(expanded, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			expanded = filepath.Join(home, expanded[2:])
-		}
-	}
-	data, err := os.ReadFile(expanded)
+	data, err := os.ReadFile(sshkey.ExpandHome(path))
 	if err != nil {
 		return "", fmt.Errorf("read ssh key %s: %w", path, err)
 	}

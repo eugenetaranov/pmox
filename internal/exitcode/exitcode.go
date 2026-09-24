@@ -8,6 +8,8 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 const (
@@ -21,21 +23,19 @@ const (
 	ExitTimeout      = 7
 	ExitHook         = 8
 	ExitWarnings     = 9 // doctor --strict: all checks passed but warnings present
+
+	// ExitInterrupted is the conventional 128+SIGINT code, used when the
+	// user aborts an interactive prompt (Ctrl-C) or interrupts pmox.
+	ExitInterrupted = 130
 )
 
-// codeCarrier is implemented by errors that already know their exact
-// process exit code (e.g. `pmox doctor`, which picks the code of the
-// worst failing check). From honors it before any sentinel matching.
-type codeCarrier interface {
+// Coder is implemented by errors that already know their exact process
+// exit code (e.g. `pmox doctor`, which picks the code of the worst
+// failing check, or a hook failure returning ExitHook). From honors it,
+// anywhere in the wrap chain, before any sentinel matching. Packages
+// that cannot import exitcode can satisfy it structurally.
+type Coder interface {
 	ExitCode() int
-}
-
-// hookErrMarker is implemented by *launch.HookError. Using a local
-// interface lets From detect hook failures via errors.As without
-// importing internal/launch (which would create a cycle since launch
-// imports other internal packages).
-type hookErrMarker interface {
-	IsHookError()
 }
 
 // ErrUserInput is a sentinel for interactive-prompt input errors
@@ -52,15 +52,13 @@ func From(err error) int {
 	if err == nil {
 		return ExitOK
 	}
-	var carrier codeCarrier
+	var carrier Coder
 	if errors.As(err, &carrier) {
 		return carrier.ExitCode()
 	}
-	var hookErr hookErrMarker
-	if errors.As(err, &hookErr) {
-		return ExitHook
-	}
 	switch {
+	case errors.Is(err, tui.ErrAborted):
+		return ExitInterrupted
 	case errors.Is(err, pveclient.ErrUnauthorized):
 		return ExitUnauthorized
 	case errors.Is(err, pveclient.ErrNotFound):
@@ -78,6 +76,8 @@ func From(err error) int {
 	case errors.Is(err, pveclient.ErrTLSVerificationFailed):
 		return ExitNetworkError
 	case errors.Is(err, ErrUserInput):
+		return ExitUserError
+	case errors.Is(err, vm.ErrAmbiguous):
 		return ExitUserError
 	case errors.Is(err, ErrNotFound):
 		return ExitNotFound

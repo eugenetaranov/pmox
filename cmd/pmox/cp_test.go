@@ -35,13 +35,13 @@ func TestParseRemoteArg(t *testing.T) {
 
 func TestResolveTransferArgs(t *testing.T) {
 	tests := []struct {
-		name          string
-		args          [2]string
-		wantLocal     string
-		wantVMRef     string
-		wantRemote    string
-		wantLocalSrc  bool
-		wantErr       string
+		name         string
+		args         [2]string
+		wantLocal    string
+		wantVMRef    string
+		wantRemote   string
+		wantLocalSrc bool
+		wantErr      string
 	}{
 		{
 			name:         "local to VM",
@@ -120,21 +120,21 @@ func TestBuildScpArgs(t *testing.T) {
 			wantSuffix: []string{"ubuntu@10.0.0.1:/var/log/syslog", "./logs/"},
 		},
 		{
-			name:       "recursive flag",
-			target:     &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""},
-			localPath:  "./dir/",
-			remotePath: "/opt/",
-			localIsSrc: true,
-			recursive:  true,
+			name:         "recursive flag",
+			target:       &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""},
+			localPath:    "./dir/",
+			remotePath:   "/opt/",
+			localIsSrc:   true,
+			recursive:    true,
 			wantContains: []string{"-r"},
 		},
 		{
-			name:       "extra flags",
-			target:     &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""},
-			localPath:  "./big.tar",
-			remotePath: "/tmp/",
-			localIsSrc: true,
-			extra:      []string{"-l", "1000"},
+			name:         "extra flags",
+			target:       &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""},
+			localPath:    "./big.tar",
+			remotePath:   "/tmp/",
+			localIsSrc:   true,
+			extra:        []string{"-l", "1000"},
 			wantContains: []string{"-l", "1000"},
 		},
 	}
@@ -166,14 +166,14 @@ func TestBuildScpArgs_NoKeyFlag(t *testing.T) {
 
 func TestBuildRsyncArgs(t *testing.T) {
 	tests := []struct {
-		name         string
-		target       *sshTarget
-		localPath    string
-		remotePath   string
-		localIsSrc   bool
-		extra        []string
-		wantE        string
-		wantSuffix   []string
+		name       string
+		target     *sshTarget
+		localPath  string
+		remotePath string
+		localIsSrc bool
+		extra      []string
+		wantE      string
+		wantSuffix []string
 	}{
 		{
 			name:       "local to VM with key",

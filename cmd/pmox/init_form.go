@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"syscall"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -32,6 +32,7 @@ type resolvedConn struct {
 	tokenID   string
 	secret    string
 	insecure  bool
+	pin       string // stored TLS pin enforced on this connection ("" = none)
 	client    *pveclient.Client
 }
 
@@ -133,7 +134,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			case "confirm":
 				return persistServer(p, cfg, persistInput{
 					canonical: conn.canonical, tokenID: conn.tokenID, secret: conn.secret, insecure: conn.insecure,
-					node: defs.node, template: defs.template, storage: defs.storage,
+					pin: conn.pin, node: defs.node, template: defs.template, storage: defs.storage,
 					snippetStorage: defs.snippetStorage, bridge: defs.bridge,
 					sshKey: acc.sshKey, user: acc.user, nodeSSH: acc.nodeSSH,
 					sshPassword: acc.sshPassword, sshKeyPass: acc.sshKeyPass,
@@ -158,6 +159,7 @@ var errOverwriteDeclined = errors.New("overwrite declined")
 // before any server-side mutation (token creation), so declining never
 // leaves an orphaned token on the Proxmox host.
 func establishConnection(ctx context.Context, p prompter, cfg *config.Config, prev connInputs, confirmed map[string]bool) (resolvedConn, connInputs, error) {
+	repinned := map[string]string{} // canonical URL -> re-pin accepted this run
 	for {
 		in, err := runConnectionForm(p, prev)
 		if err != nil {
@@ -186,12 +188,22 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 		if !ok {
 			continue // probeURL already reported why
 		}
+		// Re-configuring a pinned server: authenticate every credentialed
+		// connection against the stored pin (empty on a first-ever
+		// connect), or a changed certificate the user explicitly re-pinned.
+		pin, perr := resolveInitPin(ctx, p, cfg, canonical, insecure, repinned[canonical])
+		if perr != nil {
+			return resolvedConn{}, in, perr
+		}
+		if pin != storedPinFor(cfg, canonical) {
+			repinned[canonical] = pin
+		}
 
 		var tokenID, secret string
 		if in.tokenSource == "paste" {
 			tokenID, secret = strings.TrimSpace(in.tokenID), in.tokenSecret
 		} else {
-			tokenID, secret, err = generateTokenFromInputs(ctx, p, canonical, insecure, in)
+			tokenID, secret, err = generateTokenFromInputs(ctx, p, canonical, insecure, pin, in)
 			if err != nil {
 				if errors.Is(err, pveclient.ErrTokenExists) {
 					p.Errf("a token named %q already exists; choose another name\n", in.tokenName)
@@ -202,24 +214,24 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 			}
 		}
 
-		insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure)
+		insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure, pin)
 		if err != nil {
 			p.Errf("credential check failed: %v\n", err)
 			continue
 		}
 		return resolvedConn{
-			canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
-			client: pveclient.New(canonical, tokenID, secret, insecure),
+			canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure, pin: pin,
+			client: newInitClient(canonical, tokenID, secret, insecure, pin),
 		}, in, nil
 	}
 }
 
-func generateTokenFromInputs(ctx context.Context, p prompter, baseURL string, insecure bool, in connInputs) (string, string, error) {
-	ticket, err := pveclient.Login(ctx, baseURL, insecure, in.loginUser, in.password)
+func generateTokenFromInputs(ctx context.Context, p prompter, baseURL string, insecure bool, pin string, in connInputs) (string, string, error) {
+	issuer, err := setup.Login(ctx, baseURL, insecure, pin, in.loginUser, in.password)
 	if err != nil {
 		return "", "", err
 	}
-	full, secret, err := pveclient.CreateToken(ctx, baseURL, insecure, ticket, in.loginUser, in.tokenName)
+	full, secret, err := issuer.Create(ctx, in.tokenName)
 	if err != nil {
 		return "", "", err
 	}
@@ -278,18 +290,7 @@ func runConnectionForm(p prompter, prev connInputs) (connInputs, error) {
 // collectDefaults discovers and selects node/template/storage/snippet/bridge
 // (reusing the auto-selecting pickers).
 func collectDefaults(ctx context.Context, p prompter, conn resolvedConn, _ defaultsAnswers, _ bool) (defaultsAnswers, error) {
-	node := pickNode(ctx, p, conn.client)
-	if err := ctx.Err(); err != nil {
-		return defaultsAnswers{}, fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	template := pickTemplate(ctx, p, conn.client, node)
-	storage := pickStorage(ctx, p, conn.client, node)
-	snippet := pickSnippetStorage(ctx, p, conn.client, node)
-	bridge := pickBridge(ctx, p, conn.client, node)
-	if err := ctx.Err(); err != nil {
-		return defaultsAnswers{}, fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	return defaultsAnswers{node: node, template: template, storage: storage, snippetStorage: snippet, bridge: bridge}, nil
+	return discoverDefaults(ctx, p, conn.client)
 }
 
 // collectAccess gathers the SSH key, default user, and node SSH creds.
@@ -375,17 +376,9 @@ func printTabs(p prompter, active string) {
 	}
 }
 
-// runForm runs a huh form (themed), mapping a user abort to a clean
-// SIGINT-based exit.
+// runForm runs a huh form (themed), mapping a user abort to tui.ErrAborted.
 func runForm(f *huh.Form) error {
-	if err := f.WithTheme(tui.Theme()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-			return fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
-		}
-		return err
-	}
-	return nil
+	return tui.AbortErr(f.WithTheme(tui.Theme()).Run())
 }
 
 func validateNonEmpty(s string) error {

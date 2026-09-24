@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,9 +13,62 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
+	"github.com/eugenetaranov/pmox/internal/server"
 )
+
+// Clone shares resolveVMSpec with launch, so an unset storage is
+// rejected before any PVE call instead of producing ide2=":cloudinit".
+func TestClone_ResolveVMSpecRejectsEmptyStorage(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve"},
+		Secret: "s",
+	}
+	_, err := resolveVMSpec(&launchFlags{}, resolved, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("resolveVMSpec err=nil, want missing storage error")
+	}
+	if !errors.Is(err, exitcode.ErrNotFound) {
+		t.Errorf("err = %v, want exitcode.ErrNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "no storage configured") {
+		t.Errorf("err = %v, want 'no storage configured'", err)
+	}
+
+	// launch reports the identical error.
+	resolved.Server.Template = "9000"
+	_, lerr := resolveLaunchOptions(context.Background(), nil, "web1", &launchFlags{}, resolved, &bytes.Buffer{})
+	if lerr == nil || lerr.Error() != err.Error() {
+		t.Errorf("launch err = %v, want %v", lerr, err)
+	}
+}
+
+func TestResolveVMSpec_FlagsAndDefaults(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Bridge: "vmbr1", SnippetStorage: "local"},
+		Secret: "s",
+	}
+	opts, err := resolveVMSpec(&launchFlags{storage: "fast"}, resolved, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveVMSpec err: %v", err)
+	}
+	// The configured bridge is NOT applied: the VM keeps its source NIC.
+	if opts.Storage != "fast" || opts.SnippetStorage != "local" || opts.Bridge != "" {
+		t.Errorf("storage/snippet/bridge = %q/%q/%q", opts.Storage, opts.SnippetStorage, opts.Bridge)
+	}
+	if opts.CPU != defaultCPU || opts.MemMB != defaultMemMB || opts.DiskSize != defaultDiskSize || opts.Wait != defaultWait {
+		t.Errorf("defaults not applied: %+v", opts)
+	}
+}
 
 // writeCloneCI drops a valid cloud-init file in a tempdir so launch.Run
 // can read it during the clone test.
@@ -107,5 +162,88 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ip=10.0.0.7") {
 		t.Errorf("stdout missing ip: %q", out.String())
+	}
+}
+
+// Clone used to drop --ssh-insecure on the hook's SSH connection while
+// launch honored it; both now go through applyHookOptions.
+func TestApplyHookOptions_SetsSSHInsecure(t *testing.T) {
+	srv := &config.Server{User: "admin", SSHPubkey: "/keys/id_ed25519.pub"}
+	f := &launchFlags{strictHooks: true}
+	for _, insecure := range []bool{true, false} {
+		var opts launch.Options
+		applyHookOptions(&opts, nil, f, srv, insecure)
+		if opts.SSHInsecure != insecure {
+			t.Errorf("SSHInsecure = %v, want %v", opts.SSHInsecure, insecure)
+		}
+		if !opts.StrictHooks || opts.User != "admin" || opts.SSHKeyPath != "/keys/id_ed25519" {
+			t.Errorf("hook fields = strict:%v user:%q key:%q", opts.StrictHooks, opts.User, opts.SSHKeyPath)
+		}
+	}
+}
+
+// Only an explicit --bridge rewrites net0; the configured server bridge
+// (set by init for create-template) never does.
+func TestResolveVMSpec_BridgeOnlyFromExplicitFlag(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Storage: "local", Bridge: "vmbr1"},
+		Secret: "s",
+	}
+	cases := []struct {
+		name string
+		f    launchFlags
+		want string
+	}{
+		{"default ignores configured bridge", launchFlags{}, ""},
+		{"explicit --bridge", launchFlags{bridge: "vmbr9", bridgeSet: true}, "vmbr9"},
+		{"explicit --bridge equal to configured", launchFlags{bridge: "vmbr1", bridgeSet: true}, "vmbr1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := resolveVMSpec(&tc.f, resolved, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("resolveVMSpec: %v", err)
+			}
+			if opts.Bridge != tc.want {
+				t.Errorf("Bridge = %q, want %q", opts.Bridge, tc.want)
+			}
+		})
+	}
+}
+
+// launch and clone record whether --bridge was passed on the command line.
+func TestBridgeFlagChangedIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"unset", nil, false},
+		{"set", []string{"--bridge", "vmbr2"}, true},
+	} {
+		for cmdName, run := range map[string]func(cmd *cobra.Command, f *launchFlags) error{
+			"launch": func(cmd *cobra.Command, f *launchFlags) error { return runLaunch(cmd, "web1", f) },
+			"clone":  func(cmd *cobra.Command, f *launchFlags) error { return runClone(cmd, "src", "dst", f) },
+		} {
+			t.Run(cmdName+"/"+tc.name, func(t *testing.T) {
+				// No config: the run stops at server resolution, after
+				// the flag has been recorded.
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				f := &launchFlags{}
+				cmd := &cobra.Command{}
+				cmd.Flags().StringVar(&f.bridge, "bridge", "", "")
+				if err := cmd.ParseFlags(tc.args); err != nil {
+					t.Fatal(err)
+				}
+				cmd.SetContext(context.Background())
+				cmd.SetErr(&bytes.Buffer{})
+				_ = run(cmd, f)
+				if f.bridgeSet != tc.want {
+					t.Errorf("bridgeSet = %v, want %v", f.bridgeSet, tc.want)
+				}
+			})
+		}
 	}
 }

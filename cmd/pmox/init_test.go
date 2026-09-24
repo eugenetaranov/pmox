@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/charmbracelet/huh"
@@ -19,6 +22,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 func init() {
@@ -62,6 +66,10 @@ func (f *fakePrompter) Printf(format string, args ...interface{}) {
 func (f *fakePrompter) Errf(format string, args ...interface{}) {
 	fmt.Fprintf(&f.err, format, args...)
 }
+
+// In/Out feed host-key pinning a throwaway "yes"; tests stub the seam.
+func (f *fakePrompter) In() io.Reader  { return strings.NewReader("yes\n") }
+func (f *fakePrompter) Out() io.Writer { return io.Discard }
 
 func TestListEmpty(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -262,7 +270,7 @@ func TestValidateCredentialsStrictSuccess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -278,7 +286,7 @@ func TestValidateCredentialsTLSFallback(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -296,16 +304,53 @@ func TestValidateCredentialsUnauthorizedReturnsError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Errorf("want ErrUnauthorized, got %v", err)
+	}
+}
+
+// Re-running init against a server whose certificate is already pinned
+// must enforce that pin: a swapped certificate fails the handshake
+// before the token (or login password) is sent.
+func TestInitReconfigureEnforcesStoredPin(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"data":{"version":"8.2"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		srv.URL: {TokenID: "a@pam!x", Insecure: true, TLSPinSHA256: strings.Repeat("ab", 32)},
+	}}
+	pin := storedPinFor(cfg, srv.URL)
+	if pin == "" {
+		t.Fatal("storedPinFor returned no pin for a pinned insecure server")
+	}
+	if got := storedPinFor(cfg, "https://other:8006/api2/json"); got != "" {
+		t.Errorf("unknown server pin = %q, want empty (TOFU)", got)
+	}
+
+	p := &fakePrompter{}
+	if _, err := validateCredentials(context.Background(), p, srv.URL, "a@pam!x", "sekret", true, pin); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("validateCredentials: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if _, err := newInitClient(srv.URL, "a@pam!x", "sekret", true, pin).GetVersion(context.Background()); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("discovery client: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("server received %d request(s) despite pin mismatch", n)
 	}
 }
 
 func TestPickOneAutoSingleOption(t *testing.T) {
 	p := &fakePrompter{}
 	opts := []huh.Option[string]{huh.NewOption("pve (online)", "pve")}
-	got := pickOneAuto(p, "Default node", opts, "pve")
+	got, err := pickOneAuto(p, "Default node", opts, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "pve" {
 		t.Errorf("got %q, want pve", got)
 	}
@@ -316,7 +361,10 @@ func TestPickOneAutoSingleOption(t *testing.T) {
 
 func TestPickOneAutoEmptyUsesFallback(t *testing.T) {
 	p := &fakePrompter{}
-	got := pickOneAuto(p, "Default node", nil, "fallback-node")
+	got, err := pickOneAuto(p, "Default node", nil, "fallback-node")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "fallback-node" {
 		t.Errorf("got %q, want fallback-node", got)
 	}
@@ -352,32 +400,6 @@ func TestGenerateBootstrapKeyCreatesAndReuses(t *testing.T) {
 	}
 	if !strings.Contains(p2.out.String(), "reusing existing pmox key") {
 		t.Errorf("missing reuse message: %q", p2.out.String())
-	}
-}
-
-func TestResolveBrowsedKey(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "id_ed25519")
-	pub := priv + ".pub"
-	if err := os.WriteFile(pub, []byte("ssh-ed25519 AAAA x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(priv, []byte("PRIV"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Selecting the private key resolves to its .pub.
-	if got := resolveBrowsedKey(priv); got != pub {
-		t.Errorf("private→pub: got %q, want %q", got, pub)
-	}
-	// Selecting a .pub uses it directly.
-	if got := resolveBrowsedKey(pub); got != pub {
-		t.Errorf(".pub direct: got %q, want %q", got, pub)
-	}
-	// A lone file with no adjacent .pub is used as-is.
-	lone := filepath.Join(dir, "somekey")
-	if got := resolveBrowsedKey(lone); got != lone {
-		t.Errorf("lone: got %q, want %q", got, lone)
 	}
 }
 
@@ -495,7 +517,7 @@ func TestRegenCloudInit_MissingFile(t *testing.T) {
 	}
 
 	p := &fakePrompter{}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	path, _ := config.CloudInitPath(url)
@@ -527,7 +549,7 @@ func TestRegenCloudInit_Overwrite(t *testing.T) {
 	}
 
 	p := &fakePrompter{inputs: []string{"y"}}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	got, _ := os.ReadFile(path)
@@ -559,7 +581,7 @@ func TestRegenCloudInit_Abort(t *testing.T) {
 	}
 
 	p := &fakePrompter{inputs: []string{"n"}}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	got, _ := os.ReadFile(path)
@@ -599,7 +621,10 @@ func TestPickSnippetStorage_SingleMatch(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl,snippets"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local", got)
 	}
@@ -612,16 +637,19 @@ func TestPickSnippetStorage_MultiMatchUsesPicker(t *testing.T) {
 	prev := selectSnippetStorageFn
 	defer func() { selectSnippetStorageFn = prev }()
 	var gotTitle string
-	selectSnippetStorageFn = func(title string, _ []huh.Option[string], _ string) string {
+	selectSnippetStorageFn = func(title string, _ []huh.Option[string], _ string) (string, error) {
 		gotTitle = title
-		return "nfs-shared"
+		return "nfs-shared", nil
 	}
 	fc := &fakeSnippetClient{pools: []pveclient.Storage{
 		{Storage: "local", Type: "dir", Content: "iso,snippets"},
 		{Storage: "nfs-shared", Type: "nfs", Content: "snippets,backup"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "nfs-shared" {
 		t.Errorf("got %q, want nfs-shared", got)
 	}
@@ -636,14 +664,17 @@ func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl"},
 	}}
 	p := &fakePrompter{inputs: []string{"y"}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local", got)
 	}
 	if fc.updatedStorage != "local" {
 		t.Errorf("UpdateStorageContent storage = %q, want local", fc.updatedStorage)
 	}
-	if !containsString(fc.updatedContent, "snippets") || !containsString(fc.updatedContent, "iso") || !containsString(fc.updatedContent, "vztmpl") {
+	if !slices.Contains(fc.updatedContent, "snippets") || !slices.Contains(fc.updatedContent, "iso") || !slices.Contains(fc.updatedContent, "vztmpl") {
 		t.Errorf("updatedContent = %v, want includes iso, vztmpl, snippets", fc.updatedContent)
 	}
 }
@@ -653,7 +684,10 @@ func TestPickSnippetStorage_ZeroMatchEnableEnterDefaultsYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{""}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local (Enter defaults to yes)", got)
 	}
@@ -667,7 +701,10 @@ func TestPickSnippetStorage_ZeroMatchEnableNo(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{"n"}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "" {
 		t.Errorf("got %q, want empty (declined)", got)
 	}
@@ -684,11 +721,150 @@ func TestPickSnippetStorage_ZeroMatchNoCapableStorage(t *testing.T) {
 		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
 	}
 	if !strings.Contains(p.err.String(), "/etc/pve/storage.cfg") {
 		t.Errorf("missing manual remediation in stderr: %q", p.err.String())
+	}
+}
+
+// stubRepin stubs the certificate probe, interactivity and the re-pin
+// confirmation for resolveInitPin tests. It returns a pointer to the
+// number of times the confirmation was shown.
+func stubRepin(t *testing.T, fp string, fpErr error, interactive, answer bool) *int {
+	t.Helper()
+	withStubbedFingerprint(t, fp, fpErr)
+	origInteractive, origConfirm := interactiveFn, confirmRepinFn
+	asked := 0
+	interactiveFn = func() bool { return interactive }
+	confirmRepinFn = func(_ string, defaultYes bool) (bool, error) {
+		asked++
+		if defaultYes {
+			t.Error("re-pin confirmation must default to No")
+		}
+		return answer, nil
+	}
+	t.Cleanup(func() { interactiveFn, confirmRepinFn = origInteractive, origConfirm })
+	return &asked
+}
+
+func repinCfg(pin string) (*config.Config, string) {
+	url := "https://pve.home.lan:8006/api2/json"
+	return &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "a@pam!x", Insecure: true, TLSPinSHA256: pin},
+	}}, url
+}
+
+func TestResolveInitPin(t *testing.T) {
+	oldFP, newFP := strings.Repeat("aa", 32), strings.Repeat("bb", 32)
+
+	t.Run("matching cert keeps stored pin without asking", func(t *testing.T) {
+		asked := stubRepin(t, oldFP, nil, true, true)
+		cfg, url := repinCfg("SHA256:" + strings.ToUpper(oldFP))
+		pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, "")
+		if err != nil || pveclient.NormalizePin(pin) != oldFP || *asked != 0 {
+			t.Fatalf("pin, err, asked = %q, %v, %d", pin, err, *asked)
+		}
+	})
+	t.Run("no stored pin stays TOFU", func(t *testing.T) {
+		stubRepin(t, "", errors.New("must not be probed"), true, true)
+		cfg, url := repinCfg("")
+		if pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); pin != "" || err != nil {
+			t.Fatalf("pin, err = %q, %v", pin, err)
+		}
+	})
+	t.Run("unfetchable cert keeps enforcing stored pin", func(t *testing.T) {
+		stubRepin(t, "", errors.New("network down"), true, true)
+		cfg, url := repinCfg(oldFP)
+		if pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); pin != oldFP || err != nil {
+			t.Fatalf("pin, err = %q, %v", pin, err)
+		}
+	})
+	t.Run("changed cert, interactive, confirmed re-pins", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, true, true)
+		cfg, url := repinCfg(oldFP)
+		p := &fakePrompter{}
+		pin, err := resolveInitPin(context.Background(), p, cfg, url, true, "")
+		if err != nil || pin != newFP || *asked != 1 {
+			t.Fatalf("pin, err, asked = %q, %v, %d; want new fingerprint", pin, err, *asked)
+		}
+		if !strings.Contains(p.err.String(), oldFP) || !strings.Contains(p.err.String(), newFP) {
+			t.Errorf("both fingerprints must be shown, got %q", p.err.String())
+		}
+	})
+	t.Run("changed cert, interactive, declined aborts", func(t *testing.T) {
+		stubRepin(t, newFP, nil, true, false)
+		cfg, url := repinCfg(oldFP)
+		if _, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); !errors.Is(err, tui.ErrAborted) {
+			t.Fatalf("err = %v, want tui.ErrAborted", err)
+		}
+	})
+	t.Run("changed cert already accepted this run is not re-asked", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, true, false)
+		cfg, url := repinCfg(oldFP)
+		pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, newFP)
+		if err != nil || pin != newFP || *asked != 0 {
+			t.Fatalf("pin, err, asked = %q, %v, %d", pin, err, *asked)
+		}
+	})
+	t.Run("changed cert, non-interactive fails with how to re-pin", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, false, true)
+		cfg, url := repinCfg(oldFP)
+		_, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, "")
+		if !errors.Is(err, pveclient.ErrTLSVerificationFailed) || *asked != 0 {
+			t.Fatalf("err, asked = %v, %d; want ErrTLSVerificationFailed without asking", err, *asked)
+		}
+		for _, want := range []string{oldFP, newFP, "interactive", "tls_pin_sha256"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error missing %q: %v", want, err)
+			}
+		}
+	})
+}
+
+// The linear flow checks a changed certificate before prompting for (and
+// so before sending) any credential.
+func TestInitLinearChangedCertFailsBeforeCredentials(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stubProbe(t, false, pveclient.ReachTLSUntrusted, pveclient.Reachable)
+	stubRepin(t, strings.Repeat("bb", 32), nil, false, true)
+	cfg, url := repinCfg(strings.Repeat("aa", 32))
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakePrompter{inputs: []string{url, "y"}}
+	err := runInteractiveLinear(context.Background(), p)
+	if !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Fatalf("err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if p.idx != 2 || p.sidx != 0 {
+		t.Errorf("prompted past the pin check: inputs used %d, secrets used %d", p.idx, p.sidx)
+	}
+}
+
+// A re-pinned fingerprint is what persistServer stores.
+func TestPersistServerSavesRepinnedFingerprint(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	newFP := strings.Repeat("bb", 32)
+	cfg, url := repinCfg(strings.Repeat("aa", 32))
+	err := persistServer(&fakePrompter{}, cfg, persistInput{
+		canonical: url, tokenID: "a@pam!x", secret: "s", insecure: true, pin: newFP,
+		sshKey: writePubKey(t, "ssh-ed25519 AAAA test@host\n"), user: "ubuntu",
+	})
+	if err != nil {
+		t.Fatalf("persistServer: %v", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Servers[url].TLSPinSHA256; got != newFP {
+		t.Errorf("saved pin = %q, want %q", got, newFP)
 	}
 }

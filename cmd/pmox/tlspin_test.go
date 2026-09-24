@@ -19,6 +19,44 @@ func withStubbedFingerprint(t *testing.T, fp string, err error) {
 	t.Cleanup(func() { fetchCertFingerprint = orig })
 }
 
+// checkTOFU runs checkTLSPin in the default (pin-and-save) mode.
+func checkTOFU(ctx context.Context, w *bytes.Buffer, cfg *config.Config, r *server.Resolved) error {
+	_, err := checkTLSPin(ctx, w, cfg, r.URL, r.Server, pinTOFU)
+	return err
+}
+
+func TestCheckTLSPin_ReturnsPinToEnforce(t *testing.T) {
+	withStubbedFingerprint(t, "samefp", nil)
+	cfg, resolved := pinCfg(t, "samefp")
+	pin, err := checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved.URL, resolved.Server, pinTOFU)
+	if err != nil || pin != "samefp" {
+		t.Fatalf("pin, err = %q, %v; want samefp, nil", pin, err)
+	}
+
+	// A failed probe still enforces the stored pin.
+	withStubbedFingerprint(t, "", errors.New("network down"))
+	pin, err = checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved.URL, resolved.Server, pinTOFU)
+	if err != nil || pin != "samefp" {
+		t.Fatalf("probe failure: pin, err = %q, %v; want samefp, nil", pin, err)
+	}
+}
+
+func TestCheckTLSPin_ReadOnlyNeverSavesOrPrints(t *testing.T) {
+	withStubbedFingerprint(t, "fresh", nil)
+	cfg, resolved := pinCfg(t, "")
+	var buf bytes.Buffer
+	pin, err := checkTLSPin(context.Background(), &buf, cfg, resolved.URL, resolved.Server, pinReadOnly)
+	if err != nil || pin != "fresh" {
+		t.Fatalf("pin, err = %q, %v; want fresh, nil", pin, err)
+	}
+	if resolved.Server.TLSPinSHA256 != "" {
+		t.Errorf("read-only mode stored a pin: %q", resolved.Server.TLSPinSHA256)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("read-only mode printed %q", buf.String())
+	}
+}
+
 // pinCfg builds a config with one insecure server (optionally pre-pinned)
 // under a temp XDG dir so Save writes somewhere disposable.
 func pinCfg(t *testing.T, pin string) (*config.Config, *server.Resolved) {
@@ -38,7 +76,7 @@ func TestCheckTLSPin_PinsOnFirstConnect(t *testing.T) {
 	cfg, resolved := pinCfg(t, "")
 
 	var buf bytes.Buffer
-	if err := checkTLSPin(context.Background(), &buf, cfg, resolved); err != nil {
+	if err := checkTOFU(context.Background(), &buf, cfg, resolved); err != nil {
 		t.Fatalf("checkTLSPin: %v", err)
 	}
 	if resolved.Server.TLSPinSHA256 != "abc123" {
@@ -77,7 +115,7 @@ func TestCheckTLSPin_SilentOnSubsequentRuns(t *testing.T) {
 	l1, _ := config.Load()
 	r1 := &server.Resolved{URL: url, Server: l1.Servers[url]}
 	var b1 bytes.Buffer
-	if err := checkTLSPin(context.Background(), &b1, l1, r1); err != nil {
+	if err := checkTOFU(context.Background(), &b1, l1, r1); err != nil {
 		t.Fatalf("run1: %v", err)
 	}
 	if b1.Len() == 0 {
@@ -92,7 +130,7 @@ func TestCheckTLSPin_SilentOnSubsequentRuns(t *testing.T) {
 	}
 	r2 := &server.Resolved{URL: url, Server: l2.Servers[url]}
 	var b2 bytes.Buffer
-	if err := checkTLSPin(context.Background(), &b2, l2, r2); err != nil {
+	if err := checkTOFU(context.Background(), &b2, l2, r2); err != nil {
 		t.Fatalf("run2: %v", err)
 	}
 	if b2.Len() != 0 {
@@ -104,7 +142,7 @@ func TestCheckTLSPin_MismatchAlerts(t *testing.T) {
 	withStubbedFingerprint(t, "newfp999", nil)
 	cfg, resolved := pinCfg(t, "oldfp000")
 
-	err := checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved)
+	err := checkTOFU(context.Background(), &bytes.Buffer{}, cfg, resolved)
 	if err == nil {
 		t.Fatal("expected an error when the cert changed")
 	}
@@ -121,7 +159,7 @@ func TestCheckTLSPin_MatchIsSilentSuccess(t *testing.T) {
 	cfg, resolved := pinCfg(t, "samefp")
 
 	var buf bytes.Buffer
-	if err := checkTLSPin(context.Background(), &buf, cfg, resolved); err != nil {
+	if err := checkTOFU(context.Background(), &buf, cfg, resolved); err != nil {
 		t.Fatalf("checkTLSPin: %v", err)
 	}
 	if buf.Len() != 0 {
@@ -137,7 +175,7 @@ func TestCheckTLSPin_SecureServerIsNoop(t *testing.T) {
 
 	srv := &config.Server{TokenID: "t", Insecure: false}
 	resolved := &server.Resolved{URL: "https://pve:8006", Server: srv}
-	if err := checkTLSPin(context.Background(), &bytes.Buffer{}, &config.Config{}, resolved); err != nil {
+	if err := checkTOFU(context.Background(), &bytes.Buffer{}, &config.Config{}, resolved); err != nil {
 		t.Fatalf("checkTLSPin: %v", err)
 	}
 	if called {
@@ -149,10 +187,25 @@ func TestCheckTLSPin_FetchErrorDoesNotBlock(t *testing.T) {
 	withStubbedFingerprint(t, "", errors.New("network down"))
 	cfg, resolved := pinCfg(t, "")
 
-	if err := checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved); err != nil {
+	if err := checkTOFU(context.Background(), &bytes.Buffer{}, cfg, resolved); err != nil {
 		t.Fatalf("a fingerprint-fetch error must not block the command: %v", err)
 	}
 	if resolved.Server.TLSPinSHA256 != "" {
 		t.Error("nothing should be pinned when the fetch failed")
+	}
+}
+
+// A pin stored in another accepted spelling (prefix, colons, upper case)
+// matches the probed lowercase-hex fingerprint rather than tripping the
+// "CHANGED" error.
+func TestCheckTLSPin_ComparesNormalizedPins(t *testing.T) {
+	withStubbedFingerprint(t, "aabbcc", nil)
+	cfg, resolved := pinCfg(t, "SHA256:AA:BB:CC")
+	pin, err := checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved.URL, resolved.Server, pinTOFU)
+	if err != nil {
+		t.Fatalf("checkTLSPin: %v", err)
+	}
+	if pveclient.NormalizePin(pin) != "aabbcc" {
+		t.Errorf("pin = %q, want an equivalent of aabbcc", pin)
 	}
 }

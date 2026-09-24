@@ -35,4 +35,57 @@ func TestBuildCustomKV(t *testing.T) {
 	if got := kv["ipconfig0"]; got != "ip=dhcp" {
 		t.Errorf("ipconfig0 = %q, want ip=dhcp", got)
 	}
+	if _, ok := kv["net0"]; ok {
+		t.Error("net0 must not appear; Run adds it only when Bridge is set")
+	}
+}
+
+func TestSetNet0Bridge(t *testing.T) {
+	tests := []struct {
+		name, net0, bridge, want string
+	}{
+		{
+			name:   "replace existing bridge keeps model/MAC and params",
+			net0:   "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1,tag=20",
+			bridge: "vmbr1",
+			want:   "virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=1,tag=20",
+		},
+		{
+			name:   "bridge not first after model",
+			net0:   "e1000=BC:24:11:00:00:01,firewall=1,bridge=vmbr0",
+			bridge: "vmbr9",
+			want:   "e1000=BC:24:11:00:00:01,firewall=1,bridge=vmbr9",
+		},
+		{
+			name:   "same bridge is a no-op",
+			net0:   "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0",
+			bridge: "vmbr0",
+			want:   "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0",
+		},
+		{
+			name:   "missing bridge inserted after model",
+			net0:   "virtio=BC:24:11:AA:BB:CC,firewall=1",
+			bridge: "vmbr2",
+			want:   "virtio=BC:24:11:AA:BB:CC,bridge=vmbr2,firewall=1",
+		},
+		{
+			name:   "model only",
+			net0:   "virtio",
+			bridge: "vmbr2",
+			want:   "virtio,bridge=vmbr2",
+		},
+		{
+			name:   "empty net0 creates virtio nic",
+			net0:   "",
+			bridge: "vmbr3",
+			want:   "virtio,bridge=vmbr3",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := setNet0Bridge(tc.net0, tc.bridge); got != tc.want {
+				t.Errorf("setNet0Bridge(%q, %q) = %q, want %q", tc.net0, tc.bridge, got, tc.want)
+			}
+		})
+	}
 }

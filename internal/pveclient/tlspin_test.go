@@ -34,3 +34,12 @@ func TestFetchCertFingerprint_UnreachableIsNetworkErr(t *testing.T) {
 		t.Fatal("expected an error dialing an unreachable host")
 	}
 }
+
+func TestNormalizePin(t *testing.T) {
+	const want = "aabbcc"
+	for _, in := range []string{"aabbcc", "AABBCC", "sha256:aabbcc", "SHA256:AA:BB:CC", " aa:bb:cc \n"} {
+		if got := NormalizePin(in); got != want {
+			t.Errorf("NormalizePin(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

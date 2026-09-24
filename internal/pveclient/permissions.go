@@ -2,8 +2,6 @@ package pveclient
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -18,19 +16,13 @@ type Permissions map[string]map[string]bool
 // resolved permission set. This is a read-only introspection endpoint —
 // safe to call from diagnostics.
 func (c *Client) GetPermissions(ctx context.Context) (Permissions, error) {
-	body, err := c.request(ctx, "GET", "/access/permissions", nil)
+	// PVE returns {"data": {"/path": {"Priv.Name": 1, ...}, ...}}.
+	data, err := getData[map[string]map[string]flexInt](ctx, c, "/access/permissions", nil, "permissions response")
 	if err != nil {
 		return nil, err
 	}
-	// PVE returns {"data": {"/path": {"Priv.Name": 1, ...}, ...}}.
-	var resp struct {
-		Data map[string]map[string]int `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse permissions response: %w", err)
-	}
-	perms := make(Permissions, len(resp.Data))
-	for path, privs := range resp.Data {
+	perms := make(Permissions, len(data))
+	for path, privs := range data {
 		set := make(map[string]bool, len(privs))
 		for name, v := range privs {
 			set[name] = v != 0

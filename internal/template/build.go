@@ -8,20 +8,17 @@ package template
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/progress"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
 
 // Progress receives phase-level UI callbacks. Nil is valid — Run
 // checks and no-ops. Start opens a phase label; Done closes it.
-type Progress interface {
-	Start(step string)
-	Done(err error)
-}
+type Progress = progress.Reporter
 
 // Options bundles everything Run needs. Interactive pickers are
 // injected as function fields so tests can return a fixed choice
@@ -32,8 +29,6 @@ type Options struct {
 	Node     string
 	Bridge   string
 	Wait     time.Duration
-	Stderr   io.Writer
-	Verbose  bool
 	Progress Progress
 
 	// CatalogueURL overrides the default Canonical simplestreams
@@ -41,9 +36,9 @@ type Options struct {
 	// leaves it empty (defaultCatalogueURL).
 	CatalogueURL string
 
-	PickImage           func([]ImageEntry) int
-	PickTargetStorage   func([]pveclient.Storage) int
-	PickSnippetsStorage func([]pveclient.Storage) int
+	PickImage           func([]ImageEntry) (int, error)
+	PickTargetStorage   func([]pveclient.Storage) (int, error)
+	PickSnippetsStorage func([]pveclient.Storage) (int, error)
 
 	// UploadSnippet writes the bake snippet to the PVE node's snippets
 	// directory via SFTP. Called once per Run, after the storage path
@@ -69,17 +64,8 @@ const (
 // the integration suite fast. Production uses 5s per design D8.
 var pollInterval = 5 * time.Second
 
-func (o Options) pStart(step string) {
-	if o.Progress != nil {
-		o.Progress.Start(step)
-	}
-}
-
-func (o Options) pDone(err error) {
-	if o.Progress != nil {
-		o.Progress.Done(err)
-	}
-}
+func (o Options) pStart(step string) { progress.Start(o.Progress, step) }
+func (o Options) pDone(err error)    { progress.Done(o.Progress, err) }
 
 // Run walks the 13-phase template-build state machine end-to-end.
 // Any pre-CreateVM failure is a clean abort with no cleanup needed;
@@ -114,7 +100,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.PickImage == nil {
 		return nil, fmt.Errorf("pick image: no picker supplied")
 	}
-	idx := opts.PickImage(entries)
+	idx, err := opts.PickImage(entries)
+	if err != nil {
+		return nil, fmt.Errorf("pick image: %w", err)
+	}
 	if idx < 0 || idx >= len(entries) {
 		return nil, fmt.Errorf("pick image: picker returned out-of-range index %d", idx)
 	}
@@ -153,7 +142,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Phase 6 — reserve a VMID in the 9000–9099 range.
 	opts.pStart("Reserving VMID in 9000–9099")
-	vmid, err := reserveVMID(ctx, opts.Client, opts.Node)
+	vmid, err := reserveVMID(ctx, opts.Client)
 	opts.pDone(err)
 	if err != nil {
 		return nil, fmt.Errorf("reserve vmid: %w", err)
@@ -266,32 +255,6 @@ func checkVersion(ctx context.Context, c *pveclient.Client) error {
 	return nil
 }
 
-func pickTargetStorage(ctx context.Context, opts Options) (string, error) {
-	opts.pStart("Listing images-capable storage for the template disk")
-	pools, err := opts.Client.ListStorage(ctx, opts.Node)
-	opts.pDone(err)
-	if err != nil {
-		return "", fmt.Errorf("pick target storage: %w", err)
-	}
-	usable := make([]pveclient.Storage, 0, len(pools))
-	for _, s := range pools {
-		if s.Active == 1 && s.Enabled == 1 && s.SupportsVMDisks() {
-			usable = append(usable, s)
-		}
-	}
-	if len(usable) == 0 {
-		return "", fmt.Errorf("pick target storage: no active, enabled, images-capable storage found on node %s", opts.Node)
-	}
-	if opts.PickTargetStorage == nil {
-		return "", fmt.Errorf("pick target storage: no picker supplied")
-	}
-	idx := opts.PickTargetStorage(usable)
-	if idx < 0 || idx >= len(usable) {
-		return "", fmt.Errorf("pick target storage: picker returned out-of-range index %d", idx)
-	}
-	return usable[idx].Storage, nil
-}
-
 // stableImageFilename builds a reproducible, PVE-friendly filename
 // for the downloaded cloud image. Using a per-release stable name
 // means repeated runs of the same release share one download and
@@ -349,18 +312,27 @@ func buildCreateKV(opts Options, img ImageEntry, vmid int, name, targetStorage, 
 
 // waitStopped polls GetStatus every pollInterval until the VM
 // reports status=stopped, the context is cancelled, or the wait
-// budget elapses.
+// budget elapses. Like pveclient.WaitTask, a fatal poll error
+// (auth/TLS/not-found) aborts immediately while a transient one
+// (network blip, 5xx) is remembered and polling continues — the bake
+// keeps running server-side regardless of our connection.
 func waitStopped(ctx context.Context, c *pveclient.Client, node string, vmid int, budget time.Duration) error {
 	deadline := time.Now().Add(budget)
+	var lastTransient error
 	for {
 		st, err := c.GetStatus(ctx, node, vmid)
 		if err != nil {
-			return err
-		}
-		if st.Status == "stopped" {
+			if pveclient.IsFatalPollError(err) {
+				return err
+			}
+			lastTransient = err
+		} else if st.Status == "stopped" {
 			return nil
 		}
 		if time.Now().After(deadline) {
+			if lastTransient != nil {
+				return fmt.Errorf("%w: vm %d still running after %s (last poll error: %w)", pveclient.ErrTimeout, vmid, budget, lastTransient)
+			}
 			return fmt.Errorf("%w: vm %d still running after %s", pveclient.ErrTimeout, vmid, budget)
 		}
 		select {

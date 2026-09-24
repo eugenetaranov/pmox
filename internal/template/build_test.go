@@ -18,17 +18,17 @@ import (
 )
 
 type fakePVE struct {
-	t           *testing.T
-	srv         *httptest.Server
-	client      *pveclient.Client
-	catalogue   *httptest.Server
-	mu          sync.Mutex
-	hits        []string
-	statusHits  int32
-	alwaysRun   bool
+	t            *testing.T
+	srv          *httptest.Server
+	client       *pveclient.Client
+	catalogue    *httptest.Server
+	mu           sync.Mutex
+	hits         []string
+	statusHits   int32
+	alwaysRun    bool
 	failDownload bool
-	failConvert bool
-	pveVersion  string
+	failConvert  bool
+	pveVersion   string
 }
 
 func init() {
@@ -125,9 +125,9 @@ func baseOpts(f *fakePVE) Options {
 		Bridge:              "vmbr0",
 		Wait:                5 * time.Second,
 		CatalogueURL:        f.catalogue.URL,
-		PickImage:           func([]ImageEntry) int { return 0 },
-		PickTargetStorage:   func([]pveclient.Storage) int { return 0 },
-		PickSnippetsStorage: func([]pveclient.Storage) int { return 0 },
+		PickImage:           func([]ImageEntry) (int, error) { return 0, nil },
+		PickTargetStorage:   func([]pveclient.Storage) (int, error) { return 0, nil },
+		PickSnippetsStorage: func([]pveclient.Storage) (int, error) { return 0, nil },
 		UploadSnippet: func(ctx context.Context, storagePath, filename string, content []byte) error {
 			return nil
 		},

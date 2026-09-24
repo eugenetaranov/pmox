@@ -18,9 +18,11 @@ import (
 // selfReporter is implemented by errors that have already rendered their
 // own user-facing output (e.g. `pmox doctor`, which prints a full report
 // and only returns an error to carry the exit code). main skips the
-// generic "Error: ..." line for these.
+// generic "Error: ..." line for these. It is deliberately distinct from
+// exitcode.Coder: carrying an exit code does not imply the error was
+// already printed (e.g. hook failures).
 type selfReporter interface {
-	ExitCode() int
+	SelfReported()
 }
 
 var (
@@ -210,10 +212,15 @@ func main() {
 	err := rootCmd.ExecuteContext(ctx)
 	if err != nil {
 		// If the context was cancelled (Ctrl+C), the signal handler already
-		// printed "Interrupted, cleaning up..."; skip the duplicate error line.
+		// printed "Interrupted."; skip the duplicate error line. An aborted
+		// interactive prompt gets the same message instead of "Error: ...".
 		// Also skip errors that already rendered their own output.
 		var self selfReporter
-		if ctx.Err() == nil && !errors.As(err, &self) {
+		switch {
+		case ctx.Err() != nil, errors.As(err, &self):
+		case errors.Is(err, tui.ErrAborted):
+			fmt.Fprintln(os.Stderr, "Interrupted.")
+		default:
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}

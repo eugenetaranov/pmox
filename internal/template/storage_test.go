@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,9 +40,9 @@ func TestPickSnippetsStorage_FiltersDirCapable(t *testing.T) {
 	opts := Options{
 		Client: c,
 		Node:   "pve",
-		PickSnippetsStorage: func(pools []pveclient.Storage) int {
+		PickSnippetsStorage: func(pools []pveclient.Storage) (int, error) {
 			offered = pools
-			return 0
+			return 0, nil
 		},
 	}
 	got, err := pickSnippetsStorage(context.Background(), opts)
@@ -67,7 +68,7 @@ func TestPickSnippetsStorage_NoDirCapable(t *testing.T) {
 	opts := Options{
 		Client:              c,
 		Node:                "pve",
-		PickSnippetsStorage: func([]pveclient.Storage) int { return 0 },
+		PickSnippetsStorage: func([]pveclient.Storage) (int, error) { return 0, nil },
 	}
 	_, err := pickSnippetsStorage(context.Background(), opts)
 	if err == nil {
@@ -75,5 +76,25 @@ func TestPickSnippetsStorage_NoDirCapable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no dir-capable storage") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPickSnippetsStorage_PickerErrorPropagates(t *testing.T) {
+	c := newListStorageFake(t, []pveclient.Storage{
+		{Storage: "local", Type: "dir", Content: "iso"},
+		{Storage: "nfs1", Type: "nfs", Content: "iso"},
+	})
+	aborted := errors.New("interrupted")
+	opts := Options{
+		Client:              c,
+		Node:                "pve",
+		PickSnippetsStorage: func([]pveclient.Storage) (int, error) { return 0, aborted },
+	}
+	got, err := pickSnippetsStorage(context.Background(), opts)
+	if !errors.Is(err, aborted) {
+		t.Fatalf("err = %v, want wrapped picker error", err)
+	}
+	if got != "" {
+		t.Errorf("got %q after picker error, want empty", got)
 	}
 }

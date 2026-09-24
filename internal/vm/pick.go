@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -38,13 +37,57 @@ var (
 // and stderr are terminals, an interactive picker is shown. When zero
 // exist, ErrNoPMOXVMs is returned. When multiple exist but the session
 // is non-interactive, ErrPickerNonTTY is returned.
-//
-// stderr is used for informational output (e.g. picker-adjacent status);
-// pass cmd.ErrOrStderr() from a cobra handler.
-func Pick(ctx context.Context, client *pveclient.Client, _ io.Writer) (*Ref, error) {
+func Pick(ctx context.Context, client *pveclient.Client) (*Ref, error) {
+	single, c, err := loadPickerCandidates(ctx, client)
+	if err != nil || single != nil {
+		return single, err
+	}
+	chosen, err := selectOne("Select a pmox VM", c.opts)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := c.refs([]string{chosen})
+	if err != nil {
+		return nil, err
+	}
+	return refs[0], nil
+}
+
+// PickMulti returns one or more pmox-tagged VMs. With exactly one such
+// VM it is returned without prompting; with several, a multi-select
+// picker (space toggles, enter confirms) is shown on a TTY. Zero VMs →
+// ErrNoPMOXVMs; non-interactive with several → ErrPickerNonTTY listing
+// the candidates.
+func PickMulti(ctx context.Context, client *pveclient.Client) ([]*Ref, error) {
+	single, c, err := loadPickerCandidates(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	if single != nil {
+		return []*Ref{single}, nil
+	}
+	chosen, err := selectMulti("Select pmox VMs (space to toggle, enter to confirm)", c.opts)
+	if err != nil {
+		return nil, err
+	}
+	return c.refs(chosen)
+}
+
+// pickerCandidates holds the picker options for two or more pmox VMs,
+// keyed by stringified VMID.
+type pickerCandidates struct {
+	opts   []huh.Option[string]
+	byVMID map[string]pveclient.Resource
+}
+
+// loadPickerCandidates lists pmox-tagged VMs. With exactly one it is
+// returned as single (no prompt needed). With several it returns the
+// sorted picker candidates, or ErrPickerNonTTY when no picker can be
+// drawn. Zero VMs → ErrNoPMOXVMs.
+func loadPickerCandidates(ctx context.Context, client *pveclient.Client) (single *Ref, c *pickerCandidates, err error) {
 	resources, err := client.ClusterResources(ctx, "vm")
 	if err != nil {
-		return nil, fmt.Errorf("list cluster resources: %w", err)
+		return nil, nil, fmt.Errorf("list cluster resources: %w", err)
 	}
 
 	var pmoxVMs []pveclient.Resource
@@ -56,9 +99,9 @@ func Pick(ctx context.Context, client *pveclient.Client, _ io.Writer) (*Ref, err
 
 	switch len(pmoxVMs) {
 	case 0:
-		return nil, ErrNoPMOXVMs
+		return nil, nil, ErrNoPMOXVMs
 	case 1:
-		return refFrom(pmoxVMs[0]), nil
+		return refFrom(pmoxVMs[0]), nil, nil
 	}
 
 	sortPickerVMs(pmoxVMs)
@@ -67,79 +110,32 @@ func Pick(ctx context.Context, client *pveclient.Client, _ io.Writer) (*Ref, err
 		// Can't draw a picker — tell the caller what the valid choices
 		// are (like the server resolver does) so they don't have to run
 		// `pmox list` to find a name.
-		return nil, fmt.Errorf("%w\navailable VMs:\n%s", ErrPickerNonTTY, candidateList(pmoxVMs))
+		return nil, nil, fmt.Errorf("%w\navailable VMs:\n%s", ErrPickerNonTTY, candidateList(pmoxVMs))
 	}
 
-	opts := make([]huh.Option[string], 0, len(pmoxVMs))
-	byVMID := make(map[string]pveclient.Resource, len(pmoxVMs))
+	c = &pickerCandidates{
+		opts:   make([]huh.Option[string], 0, len(pmoxVMs)),
+		byVMID: make(map[string]pveclient.Resource, len(pmoxVMs)),
+	}
 	for _, r := range pmoxVMs {
 		key := fmt.Sprintf("%d", r.VMID)
-		opts = append(opts, huh.NewOption(formatPickerRow(r), key))
-		byVMID[key] = r
+		c.opts = append(c.opts, huh.NewOption(formatPickerRow(r), key))
+		c.byVMID[key] = r
 	}
-
-	chosen, err := selectOne("Select a pmox VM", opts)
-	if err != nil {
-		return nil, err
-	}
-	r, ok := byVMID[chosen]
-	if !ok {
-		return nil, fmt.Errorf("picker returned unknown VMID %q", chosen)
-	}
-	return refFrom(r), nil
+	return nil, c, nil
 }
 
-// PickMulti returns one or more pmox-tagged VMs. With exactly one such
-// VM it is returned without prompting; with several, a multi-select
-// picker (space toggles, enter confirms) is shown on a TTY. Zero VMs →
-// ErrNoPMOXVMs; non-interactive with several → ErrPickerNonTTY listing
-// the candidates.
-func PickMulti(ctx context.Context, client *pveclient.Client, _ io.Writer) ([]*Ref, error) {
-	resources, err := client.ClusterResources(ctx, "vm")
-	if err != nil {
-		return nil, fmt.Errorf("list cluster resources: %w", err)
-	}
-	var pmoxVMs []pveclient.Resource
-	for _, r := range resources {
-		if HasPMOXTag(r.Tags) {
-			pmoxVMs = append(pmoxVMs, r)
-		}
-	}
-
-	switch len(pmoxVMs) {
-	case 0:
-		return nil, ErrNoPMOXVMs
-	case 1:
-		return []*Ref{refFrom(pmoxVMs[0])}, nil
-	}
-
-	sortPickerVMs(pmoxVMs)
-
-	if !isStdinTTY() || !isStderrTTY() || noInput() {
-		return nil, fmt.Errorf("%w\navailable VMs:\n%s", ErrPickerNonTTY, candidateList(pmoxVMs))
-	}
-
-	opts := make([]huh.Option[string], 0, len(pmoxVMs))
-	byVMID := make(map[string]pveclient.Resource, len(pmoxVMs))
-	for _, r := range pmoxVMs {
-		key := fmt.Sprintf("%d", r.VMID)
-		opts = append(opts, huh.NewOption(formatPickerRow(r), key))
-		byVMID[key] = r
-	}
-
-	chosen, err := selectMulti("Select pmox VMs (space to toggle, enter to confirm)", opts)
-	if err != nil {
-		return nil, err
-	}
-	refs := make([]*Ref, 0, len(chosen))
-	for _, key := range chosen {
-		r, ok := byVMID[key]
+// refs maps picker keys back to Refs, in the order given.
+func (c *pickerCandidates) refs(keys []string) ([]*Ref, error) {
+	out := make([]*Ref, 0, len(keys))
+	for _, key := range keys {
+		r, ok := c.byVMID[key]
 		if !ok {
 			return nil, fmt.Errorf("picker returned unknown VMID %q", key)
 		}
-		refs = append(refs, refFrom(r))
+		out = append(out, refFrom(r))
 	}
-	return refs, nil
+	return out, nil
 }
 
 // sortPickerVMs orders running VMs first, then by VMID — so live targets

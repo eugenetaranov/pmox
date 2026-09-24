@@ -2,15 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 const listIPConcurrency = 8
@@ -43,10 +42,7 @@ Use --output json for machine-readable output.`,
 
 func runListCmd(cmd *cobra.Command, f *listFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	client, err := buildDeleteClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -73,9 +69,7 @@ func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	fetchIPs(ctx, client, rows)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return printJSON(cmd.OutOrStdout(), rows)
 	}
 	vm.RenderTable(cmd.OutOrStdout(), rows)
 	return nil
@@ -85,7 +79,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 	sem := make(chan struct{}, listIPConcurrency)
 	var wg sync.WaitGroup
 	for i := range rows {
-		if rows[i].Status != "running" {
+		if pveclient.VMState(rows[i].Status) != pveclient.StateRunning {
 			continue
 		}
 		wg.Add(1)
@@ -97,7 +91,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 			if err != nil {
 				return
 			}
-			rows[i].IP = launch.PickIPv4(ifaces)
+			rows[i].IP = vmwait.PickIPv4(ifaces)
 		}(i)
 	}
 	wg.Wait()

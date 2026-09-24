@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/eugenetaranov/pmox/internal/atomicfile"
 )
 
 // store is the on-disk shape: key -> profile name.
@@ -22,7 +24,9 @@ func key(serverURL string, vmid int) string {
 }
 
 // Get returns the remembered profile for (serverURL, vmid) and whether one
-// was found. A missing or unreadable file yields ("", false, nil).
+// was found. A missing state file yields ("", false, nil); a corrupt one is
+// moved aside (see load) and also yields ("", false, nil). Any other read
+// failure is returned as an error.
 func Get(stateDir, serverURL string, vmid int) (string, bool, error) {
 	s, err := load(stateDir)
 	if err != nil {
@@ -88,6 +92,11 @@ func statePath(stateDir string) string {
 	return filepath.Join(stateDir, "profiles.json")
 }
 
+// corruptPath is where an unparseable state file is moved aside to.
+func corruptPath(stateDir string) string {
+	return statePath(stateDir) + ".corrupt"
+}
+
 func load(stateDir string) (store, error) {
 	data, err := os.ReadFile(statePath(stateDir))
 	if err != nil {
@@ -99,7 +108,9 @@ func load(stateDir string) (store, error) {
 	var s store
 	if err := json.Unmarshal(data, &s); err != nil {
 		// A corrupt state file is non-fatal for a convenience cache: start
-		// fresh rather than blocking apply.
+		// fresh rather than blocking apply, but move the file aside first
+		// so the next save doesn't silently destroy it. Best effort.
+		_ = os.Rename(statePath(stateDir), corruptPath(stateDir))
 		return store{}, nil
 	}
 	if s == nil {
@@ -109,19 +120,12 @@ func load(stateDir string) (store, error) {
 }
 
 func save(stateDir string, s store) error {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := statePath(stateDir) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if err := atomicfile.Write(statePath(stateDir), data, 0o600); err != nil {
 		return fmt.Errorf("write tack profile state: %w", err)
-	}
-	if err := os.Rename(tmp, statePath(stateDir)); err != nil {
-		return fmt.Errorf("replace tack profile state: %w", err)
 	}
 	return nil
 }

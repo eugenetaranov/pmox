@@ -21,7 +21,7 @@ const (
 // to avoid *any* VMID in the range, not just ones already converted
 // to templates. A half-built VM (status=stopped, template=0) must
 // still reserve its slot.
-func reserveVMID(ctx context.Context, c *pveclient.Client, node string) (int, error) {
+func reserveVMID(ctx context.Context, c *pveclient.Client) (int, error) {
 	resources, err := c.ClusterResources(ctx, "vm")
 	if err != nil {
 		return 0, fmt.Errorf("list cluster vms: %w", err)
