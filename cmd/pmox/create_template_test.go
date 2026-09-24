@@ -43,10 +43,11 @@ func TestCreateTemplate_NonTTYRejected(t *testing.T) {
 	}
 }
 
-func TestCreateTemplate_VerboseLogLine(t *testing.T) {
-	// Short-circuit the template.Run state machine by returning 500
-	// on /version — that's the first API call, so the rest of the
-	// phases never fire.
+func TestCreateTemplate_WithClientDoesNotRelogServer(t *testing.T) {
+	// buildClient emits the --verbose "using server" line; the extracted
+	// runner must not print it a second time. Short-circuit the
+	// template.Run state machine by returning 500 on /version — that's
+	// the first API call, so the rest of the phases never fire.
 	var versionHits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/version" {
@@ -72,26 +73,16 @@ func TestCreateTemplate_VerboseLogLine(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	noopUpload := func(context.Context, string, string, []byte) error { return nil }
-	err := runCreateTemplateWithClient(context.Background(), cmd, client, srv.URL, "single configured", "pve", "vmbr0", time.Minute, noopUpload)
+	err := runCreateTemplateWithClient(context.Background(), cmd, client, "pve", "vmbr0", time.Minute, noopUpload)
 	if err == nil {
 		t.Fatal("expected error from short-circuited /version")
 	}
-	stderr := errBuf.String()
-	want := "using server " + srv.URL + " (single configured)\n"
-	if !strings.Contains(stderr, want) {
-		t.Errorf("stderr missing log line %q, got: %q", want, stderr)
-	}
-	if strings.Count(stderr, "using server ") != 1 {
-		t.Errorf("expected exactly one log line, got: %q", stderr)
-	}
-	// Log line must precede the first API call — i.e. appear in
-	// stderr before template.Run returns.
 	if atomic.LoadInt32(&versionHits) == 0 {
 		t.Fatal("expected /version to have been called")
 	}
-	// Since the log line is written synchronously before template.Run,
-	// its presence in errBuf together with a non-zero versionHits
-	// proves the ordering.
+	if strings.Contains(errBuf.String(), "using server ") {
+		t.Errorf("runner re-logged the server line: %q", errBuf.String())
+	}
 }
 
 func TestCreateTemplate_MissingSSHFailsFast(t *testing.T) {

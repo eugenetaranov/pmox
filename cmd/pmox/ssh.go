@@ -114,10 +114,11 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 		ctx = context.Background()
 	}
 
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
@@ -166,10 +167,11 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		ctx = context.Background()
 	}
 
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	vmArg, err := resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
 	if err != nil {

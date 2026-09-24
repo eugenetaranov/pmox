@@ -200,7 +200,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	for _, url := range cfg.ServerURLs() {
 		srv := cfg.Servers[url]
 		label := contextLabelFor(cfg, url)
-		client, cerr := cleanupClient(url, srv)
+		client, cerr := cleanupClient(ctx, url, srv)
 		if cerr != nil {
 			fmt.Fprintf(ew, "cleanup: skipping context %s: %v\n", label, cerr)
 			ipsComplete = false
@@ -496,15 +496,21 @@ func sshKeyItems(cfg *config.Config) []cleanupItem {
 	}}
 }
 
-// cleanupClient builds a PVE client for a configured server, pulling its
-// secret from the keychain. Used to scan every context, not just the
-// resolved one.
-func cleanupClient(url string, srv *config.Server) (*pveclient.Client, error) {
+// cleanupClient builds a TLS-pinned PVE client for a configured server,
+// pulling its secret from the keychain. Used to scan every context, not
+// just the resolved one, so it is read-only: it never saves a pin, and a
+// server whose certificate no longer matches its stored pin is refused
+// (the caller skips it with a warning).
+func cleanupClient(ctx context.Context, url string, srv *config.Server) (*pveclient.Client, error) {
 	secret, err := credstore.Get(url)
 	if err != nil {
 		return nil, err
 	}
-	return pveclient.New(url, srv.TokenID, secret, srv.Insecure), nil
+	pin, err := checkTLSPin(ctx, io.Discard, nil, url, srv, pinReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	return newAPIClient(url, srv, secret, pin), nil
 }
 
 // contextLabelFor returns the context name for a URL (for readable output).

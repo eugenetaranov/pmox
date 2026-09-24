@@ -163,10 +163,11 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	ctx := cmd.Context()
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	ref, remotePath, err := mountResolveDestFn(ctx, client, cmd.ErrOrStderr(), args[1])
 	if err != nil {
@@ -504,7 +505,7 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 // a fixed VM name and skip the client/config plumbing.
 var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
 	ctx := cmd.Context()
-	client, _, err := buildSSHClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return "", err
 	}

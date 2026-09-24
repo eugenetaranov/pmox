@@ -143,10 +143,11 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 	}
 
 	ctx := cmd.Context()
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {
@@ -214,10 +215,11 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	ctx := cmd.Context()
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {

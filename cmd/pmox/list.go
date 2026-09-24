@@ -46,7 +46,7 @@ func runListCmd(cmd *cobra.Command, f *listFlags) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	client, err := buildDeleteClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

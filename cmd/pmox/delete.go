@@ -85,7 +85,7 @@ func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 		return fmt.Errorf("refusing to delete: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use")
 	}
 
-	client, err := buildDeleteClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

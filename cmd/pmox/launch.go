@@ -181,10 +181,9 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 
 	// buildClient loads config, resolves the server, emits the D-T4
-	// verbose log line, and warns on insecure TLS — all before any PVE
-	// API call. The returned client is discarded here because
-	// resolveLaunchOptions builds its own from the resolved record.
-	_, resolved, err := buildClient(ctx, cmd)
+	// verbose log line, and runs the TLS pin check — all before any PVE
+	// API call.
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -193,7 +192,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
 	}
 
-	opts, err := resolveLaunchOptions(ctx, name, f, resolved, cmd.ErrOrStderr())
+	opts, err := resolveLaunchOptions(ctx, client, name, f, resolved, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -242,9 +241,8 @@ func newSnippetUploader(resolved *server.Resolved) (func(ctx context.Context, st
 
 // resolveLaunchOptions layers flag > configured-default > built-in and
 // produces the launch.Options the state machine consumes.
-func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
+func resolveLaunchOptions(ctx context.Context, client *pveclient.Client, name string, f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
 	srv := resolved.Server
-	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
