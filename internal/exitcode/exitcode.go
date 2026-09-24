@@ -23,17 +23,18 @@ const (
 	ExitWarnings     = 9 // doctor --strict: all checks passed but warnings present
 )
 
-// codeCarrier is implemented by errors that already know their exact
-// process exit code (e.g. `pmox doctor`, which picks the code of the
-// worst failing check). From honors it before any sentinel matching.
-type codeCarrier interface {
+// Coder is implemented by errors that already know their exact process
+// exit code (e.g. `pmox doctor`, which picks the code of the worst
+// failing check, or a hook failure returning ExitHook). From honors it,
+// anywhere in the wrap chain, before any sentinel matching. Packages
+// that cannot import exitcode can satisfy it structurally.
+type Coder interface {
 	ExitCode() int
 }
 
-// hookErrMarker is implemented by *launch.HookError. Using a local
-// interface lets From detect hook failures via errors.As without
-// importing internal/launch (which would create a cycle since launch
-// imports other internal packages).
+// hookErrMarker is the legacy marker implemented by *launch.HookError.
+// New error types should implement Coder instead; this remains so hook
+// errors that only carry the marker still map to ExitHook.
 type hookErrMarker interface {
 	IsHookError()
 }
@@ -52,7 +53,7 @@ func From(err error) int {
 	if err == nil {
 		return ExitOK
 	}
-	var carrier codeCarrier
+	var carrier Coder
 	if errors.As(err, &carrier) {
 		return carrier.ExitCode()
 	}

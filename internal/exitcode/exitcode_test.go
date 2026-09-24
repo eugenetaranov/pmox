@@ -36,6 +36,9 @@ func TestFrom(t *testing.T) {
 		{"context deadline exceeded", context.DeadlineExceeded, ExitTimeout},
 		{"hook error", &fakeHookError{}, ExitHook},
 		{"hook error wrapped", fmt.Errorf("launch: %w", &fakeHookError{}), ExitHook},
+		{"coder hook", &coderError{code: ExitHook}, ExitHook},
+		{"coder wrapped", fmt.Errorf("x: %w", &coderError{code: ExitWarnings}), ExitWarnings},
+		{"coder beats sentinel", &coderError{code: ExitHook, wrapped: ErrUserInput}, ExitHook},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,3 +56,39 @@ type fakeHookError struct{}
 
 func (e *fakeHookError) Error() string { return "fake hook failed" }
 func (e *fakeHookError) IsHookError()  {}
+
+// coderError implements Coder, optionally wrapping another error.
+type coderError struct {
+	code    int
+	wrapped error
+}
+
+func (e *coderError) Error() string { return "coder" }
+func (e *coderError) ExitCode() int { return e.code }
+func (e *coderError) Unwrap() error { return e.wrapped }
+
+// TestCodeValues pins every exit code: they are a public contract for
+// scripts wrapping pmox and must never change.
+func TestCodeValues(t *testing.T) {
+	cases := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"ExitOK", ExitOK, 0},
+		{"ExitGeneric", ExitGeneric, 1},
+		{"ExitUserError", ExitUserError, 2},
+		{"ExitNotFound", ExitNotFound, 3},
+		{"ExitAPIError", ExitAPIError, 4},
+		{"ExitNetworkError", ExitNetworkError, 5},
+		{"ExitUnauthorized", ExitUnauthorized, 6},
+		{"ExitTimeout", ExitTimeout, 7},
+		{"ExitHook", ExitHook, 8},
+		{"ExitWarnings", ExitWarnings, 9},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s = %d, want %d", tc.name, tc.got, tc.want)
+		}
+	}
+}
