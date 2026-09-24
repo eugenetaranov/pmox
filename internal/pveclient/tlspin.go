@@ -49,9 +49,10 @@ func CertFingerprint(der []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// normalizePin canonicalizes a pin to lowercase hex, tolerating a
-// "sha256:" prefix and colon-separated byte pairs.
-func normalizePin(pin string) string {
+// NormalizePin canonicalizes a pin to lowercase hex, tolerating a
+// "sha256:" prefix, colon-separated byte pairs, surrounding space and
+// any letter case. Compare pins only after normalizing both sides.
+func NormalizePin(pin string) string {
 	pin = strings.ToLower(strings.TrimSpace(pin))
 	pin = strings.TrimPrefix(pin, "sha256:")
 	return strings.ReplaceAll(pin, ":", "")
@@ -64,7 +65,7 @@ func normalizePin(pin string) string {
 // resumed sessions, so the pin guards the connection that actually
 // carries credentials.
 func VerifyPin(pin string) func(tls.ConnectionState) error {
-	want := normalizePin(pin)
+	want := NormalizePin(pin)
 	return func(cs tls.ConnectionState) error {
 		if len(cs.PeerCertificates) == 0 {
 			return fmt.Errorf("%w: server presented no certificate", ErrTLSVerificationFailed)

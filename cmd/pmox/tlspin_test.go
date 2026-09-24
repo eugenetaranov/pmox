@@ -194,3 +194,18 @@ func TestCheckTLSPin_FetchErrorDoesNotBlock(t *testing.T) {
 		t.Error("nothing should be pinned when the fetch failed")
 	}
 }
+
+// A pin stored in another accepted spelling (prefix, colons, upper case)
+// matches the probed lowercase-hex fingerprint rather than tripping the
+// "CHANGED" error.
+func TestCheckTLSPin_ComparesNormalizedPins(t *testing.T) {
+	withStubbedFingerprint(t, "aabbcc", nil)
+	cfg, resolved := pinCfg(t, "SHA256:AA:BB:CC")
+	pin, err := checkTLSPin(context.Background(), &bytes.Buffer{}, cfg, resolved.URL, resolved.Server, pinTOFU)
+	if err != nil {
+		t.Fatalf("checkTLSPin: %v", err)
+	}
+	if pveclient.NormalizePin(pin) != "aabbcc" {
+		t.Errorf("pin = %q, want an equivalent of aabbcc", pin)
+	}
+}

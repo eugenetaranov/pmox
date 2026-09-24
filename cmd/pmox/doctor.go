@@ -283,7 +283,7 @@ func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		cl.Info("config.tls_pin", "config", "could not fetch the certificate to compare against the pin: "+err.Error())
 		return
 	}
-	if fp == srv.TLSPinSHA256 {
+	if pveclient.NormalizePin(fp) == pveclient.NormalizePin(srv.TLSPinSHA256) {
 		cl.Pass("config.tls_pin", "config", "TLS certificate matches the pinned fingerprint")
 		return
 	}
