@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/charmbracelet/huh"
@@ -268,7 +269,7 @@ func TestValidateCredentialsStrictSuccess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -284,7 +285,7 @@ func TestValidateCredentialsTLSFallback(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	insecure, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if err != nil {
 		t.Fatalf("validateCredentials: %v", err)
 	}
@@ -302,9 +303,43 @@ func TestValidateCredentialsUnauthorizedReturnsError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := &fakePrompter{}
-	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false)
+	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Errorf("want ErrUnauthorized, got %v", err)
+	}
+}
+
+// Re-running init against a server whose certificate is already pinned
+// must enforce that pin: a swapped certificate fails the handshake
+// before the token (or login password) is sent.
+func TestInitReconfigureEnforcesStoredPin(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"data":{"version":"8.2"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		srv.URL: {TokenID: "a@pam!x", Insecure: true, TLSPinSHA256: strings.Repeat("ab", 32)},
+	}}
+	pin := storedPinFor(cfg, srv.URL)
+	if pin == "" {
+		t.Fatal("storedPinFor returned no pin for a pinned insecure server")
+	}
+	if got := storedPinFor(cfg, "https://other:8006/api2/json"); got != "" {
+		t.Errorf("unknown server pin = %q, want empty (TOFU)", got)
+	}
+
+	p := &fakePrompter{}
+	if _, err := validateCredentials(context.Background(), p, srv.URL, "a@pam!x", "sekret", true, pin); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("validateCredentials: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if _, err := newInitClient(srv.URL, "a@pam!x", "sekret", true, pin).GetVersion(context.Background()); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("discovery client: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("server received %d request(s) despite pin mismatch", n)
 	}
 }
 

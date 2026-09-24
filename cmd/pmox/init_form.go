@@ -32,6 +32,7 @@ type resolvedConn struct {
 	tokenID   string
 	secret    string
 	insecure  bool
+	pin       string // stored TLS pin enforced on this connection ("" = none)
 	client    *pveclient.Client
 }
 
@@ -133,7 +134,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			case "confirm":
 				return persistServer(p, cfg, persistInput{
 					canonical: conn.canonical, tokenID: conn.tokenID, secret: conn.secret, insecure: conn.insecure,
-					node: defs.node, template: defs.template, storage: defs.storage,
+					pin: conn.pin, node: defs.node, template: defs.template, storage: defs.storage,
 					snippetStorage: defs.snippetStorage, bridge: defs.bridge,
 					sshKey: acc.sshKey, user: acc.user, nodeSSH: acc.nodeSSH,
 					sshPassword: acc.sshPassword, sshKeyPass: acc.sshKeyPass,
@@ -186,12 +187,15 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 		if !ok {
 			continue // probeURL already reported why
 		}
+		// Re-configuring a pinned server: authenticate every credentialed
+		// connection against the stored pin (empty on a first-ever connect).
+		pin := storedPinFor(cfg, canonical)
 
 		var tokenID, secret string
 		if in.tokenSource == "paste" {
 			tokenID, secret = strings.TrimSpace(in.tokenID), in.tokenSecret
 		} else {
-			tokenID, secret, err = generateTokenFromInputs(ctx, p, canonical, insecure, in)
+			tokenID, secret, err = generateTokenFromInputs(ctx, p, canonical, insecure, pin, in)
 			if err != nil {
 				if errors.Is(err, pveclient.ErrTokenExists) {
 					p.Errf("a token named %q already exists; choose another name\n", in.tokenName)
@@ -202,20 +206,20 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 			}
 		}
 
-		insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure)
+		insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure, pin)
 		if err != nil {
 			p.Errf("credential check failed: %v\n", err)
 			continue
 		}
 		return resolvedConn{
-			canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
-			client: pveclient.New(canonical, tokenID, secret, insecure),
+			canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure, pin: pin,
+			client: newInitClient(canonical, tokenID, secret, insecure, pin),
 		}, in, nil
 	}
 }
 
-func generateTokenFromInputs(ctx context.Context, p prompter, baseURL string, insecure bool, in connInputs) (string, string, error) {
-	issuer, err := setup.Login(ctx, baseURL, insecure, in.loginUser, in.password)
+func generateTokenFromInputs(ctx context.Context, p prompter, baseURL string, insecure bool, pin string, in connInputs) (string, string, error) {
+	issuer, err := setup.Login(ctx, baseURL, insecure, pin, in.loginUser, in.password)
 	if err != nil {
 		return "", "", err
 	}

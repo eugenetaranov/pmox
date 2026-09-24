@@ -9,7 +9,6 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
-	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/setup"
 )
 
@@ -146,21 +145,25 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 		}
 	}
 
+	// Re-configuring a pinned server: every credentialed connection below
+	// is checked against the stored pin (empty on a first-ever connect).
+	pin := storedPinFor(cfg, canonical)
+
 	// Steps 3–4: acquire an API token — paste an existing one or log in
 	// and generate one.
-	tokenID, secret, err := acquireToken(ctx, p, canonical, insecure)
+	tokenID, secret, err := acquireToken(ctx, p, canonical, insecure, pin)
 	if err != nil {
 		return err
 	}
 
 	// Step 5: validate credentials, reusing the probe's TLS decision.
-	insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure)
+	insecure, err = validateCredentials(ctx, p, canonical, tokenID, secret, insecure, pin)
 	if err != nil {
 		return err
 	}
 
 	// Steps 7–10: auto-discovery pickers
-	client := pveclient.New(canonical, tokenID, secret, insecure)
+	client := newInitClient(canonical, tokenID, secret, insecure, pin)
 	defs, err := discoverDefaults(ctx, p, client)
 	if err != nil {
 		return err
@@ -189,7 +192,7 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 	}
 
 	return persistServer(p, cfg, persistInput{
-		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
+		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure, pin: pin,
 		node: defs.node, template: defs.template, storage: defs.storage,
 		snippetStorage: defs.snippetStorage, bridge: defs.bridge,
 		sshKey: sshKey, user: user, nodeSSH: nodeSSH, sshPassword: sshPassword, sshKeyPass: sshKeyPass,

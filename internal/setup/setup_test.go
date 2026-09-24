@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -148,17 +149,51 @@ func TestVerifyToken(t *testing.T) {
 	t.Cleanup(unauth.Close)
 	ctx := context.Background()
 
-	if insecure, err := VerifyToken(ctx, plain.URL, "a@b!c", "s", false); err != nil || insecure {
+	if insecure, err := VerifyToken(ctx, plain.URL, "a@b!c", "s", false, ""); err != nil || insecure {
 		t.Errorf("strict: insecure=%v err=%v", insecure, err)
 	}
-	if insecure, err := VerifyToken(ctx, tlsSrv.URL, "a@b!c", "s", false); err != nil || !insecure {
+	if insecure, err := VerifyToken(ctx, tlsSrv.URL, "a@b!c", "s", false, ""); err != nil || !insecure {
 		t.Errorf("tls fallback: insecure=%v err=%v", insecure, err)
 	}
-	if insecure, err := VerifyToken(ctx, tlsSrv.URL, "a@b!c", "s", true); err != nil || !insecure {
+	if insecure, err := VerifyToken(ctx, tlsSrv.URL, "a@b!c", "s", true, ""); err != nil || !insecure {
 		t.Errorf("known insecure: insecure=%v err=%v", insecure, err)
 	}
-	if _, err := VerifyToken(ctx, unauth.URL, "a@b!c", "s", false); !errors.Is(err, pveclient.ErrUnauthorized) {
+	if _, err := VerifyToken(ctx, unauth.URL, "a@b!c", "s", false, ""); !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Errorf("unauthorized: err=%v", err)
+	}
+}
+
+// TestStoredPinMismatchAbortsBeforeCredentials re-configures a server
+// whose certificate was pinned: when the endpoint now presents a
+// different certificate, Login and VerifyToken must fail the TLS
+// handshake before any request (password or token) reaches it.
+func TestStoredPinMismatchAbortsBeforeCredentials(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		versionHandler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := context.Background()
+	stalePin := strings.Repeat("ab", 32)
+
+	if _, err := Login(ctx, srv.URL, true, stalePin, "root@pam", "pw"); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("Login with stale pin: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if _, err := VerifyToken(ctx, srv.URL, "a@b!c", "s", true, stalePin); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("VerifyToken(knownInsecure) with stale pin: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if _, err := VerifyToken(ctx, srv.URL, "a@b!c", "s", false, stalePin); !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Errorf("VerifyToken(fallback) with stale pin: err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("server received %d request(s) despite pin mismatch", n)
+	}
+
+	// The matching pin connects normally.
+	pin := pveclient.CertFingerprint(srv.Certificate().Raw)
+	if insecure, err := VerifyToken(ctx, srv.URL, "a@b!c", "s", true, pin); err != nil || !insecure {
+		t.Errorf("matching pin: insecure=%v err=%v", insecure, err)
 	}
 }
 
@@ -187,10 +222,10 @@ func TestTokenIssuer(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ctx := context.Background()
 
-	if _, err := Login(ctx, srv.URL, false, "root@pam", ""); !errors.Is(err, pveclient.ErrUnauthorized) {
+	if _, err := Login(ctx, srv.URL, false, "", "root@pam", ""); !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Fatalf("bad login: err = %v", err)
 	}
-	iss, err := Login(ctx, srv.URL, false, "root@pam", "pw")
+	iss, err := Login(ctx, srv.URL, false, "", "root@pam", "pw")
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}

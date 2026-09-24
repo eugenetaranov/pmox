@@ -116,21 +116,38 @@ func ProbeTLS(ctx context.Context, probe ProbeFunc, canonicalURL string) Reach {
 	return Reach{Status: status, Err: err}
 }
 
+// PinOptions returns the pveclient options for a connection in the given TLS
+// mode. A stored pin only applies to insecure connections: a strictly
+// verified certificate is already authenticated by its CA chain (and may
+// legitimately differ from the self-signed cert that was pinned).
+func PinOptions(insecure bool, pin string) pveclient.Options {
+	if !insecure {
+		return pveclient.Options{}
+	}
+	return pveclient.Options{PinSHA256: pin}
+}
+
 // VerifyToken confirms the API token works by calling GET /version and
 // returns the TLS-insecure mode that succeeded. When knownInsecure is
 // true (a probe already settled on insecure TLS) it connects insecurely
 // directly. Otherwise it tries strict TLS first and falls back to
 // insecure only on a TLS verification error; a true result with
 // knownInsecure false means that fallback happened and should be warned
-// about.
-func VerifyToken(ctx context.Context, baseURL, tokenID, secret string, knownInsecure bool) (insecure bool, err error) {
+// about. pin, when non-empty (re-configuring a server whose certificate
+// was pinned), is enforced on insecure connections so a swapped
+// certificate fails the handshake before the token is sent.
+func VerifyToken(ctx context.Context, baseURL, tokenID, secret string, knownInsecure bool, pin string) (insecure bool, err error) {
+	getVersion := func(insecure bool) error {
+		_, err := pveclient.NewWithOptions(baseURL, tokenID, secret, insecure, PinOptions(insecure, pin)).GetVersion(ctx)
+		return err
+	}
 	if knownInsecure {
-		if _, err := pveclient.New(baseURL, tokenID, secret, true).GetVersion(ctx); err != nil {
+		if err := getVersion(true); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
-	_, err = pveclient.New(baseURL, tokenID, secret, false).GetVersion(ctx)
+	err = getVersion(false)
 	if err == nil {
 		return false, nil
 	}
@@ -138,7 +155,7 @@ func VerifyToken(ctx context.Context, baseURL, tokenID, secret string, knownInse
 		return false, err
 	}
 	// Retry insecure.
-	if _, err2 := pveclient.New(baseURL, tokenID, secret, true).GetVersion(ctx); err2 != nil {
+	if err2 := getVersion(true); err2 != nil {
 		return false, err2
 	}
 	return true, nil
@@ -149,23 +166,27 @@ func VerifyToken(ctx context.Context, baseURL, tokenID, secret string, knownInse
 type TokenIssuer struct {
 	baseURL  string
 	insecure bool
+	opts     pveclient.Options
 	user     string
 	ticket   pveclient.Ticket
 }
 
 // Login authenticates user (user@realm) with password and returns an
 // issuer bound to the resulting ticket. The password is not retained.
-func Login(ctx context.Context, baseURL string, insecure bool, user, password string) (*TokenIssuer, error) {
-	ticket, err := pveclient.Login(ctx, baseURL, insecure, user, password)
+// pin, when non-empty, is enforced on insecure connections (see
+// VerifyToken) for both the login and later token creation.
+func Login(ctx context.Context, baseURL string, insecure bool, pin, user, password string) (*TokenIssuer, error) {
+	opts := PinOptions(insecure, pin)
+	ticket, err := pveclient.LoginWithOptions(ctx, baseURL, insecure, opts, user, password)
 	if err != nil {
 		return nil, err
 	}
-	return &TokenIssuer{baseURL: baseURL, insecure: insecure, user: user, ticket: ticket}, nil
+	return &TokenIssuer{baseURL: baseURL, insecure: insecure, opts: opts, user: user, ticket: ticket}, nil
 }
 
 // Create makes an API token named name with privilege separation off and
 // returns its full id (user@realm!name) and secret. A name collision
 // yields pveclient.ErrTokenExists.
 func (t *TokenIssuer) Create(ctx context.Context, name string) (tokenID, secret string, err error) {
-	return pveclient.CreateToken(ctx, t.baseURL, t.insecure, t.ticket, t.user, name)
+	return pveclient.CreateTokenWithOptions(ctx, t.baseURL, t.insecure, t.opts, t.ticket, t.user, name)
 }

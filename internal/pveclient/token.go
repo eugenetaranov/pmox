@@ -23,19 +23,26 @@ type Ticket struct {
 
 // ticketClient builds an unauthenticated Client (no API token) for the
 // ticket-based endpoints, sharing the API-token client's transport.
-func ticketClient(baseURL string, insecure bool) *Client {
-	return &Client{BaseURL: baseURL, Insecure: insecure, HTTPClient: newHTTPClient(insecure, Options{})}
+func ticketClient(baseURL string, insecure bool, opts Options) *Client {
+	return &Client{BaseURL: baseURL, Insecure: insecure, HTTPClient: newHTTPClient(insecure, opts)}
 }
 
 // Login authenticates with a username (user@realm) and password against
 // POST /access/ticket and returns a Ticket. The password is used only for
 // this request and is never stored by pveclient.
 func Login(ctx context.Context, baseURL string, insecure bool, username, password string) (Ticket, error) {
+	return LoginWithOptions(ctx, baseURL, insecure, Options{}, username, password)
+}
+
+// LoginWithOptions is Login with client options applied — notably
+// PinSHA256, so the handshake is checked against the pin before the
+// password is sent.
+func LoginWithOptions(ctx context.Context, baseURL string, insecure bool, opts Options, username, password string) (Ticket, error) {
 	form := url.Values{}
 	form.Set("username", username)
 	form.Set("password", password)
 
-	body, err := ticketClient(baseURL, insecure).do(ctx, http.MethodPost, "/access/ticket", nil, form, nil)
+	body, err := ticketClient(baseURL, insecure, opts).do(ctx, http.MethodPost, "/access/ticket", nil, form, nil)
 	if err != nil {
 		if errors.Is(err, ErrUnauthorized) {
 			return Ticket{}, fmt.Errorf("%w: login failed (check username, realm, and password)", ErrUnauthorized)
@@ -62,6 +69,12 @@ func Login(ctx context.Context, baseURL string, insecure bool, username, passwor
 // and the secret value, which the PVE API returns exactly once. A
 // name collision yields ErrTokenExists.
 func CreateToken(ctx context.Context, baseURL string, insecure bool, t Ticket, userid, name string) (fullTokenID, secret string, err error) {
+	return CreateTokenWithOptions(ctx, baseURL, insecure, Options{}, t, userid, name)
+}
+
+// CreateTokenWithOptions is CreateToken with client options applied
+// (e.g. PinSHA256).
+func CreateTokenWithOptions(ctx context.Context, baseURL string, insecure bool, opts Options, t Ticket, userid, name string) (fullTokenID, secret string, err error) {
 	path := fmt.Sprintf("/access/users/%s/token/%s", url.PathEscape(userid), url.PathEscape(name))
 	form := url.Values{}
 	form.Set("privsep", "0")
@@ -69,7 +82,7 @@ func CreateToken(ctx context.Context, baseURL string, insecure bool, t Ticket, u
 	headers.Set("Cookie", "PVEAuthCookie="+t.Cookie)
 	headers.Set("CSRFPreventionToken", t.CSRF)
 
-	body, err := ticketClient(baseURL, insecure).do(ctx, http.MethodPost, path, nil, form, headers)
+	body, err := ticketClient(baseURL, insecure, opts).do(ctx, http.MethodPost, path, nil, form, headers)
 	if err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && strings.Contains(strings.ToLower(string(apiErr.body)), "already exists") {

@@ -117,15 +117,16 @@ var selectTokenSourceFn = func() (string, error) {
 // acquireToken obtains an API token id + secret. Interactively it offers
 // a choice between pasting an existing token and logging in to generate
 // one; non-interactively (and on the paste choice) it prompts for the
-// token id and secret directly.
-func acquireToken(ctx context.Context, p prompter, baseURL string, insecure bool) (tokenID, secret string, err error) {
+// token id and secret directly. pin is the stored TLS pin when
+// re-configuring a pinned server ("" otherwise); see storedPinFor.
+func acquireToken(ctx context.Context, p prompter, baseURL string, insecure bool, pin string) (tokenID, secret string, err error) {
 	if interactiveFn() {
 		choice, cerr := selectTokenSourceFn()
 		if cerr != nil {
 			return "", "", cerr
 		}
 		if choice == "generate" {
-			tokenID, secret, err = generateToken(ctx, p, baseURL, insecure)
+			tokenID, secret, err = generateToken(ctx, p, baseURL, insecure, pin)
 			if err == nil {
 				return tokenID, secret, nil
 			}
@@ -150,8 +151,10 @@ func acquireToken(ctx context.Context, p prompter, baseURL string, insecure bool
 
 // generateToken logs in with a username/password and creates a new API
 // token (privsep=0). The password is used only for the login ticket and
-// is never stored. On a name collision it re-prompts for a new name.
-func generateToken(ctx context.Context, p prompter, baseURL string, insecure bool) (tokenID, secret string, err error) {
+// is never stored. On a name collision it re-prompts for a new name. A
+// non-empty pin is enforced on insecure connections before the password
+// is sent.
+func generateToken(ctx context.Context, p prompter, baseURL string, insecure bool, pin string) (tokenID, secret string, err error) {
 	user, err := promptLoginUser(p)
 	if err != nil {
 		return "", "", err
@@ -160,7 +163,7 @@ func generateToken(ctx context.Context, p prompter, baseURL string, insecure boo
 	if err != nil {
 		return "", "", err
 	}
-	issuer, err := setup.Login(ctx, baseURL, insecure, user, password)
+	issuer, err := setup.Login(ctx, baseURL, insecure, pin, user, password)
 	if err != nil {
 		return "", "", err
 	}
@@ -253,9 +256,10 @@ func promptSecret(p prompter) (string, error) {
 // knownInsecure is true the reachability probe already settled on (and
 // warned about) insecure TLS, so it connects insecurely directly without
 // re-warning. Otherwise it tries strict TLS first and falls back to
-// insecure on a TLS error. Returns the final insecure flag used.
-func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secret string, knownInsecure bool) (bool, error) {
-	insecure, err := setup.VerifyToken(ctx, baseURL, tokenID, secret, knownInsecure)
+// insecure on a TLS error. A non-empty pin is enforced on insecure
+// connections. Returns the final insecure flag used.
+func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secret string, knownInsecure bool, pin string) (bool, error) {
+	insecure, err := setup.VerifyToken(ctx, baseURL, tokenID, secret, knownInsecure, pin)
 	if err != nil {
 		return false, err
 	}
@@ -263,4 +267,22 @@ func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secr
 		warnTLSFallback(p, baseURL)
 	}
 	return insecure, nil
+}
+
+// storedPinFor returns the TLS pin already recorded for canonical, so
+// re-configuring an existing pinned server authenticates every insecure
+// connection (login, token creation, validation, discovery) against it.
+// A first-ever connect has no pin and stays trust-on-first-use.
+func storedPinFor(cfg *config.Config, canonical string) string {
+	srv, ok := cfg.Servers[canonical]
+	if !ok {
+		return ""
+	}
+	return storedPin(srv)
+}
+
+// newInitClient builds the discovery client for a validated connection,
+// enforcing pin when the connection is insecure.
+func newInitClient(canonical, tokenID, secret string, insecure bool, pin string) *pveclient.Client {
+	return pveclient.NewWithOptions(canonical, tokenID, secret, insecure, setup.PinOptions(insecure, pin))
 }

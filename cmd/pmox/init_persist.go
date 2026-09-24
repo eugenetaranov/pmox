@@ -22,6 +22,7 @@ type persistInput struct {
 	tokenID        string
 	secret         string
 	insecure       bool
+	pin            string // stored TLS pin the connection was verified against ("" = none)
 	node           string
 	template       string
 	storage        string
@@ -49,6 +50,9 @@ func persistServer(p prompter, cfg *config.Config, in persistInput) error {
 		User:           in.user,
 		Insecure:       in.insecure,
 		NodeSSH:        in.nodeSSH,
+		// Keep a pin that this run verified against; a strict (CA-verified)
+		// connection drops it, as does a first-ever connect (TOFU later).
+		TLSPinSHA256: setup.PinOptions(in.insecure, in.pin).PinSHA256,
 	}
 	if err := setup.SaveServer(cfg, in.canonical, srv, setup.Secrets{
 		Token:                in.secret,
