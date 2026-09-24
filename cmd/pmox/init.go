@@ -1027,26 +1027,6 @@ func displayPath(path, home string) string {
 	return path
 }
 
-func findPubKeys(root string) []string {
-	var out []string
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			if d != nil && d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if strings.HasSuffix(d.Name(), ".pub") {
-			out = append(out, path)
-		}
-		return nil
-	})
-	return out
-}
-
 // Test seams for SSH validation and host-key pinning. In production
 // these delegate to pvessh; tests replace them with in-process stubs.
 var (
@@ -1229,14 +1209,9 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 	return choice, nil
 }
 
-func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, p[2:])
-		}
-	}
-	return p
-}
+// expandHome expands a leading "~/" to the user's home directory. It is
+// shared by several commands; see sshkey.ExpandHome.
+func expandHome(p string) string { return sshkey.ExpandHome(p) }
 
 // promptSSHKey resolves the SSH public key pmox injects into cloud-init.
 // Interactively it leads with a top-level choice — generate a new
@@ -1246,7 +1221,7 @@ func expandHome(p string) string {
 func promptSSHKey(p prompter, current string) (string, error) {
 	home, _ := os.UserHomeDir()
 	sshDir := filepath.Join(home, ".ssh")
-	suggest := defaultSSHKeySuggestion(current, sshDir)
+	suggest := sshkey.DefaultSuggestion(current, sshDir)
 
 	if !interactiveFn() {
 		return sshKeyTextFallback(p, home, suggest)
@@ -1275,23 +1250,6 @@ func promptSSHKey(p prompter, current string) (string, error) {
 	}
 }
 
-// defaultSSHKeySuggestion returns current when set, else the first common
-// default key that exists under sshDir.
-func defaultSSHKeySuggestion(current, sshDir string) string {
-	if current != "" {
-		return current
-	}
-	for _, c := range []string{
-		filepath.Join(sshDir, "id_ed25519.pub"),
-		filepath.Join(sshDir, "id_rsa.pub"),
-	} {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return ""
-}
-
 // chooseSSHKeyAction shows the generate/existing/browse menu and returns
 // the selected action key. The default lands on "existing" when a key is
 // already available, otherwise "generate".
@@ -1318,27 +1276,20 @@ func chooseSSHKeyAction(suggest string) (string, error) {
 // generateBootstrapKey creates (or reuses) a dedicated pmox ed25519 key at
 // ~/.ssh/pmox_ed25519 and returns its public-key path.
 func generateBootstrapKey(p prompter, sshDir, home string) (string, error) {
-	priv := filepath.Join(sshDir, "pmox_ed25519")
-	pub := priv + ".pub"
-	if _, err := os.Stat(priv); err == nil {
-		// Never clobber an existing key. Reuse its .pub if present.
-		if _, err := os.Stat(pub); err == nil {
-			p.Printf("reusing existing pmox key: %s\n", displayPath(pub, home))
-			return pub, nil
-		}
+	pub, reused, err := sshkey.EnsureBootstrap(sshDir, sshkey.DefaultComment())
+	switch {
+	case errors.Is(err, sshkey.ErrPubKeyMissing):
+		priv := filepath.Join(sshDir, sshkey.BootstrapKeyName)
 		return "", fmt.Errorf("%w: %s exists but %s is missing; remove it or pick another key",
-			exitcode.ErrUserInput, displayPath(priv, home), displayPath(pub, home))
-	}
-	comment := "pmox"
-	if hn, err := os.Hostname(); err == nil && hn != "" {
-		comment = "pmox@" + hn
-	}
-	generated, err := sshkey.Generate(priv, comment)
-	if err != nil {
+			exitcode.ErrUserInput, displayPath(priv, home), displayPath(priv+".pub", home))
+	case err != nil:
 		return "", err
+	case reused:
+		p.Printf("reusing existing pmox key: %s\n", displayPath(pub, home))
+	default:
+		p.Printf("generated new SSH key: %s\n", displayPath(pub, home))
 	}
-	p.Printf("generated new SSH key: %s\n", displayPath(generated, home))
-	return generated, nil
+	return pub, nil
 }
 
 // browseForKey opens a filesystem picker rooted at home. It returns the
@@ -1359,26 +1310,13 @@ func browseForKey(home string) (string, bool) {
 	if err != nil || selected == "" {
 		return "", false
 	}
-	return resolveBrowsedKey(selected), true
-}
-
-// resolveBrowsedKey maps a selected file to the public key pmox should
-// store: a selected private key resolves to its adjacent .pub when that
-// exists; a .pub (or anything else) is used as-is.
-func resolveBrowsedKey(selected string) string {
-	if strings.HasSuffix(selected, ".pub") {
-		return selected
-	}
-	if _, err := os.Stat(selected + ".pub"); err == nil {
-		return selected + ".pub"
-	}
-	return selected
+	return sshkey.ResolvePubKey(selected), true
 }
 
 // selectExistingKey shows a picker of ~/.ssh/*.pub, falling back to a
 // plain-text path prompt.
 func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error) {
-	pubKeys := findPubKeys(sshDir)
+	pubKeys := sshkey.FindPubKeys(sshDir)
 	if len(pubKeys) > 0 {
 		fmt.Println()
 		opts := make([]huh.Option[string], 0, len(pubKeys))
