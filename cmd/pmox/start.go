@@ -45,9 +45,6 @@ IP-wait loop. --wait overrides the default 3m budget for the IP poll.`,
 
 func runStart(cmd *cobra.Command, args []string, f *startFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err

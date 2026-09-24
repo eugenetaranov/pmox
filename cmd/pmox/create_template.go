@@ -55,9 +55,6 @@ Requires PVE 8.0+ and an interactive TTY.`,
 
 func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Enforce interactive TTY — the flow has picker prompts that
 	// cannot be driven from a pipe or file.

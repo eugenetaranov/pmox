@@ -76,9 +76,6 @@ type doctorDeps struct {
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	parent := cmd.Context()
-	if parent == nil {
-		parent = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
 

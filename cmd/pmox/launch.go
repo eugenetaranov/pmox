@@ -168,9 +168,6 @@ func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Resolve hook flags before any config load / server resolution /
 	// PVE call so --post-create + --tack (etc.) fail immediately with
