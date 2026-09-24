@@ -2,7 +2,6 @@ package pveclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -20,22 +19,16 @@ type StorageContent struct {
 // storages (e.g. lvm, zfspool) return an empty path; callers should
 // treat that as an error.
 func (c *Client) GetStoragePath(ctx context.Context, storage string) (string, error) {
-	body, err := c.request(ctx, "GET", "/storage/"+storage, nil)
+	data, err := getData[struct {
+		Path string `json:"path"`
+	}](ctx, c, "/storage/"+url.PathEscape(storage), nil, "storage response")
 	if err != nil {
 		return "", err
 	}
-	var resp struct {
-		Data struct {
-			Path string `json:"path"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("parse storage response: %w", err)
-	}
-	if resp.Data.Path == "" {
+	if data.Path == "" {
 		return "", fmt.Errorf("storage %s has no on-disk path (block-only storage cannot hold snippets)", storage)
 	}
-	return resp.Data.Path, nil
+	return data.Path, nil
 }
 
 // DeleteSnippet removes a snippet file from storage by issuing
@@ -43,7 +36,10 @@ func (c *Client) GetStoragePath(ctx context.Context, storage string) (string, er
 // 404 is mapped to ErrNotFound so callers can treat an already-missing
 // file as success.
 func (c *Client) DeleteSnippet(ctx context.Context, node, storage, filename string) error {
-	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s:snippets/%s", node, storage, storage, filename)
+	// The volid's "snippets/" separator stays a literal slash (as PVE
+	// expects); only the caller-supplied components are escaped.
+	st := url.PathEscape(storage)
+	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s:snippets/%s", url.PathEscape(node), st, st, url.PathEscape(filename))
 	_, err := c.request(ctx, "DELETE", path, nil)
 	return err
 }
@@ -55,18 +51,8 @@ func (c *Client) ListStorageContent(ctx context.Context, node, storage, contentF
 	if contentFilter != "" {
 		q.Set("content", contentFilter)
 	}
-	path := fmt.Sprintf("/nodes/%s/storage/%s/content", node, storage)
-	body, err := c.request(ctx, "GET", path, q)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Data []StorageContent `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse storage content response: %w", err)
-	}
-	return resp.Data, nil
+	path := fmt.Sprintf("/nodes/%s/storage/%s/content", url.PathEscape(node), url.PathEscape(storage))
+	return getData[[]StorageContent](ctx, c, path, q, "storage content response")
 }
 
 // UpdateStorageContent rewrites the `content` list of a cluster-wide
@@ -78,7 +64,7 @@ func (c *Client) ListStorageContent(ctx context.Context, node, storage, contentF
 func (c *Client) UpdateStorageContent(ctx context.Context, storage string, content []string) error {
 	form := url.Values{}
 	form.Set("content", strings.Join(content, ","))
-	_, err := c.requestForm(ctx, "PUT", "/storage/"+storage, form)
+	_, err := c.requestForm(ctx, "PUT", "/storage/"+url.PathEscape(storage), form)
 	return err
 }
 
@@ -92,7 +78,7 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage string, params m
 	for k, v := range params {
 		form.Set(k, v)
 	}
-	path := fmt.Sprintf("/nodes/%s/storage/%s/download-url", node, storage)
+	path := fmt.Sprintf("/nodes/%s/storage/%s/download-url", url.PathEscape(node), url.PathEscape(storage))
 	body, err := c.requestForm(ctx, "POST", path, form)
 	if err != nil {
 		return "", err

@@ -1,6 +1,7 @@
 package pveclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 )
 
 // VMStatus is the parsed /status/current response for a single VM.
+// Numeric fields are decoded leniently (numbers, quoted numbers or bools).
 type VMStatus struct {
 	Status    string `json:"status"`    // "running" | "stopped"
 	QMPStatus string `json:"qmpstatus"` // finer-grained status
@@ -21,6 +23,12 @@ type VMStatus struct {
 	MaxMem    int64  `json:"maxmem"`
 }
 
+// State returns the VM's status as a VMState.
+func (s VMStatus) State() VMState { return VMState(s.Status) }
+
+// IsRunning reports whether the VM's status is "running".
+func (s VMStatus) IsRunning() bool { return s.State() == StateRunning }
+
 // Clone issues POST /nodes/{node}/qemu/{sourceID}/clone and returns the
 // UPID of the asynchronous clone task. Always performs a full clone
 // (full=1) so the new VM is independent of the source template.
@@ -29,7 +37,7 @@ func (c *Client) Clone(ctx context.Context, node string, sourceID, newID int, na
 	form.Set("newid", strconv.Itoa(newID))
 	form.Set("name", name)
 	form.Set("full", "1")
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/clone", node, sourceID)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/clone", url.PathEscape(node), sourceID)
 	body, err := c.requestForm(ctx, "POST", path, form)
 	if err != nil {
 		return "", err
@@ -44,7 +52,7 @@ func (c *Client) Resize(ctx context.Context, node string, vmid int, disk, size s
 	form := url.Values{}
 	form.Set("disk", disk)
 	form.Set("size", size)
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/resize", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/resize", url.PathEscape(node), vmid)
 	_, err := c.requestForm(ctx, "PUT", path, form)
 	return err
 }
@@ -69,7 +77,7 @@ func (c *Client) SetConfig(ctx context.Context, node string, vmid int, kv map[st
 		}
 		form.Set(k, v)
 	}
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", url.PathEscape(node), vmid)
 	_, err := c.requestForm(ctx, "POST", path, form)
 	return err
 }
@@ -77,7 +85,7 @@ func (c *Client) SetConfig(ctx context.Context, node string, vmid int, kv map[st
 // Start issues POST /nodes/{node}/qemu/{vmid}/status/start and returns
 // the UPID of the asynchronous start task.
 func (c *Client) Start(ctx context.Context, node string, vmid int) (string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/start", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/start", url.PathEscape(node), vmid)
 	body, err := c.requestForm(ctx, "POST", path, nil)
 	if err != nil {
 		return "", err
@@ -89,7 +97,7 @@ func (c *Client) Start(ctx context.Context, node string, vmid int) (string, erro
 // graceful, ACPI-driven power-off) and returns the UPID of the
 // asynchronous task.
 func (c *Client) Shutdown(ctx context.Context, node string, vmid int) (string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/shutdown", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/shutdown", url.PathEscape(node), vmid)
 	body, err := c.requestForm(ctx, "POST", path, nil)
 	if err != nil {
 		return "", err
@@ -101,7 +109,7 @@ func (c *Client) Shutdown(ctx context.Context, node string, vmid int) (string, e
 // power-off, no guest cooperation) and returns the UPID of the
 // asynchronous task.
 func (c *Client) Stop(ctx context.Context, node string, vmid int) (string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/stop", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/stop", url.PathEscape(node), vmid)
 	body, err := c.requestForm(ctx, "POST", path, nil)
 	if err != nil {
 		return "", err
@@ -112,27 +120,22 @@ func (c *Client) Stop(ctx context.Context, node string, vmid int) (string, error
 // GetStatus issues GET /nodes/{node}/qemu/{vmid}/status/current and
 // returns the parsed VMStatus block.
 func (c *Client) GetStatus(ctx context.Context, node string, vmid int) (*VMStatus, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/current", node, vmid)
-	body, err := c.request(ctx, "GET", path, nil)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/current", url.PathEscape(node), vmid)
+	st, err := getData[VMStatus](ctx, c, path, nil, "status response")
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Data VMStatus `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("parse status response: %w", err)
-	}
-	return &payload.Data, nil
+	return &st, nil
 }
 
 // GetConfig issues GET /nodes/{node}/qemu/{vmid}/config and returns
 // the VM's full config as a string map. PVE returns values as a mix
 // of ints, strings, and occasionally bools (e.g. `template: 1`); all
 // values are stringified via fmt.Sprintf("%v", v) so callers can treat
-// the map uniformly.
+// the map uniformly. Numbers are decoded as json.Number so large ints
+// keep their literal form (memory 1048576, not "1.048576e+06").
 func (c *Client) GetConfig(ctx context.Context, node string, vmid int) (map[string]string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", url.PathEscape(node), vmid)
 	body, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -140,7 +143,9 @@ func (c *Client) GetConfig(ctx context.Context, node string, vmid int) (map[stri
 	var payload struct {
 		Data map[string]any `json:"data"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&payload); err != nil {
 		return nil, fmt.Errorf("parse config response: %w", err)
 	}
 	out := make(map[string]string, len(payload.Data))
@@ -166,7 +171,7 @@ func (c *Client) CreateVM(ctx context.Context, node string, vmid int, kv map[str
 	for k, v := range kv {
 		form.Set(k, v)
 	}
-	path := fmt.Sprintf("/nodes/%s/qemu", node)
+	path := fmt.Sprintf("/nodes/%s/qemu", url.PathEscape(node))
 	body, err := c.requestForm(ctx, "POST", path, form)
 	if err != nil {
 		return "", err
@@ -179,7 +184,7 @@ func (c *Client) CreateVM(ctx context.Context, node string, vmid int, kv map[str
 // must be stopped; calling this on a running VM returns an API
 // error from PVE.
 func (c *Client) ConvertToTemplate(ctx context.Context, node string, vmid int) error {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/template", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/template", url.PathEscape(node), vmid)
 	_, err := c.requestForm(ctx, "POST", path, nil)
 	return err
 }
@@ -189,7 +194,7 @@ func (c *Client) ConvertToTemplate(ctx context.Context, node string, vmid int) e
 // stopping the VM first — deleting a running VM will fail at the PVE
 // side.
 func (c *Client) Delete(ctx context.Context, node string, vmid int) (string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d", node, vmid)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d", url.PathEscape(node), vmid)
 	body, err := c.request(ctx, "DELETE", path, nil)
 	if err != nil {
 		return "", err
@@ -201,11 +206,5 @@ func (c *Client) Delete(ctx context.Context, node string, vmid int) (string, err
 // envelope — the shape PVE uses to return UPID strings for async
 // operations.
 func parseDataString(body []byte) (string, error) {
-	var payload struct {
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", fmt.Errorf("parse data string response: %w", err)
-	}
-	return payload.Data, nil
+	return decodeData[string](body, "data string response")
 }
