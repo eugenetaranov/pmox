@@ -77,28 +77,31 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 		confirmed  = map[string]bool{} // canonical URLs whose overwrite was OK'd
 	)
 
+	// Once the wizard has reached Review once, editing a single stage from
+	// there returns straight back to Review instead of cascading forward
+	// through the remaining stages (which would force re-entering data the
+	// user already provided).
+	reachedReview := false
+
 	stage := "connection"
 	for {
 		switch stage {
 		case "connection":
 			printTabs(p, "Connection")
-			rc, in, cerr := establishConnectionFn(ctx, p, cfg, prevConn)
+			rc, in, cerr := establishConnectionFn(ctx, p, cfg, prevConn, confirmed)
 			if cerr != nil {
-				return cerr
-			}
-			prevConn, conn = in, rc
-			if _, exists := cfg.Servers[conn.canonical]; exists && !confirmed[conn.canonical] {
-				ans, aerr := p.Prompt(fmt.Sprintf("Server %s is already configured. Overwrite? [y/N]: ", conn.canonical))
-				if aerr != nil {
-					return aerr
-				}
-				if strings.ToLower(strings.TrimSpace(ans)) != "y" {
+				if errors.Is(cerr, errOverwriteDeclined) {
 					p.Printf("aborted; no changes\n")
 					return nil
 				}
-				confirmed[conn.canonical] = true
+				return cerr
 			}
-			stage = "defaults"
+			prevConn, conn = in, rc
+			if reachedReview {
+				stage = "review"
+			} else {
+				stage = "defaults"
+			}
 		case "defaults":
 			printTabs(p, "Defaults")
 			d, derr := collectDefaultsFn(ctx, p, conn, defs, haveDefs)
@@ -106,7 +109,11 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 				return derr
 			}
 			defs, haveDefs = d, true
-			stage = "access"
+			if reachedReview {
+				stage = "review"
+			} else {
+				stage = "access"
+			}
 		case "access":
 			printTabs(p, "Access")
 			a, aerr := collectAccessFn(ctx, p, conn.canonical, acc, haveAccess)
@@ -116,6 +123,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			acc, haveAccess = a, true
 			stage = "review"
 		case "review":
+			reachedReview = true
 			printTabs(p, "Review")
 			action, rerr := reviewFn(p, reviewRows(conn, defs, acc))
 			if rerr != nil {
@@ -139,9 +147,17 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 	}
 }
 
-// establishConnection runs the Connection form, then probes + authenticates,
-// looping back to the form (values preserved) on any failure.
-func establishConnection(ctx context.Context, p prompter, _ *config.Config, prev connInputs) (resolvedConn, connInputs, error) {
+// errOverwriteDeclined signals that the user chose not to overwrite an
+// already-configured server, before anything (including a server-side API
+// token) was created for it.
+var errOverwriteDeclined = errors.New("overwrite declined")
+
+// establishConnection runs the Connection form, confirms overwrite of an
+// already-configured server, then probes + authenticates — looping back to
+// the form (values preserved) on any failure. The overwrite check happens
+// before any server-side mutation (token creation), so declining never
+// leaves an orphaned token on the Proxmox host.
+func establishConnection(ctx context.Context, p prompter, cfg *config.Config, prev connInputs, confirmed map[string]bool) (resolvedConn, connInputs, error) {
 	for {
 		in, err := runConnectionForm(p, prev)
 		if err != nil {
@@ -154,6 +170,18 @@ func establishConnection(ctx context.Context, p prompter, _ *config.Config, prev
 			p.Errf("%v\n", cerr)
 			continue
 		}
+
+		if _, exists := cfg.Servers[canonical]; exists && !confirmed[canonical] {
+			overwrite, aerr := tui.Confirm(fmt.Sprintf("Server %s is already configured. Overwrite?", canonical), false)
+			if aerr != nil {
+				return resolvedConn{}, in, aerr
+			}
+			if !overwrite {
+				return resolvedConn{}, in, errOverwriteDeclined
+			}
+			confirmed[canonical] = true
+		}
+
 		insecure, ok := probeURL(ctx, p, canonical)
 		if !ok {
 			continue // probeURL already reported why
@@ -325,12 +353,26 @@ func runReviewForm(p prompter, rows []string) (string, error) {
 		huh.NewOption("Edit connection (URL / token)", "connection"),
 		huh.NewOption("Edit defaults (node / template / storage / bridge)", "defaults"),
 		huh.NewOption("Edit access (SSH key / user / node SSH)", "access"),
+		huh.NewOption("Cancel — quit without saving", "cancel"),
 	})
 }
 
-// printTabs renders the wizard phase tabs above the current page.
+// stageSubtitles describes what each wizard phase configures, printed under
+// the tab bar so a bare phase name (e.g. "Defaults") isn't the only cue.
+var stageSubtitles = map[string]string{
+	"Connection": "Server URL and API credentials",
+	"Defaults":   "Node · template · storage · snippets · bridge",
+	"Access":     "SSH key, default user, node SSH login",
+	"Review":     "Confirm and write configuration",
+}
+
+// printTabs renders the wizard phase tabs, plus a one-line subtitle for the
+// active phase, above the current page.
 func printTabs(p prompter, active string) {
 	p.Printf("\n%s\n", tui.Steps(active, "Connection", "Defaults", "Access", "Review"))
+	if sub, ok := stageSubtitles[active]; ok {
+		p.Printf("%s\n", tui.Subtitle(sub))
+	}
 }
 
 // runForm runs a huh form (themed), mapping a user abort to a clean

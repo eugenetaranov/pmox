@@ -12,6 +12,7 @@ var (
 	Accent = lipgloss.Color("#D97757") // coral
 	subtle = lipgloss.Color("#6C6C6C")
 	invert = lipgloss.Color("#1A1A1A")
+	warn   = lipgloss.Color("#E5484D") // warm red — errors/warnings on stderr
 )
 
 // Theme returns the shared pmox huh theme so every prompt/form/picker
@@ -49,4 +50,16 @@ func Steps(active string, steps ...string) string {
 		}
 	}
 	return strings.Join(parts, sep)
+}
+
+// Subtitle renders a short line of muted text, e.g. a one-line description
+// under the wizard's phase tabs.
+func Subtitle(text string) string {
+	return lipgloss.NewStyle().Foreground(subtle).Render(text)
+}
+
+// Warnf renders a warning/error line (e.g. stderr output) in a color that
+// stands out from normal text, so it isn't missed among plain prompt output.
+func Warnf(text string) string {
+	return lipgloss.NewStyle().Foreground(warn).Render(text)
 }

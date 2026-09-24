@@ -57,6 +57,7 @@ func newCleanupCmd() *cobra.Command {
   tack-profile  remembered tack profiles for servers/VMs that are gone
   secret        file-backend secrets.yaml entries for removed servers
   known-host    guest known_hosts pins for IPs no longer on a pmox VM
+  ssh-key       the pmox-generated bootstrap SSH key, if no server uses it
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
 
 Dry-run by default; pass --apply to delete. On a terminal it shows a
@@ -104,6 +105,7 @@ var cleanupCategories = []cleanupCategory{
 	{"tack-profile", "Stale tack profiles", false},
 	{"secret", "Orphaned secrets", false},
 	{"known-host", "Stale known_hosts pins", false},
+	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
 }
 
 func categoryByKey(k string) (cleanupCategory, bool) {
@@ -272,6 +274,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	items = append(items, cloudInitItems(cfg)...)
 	items = append(items, tackProfileItems(cfg, vmidsByURL, reachableURLs)...)
 	items = append(items, secretItems(cfg)...)
+	items = append(items, sshKeyItems(cfg)...)
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
@@ -426,6 +429,38 @@ func secretItems(cfg *config.Config) []cleanupItem {
 		})
 	}
 	return items
+}
+
+// sshKeyItems flags the pmox-generated bootstrap SSH key
+// (~/.ssh/pmox_ed25519[.pub], see generateBootstrapKey) when no configured
+// server references it. Only this fixed, pmox-owned path is ever
+// considered — a key the user pointed pmox at via "use existing" or
+// "browse" is never a cleanup candidate.
+func sshKeyItems(cfg *config.Config) []cleanupItem {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	priv := filepath.Join(home, ".ssh", "pmox_ed25519")
+	pub := priv + ".pub"
+	if _, err := os.Stat(pub); err != nil {
+		return nil
+	}
+	for _, srv := range cfg.Servers {
+		if srv.SSHPubkey == pub {
+			return nil // still in use
+		}
+	}
+	return []cleanupItem{{
+		Category: "ssh-key",
+		Detail:   "orphaned pmox bootstrap SSH key " + pub + " (and its private key)",
+		apply: func() error {
+			if err := os.Remove(priv); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return os.Remove(pub)
+		},
+	}}
 }
 
 // cleanupClient builds a PVE client for a configured server, pulling its

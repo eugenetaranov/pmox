@@ -11,21 +11,24 @@ import (
 const formURL = "https://pve.home.lan:8006/api2/json"
 
 // stubFormSeams replaces the init form seams with canned collectors and the
-// given sequence of review actions, restoring them on cleanup.
-func stubFormSeams(t *testing.T, reviewActions ...string) *int {
+// given sequence of review actions, restoring them on cleanup. Returns call
+// counters for collectDefaults and collectAccess so tests can assert on
+// stage re-entry.
+func stubFormSeams(t *testing.T, reviewActions ...string) (defaultsCalls, accessCalls *int) {
 	t.Helper()
 	origEst, origDef, origAcc, origRev, origInter := establishConnectionFn, collectDefaultsFn, collectAccessFn, reviewFn, interactiveFn
 	interactiveFn = func() bool { return true }
-	defaultsCalls := 0
+	defaultsCalls, accessCalls = new(int), new(int)
 
-	establishConnectionFn = func(_ context.Context, _ prompter, _ *config.Config, _ connInputs) (resolvedConn, connInputs, error) {
+	establishConnectionFn = func(_ context.Context, _ prompter, _ *config.Config, _ connInputs, _ map[string]bool) (resolvedConn, connInputs, error) {
 		return resolvedConn{canonical: formURL, tokenID: "root@pam!pmox", secret: "sek", insecure: false}, connInputs{}, nil
 	}
 	collectDefaultsFn = func(_ context.Context, _ prompter, _ resolvedConn, _ defaultsAnswers, _ bool) (defaultsAnswers, error) {
-		defaultsCalls++
+		*defaultsCalls++
 		return defaultsAnswers{node: "pve", template: "9000", storage: "local-lvm", snippetStorage: "local", bridge: "vmbr0"}, nil
 	}
 	collectAccessFn = func(_ context.Context, _ prompter, _ string, _ accessAnswers, _ bool) (accessAnswers, error) {
+		*accessCalls++
 		return accessAnswers{sshKey: "/tmp/none.pub", user: "ubuntu", nodeSSH: &config.NodeSSH{User: "root", Auth: "key", KeyPath: "/tmp/none"}}, nil
 	}
 	i := 0
@@ -40,7 +43,7 @@ func stubFormSeams(t *testing.T, reviewActions ...string) *int {
 	t.Cleanup(func() {
 		establishConnectionFn, collectDefaultsFn, collectAccessFn, reviewFn, interactiveFn = origEst, origDef, origAcc, origRev, origInter
 	})
-	return &defaultsCalls
+	return defaultsCalls, accessCalls
 }
 
 func TestRunInteractiveFormConfirmWrites(t *testing.T) {
@@ -66,18 +69,43 @@ func TestRunInteractiveFormConfirmWrites(t *testing.T) {
 
 func TestRunInteractiveFormBackToDefaultsThenConfirm(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	calls := stubFormSeams(t, "defaults", "confirm") // go back to defaults once, then confirm
+	defaultsCalls, accessCalls := stubFormSeams(t, "defaults", "confirm") // go back to defaults once, then confirm
 
 	p := &fakePrompter{}
 	if err := runInteractive(context.Background(), p); err != nil {
 		t.Fatalf("runInteractive(form): %v", err)
 	}
 	// collectDefaults runs once on the first pass, again after "defaults".
-	if *calls != 2 {
-		t.Errorf("collectDefaults called %d times, want 2", *calls)
+	if *defaultsCalls != 2 {
+		t.Errorf("collectDefaults called %d times, want 2", *defaultsCalls)
+	}
+	// Once Review has been reached, editing Defaults must return straight
+	// to Review rather than cascading forward through Access again.
+	if *accessCalls != 1 {
+		t.Errorf("collectAccess called %d times, want 1 (editing defaults shouldn't re-run access)", *accessCalls)
 	}
 	if _, err := config.Load(); err != nil {
 		t.Fatalf("load: %v", err)
+	}
+	cfg, _ := config.Load()
+	if cfg.Servers[formURL] == nil {
+		t.Error("server not written after back-then-confirm")
+	}
+}
+
+func TestRunInteractiveFormBackToAccessThenConfirm(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	defaultsCalls, accessCalls := stubFormSeams(t, "access", "confirm") // go back to access once, then confirm
+
+	p := &fakePrompter{}
+	if err := runInteractive(context.Background(), p); err != nil {
+		t.Fatalf("runInteractive(form): %v", err)
+	}
+	if *defaultsCalls != 1 {
+		t.Errorf("collectDefaults called %d times, want 1 (editing access shouldn't re-run defaults)", *defaultsCalls)
+	}
+	if *accessCalls != 2 {
+		t.Errorf("collectAccess called %d times, want 2", *accessCalls)
 	}
 	cfg, _ := config.Load()
 	if cfg.Servers[formURL] == nil {

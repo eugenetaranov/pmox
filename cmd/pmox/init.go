@@ -147,7 +147,7 @@ func (p *stdPrompter) Printf(format string, args ...interface{}) {
 }
 
 func (p *stdPrompter) Errf(format string, args ...interface{}) {
-	fmt.Fprintf(p.err, format, args...)
+	fmt.Fprint(p.err, tui.Warnf(fmt.Sprintf(format, args...)))
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -1160,13 +1160,9 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 			userAns = "root"
 		}
 
-		authAns, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
+		authAns, err := promptSSHAuthMethod(p)
 		if err != nil {
 			return nil, "", "", err
-		}
-		authAns = strings.ToLower(strings.TrimSpace(authAns))
-		if authAns == "" {
-			authAns = "p"
 		}
 
 		cfg := pvessh.Config{
@@ -1247,6 +1243,43 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 		return ns, password, keyPass, nil
 	}
 	return nil, "", "", fmt.Errorf("%w: too many failed SSH credential attempts", exitcode.ErrUserInput)
+}
+
+// promptSSHAuthMethod asks how to authenticate the node SSH connection.
+// Interactively it's a themed picker; non-interactively (the linear
+// fallback, no TTY) it falls back to a plain "p/k" text prompt.
+func promptSSHAuthMethod(p prompter) (string, error) {
+	if !interactiveFn() {
+		ans, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
+		if err != nil {
+			return "", err
+		}
+		ans = strings.ToLower(strings.TrimSpace(ans))
+		if ans == "" {
+			ans = "p"
+		}
+		return ans, nil
+	}
+
+	choice := "password"
+	err := huh.NewSelect[string]().
+		Title("Authenticate with").
+		Options(
+			huh.NewOption("Password", "password"),
+			huh.NewOption("SSH key file", "key"),
+		).
+		Value(&choice).
+		Filtering(false).
+		WithTheme(tui.Theme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
+		}
+		return "", err
+	}
+	return choice, nil
 }
 
 // sshHostFromURL extracts host:22 from a canonical PVE API URL.
