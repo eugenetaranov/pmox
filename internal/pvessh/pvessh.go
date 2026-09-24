@@ -121,6 +121,14 @@ func clientHandshake(ctx context.Context, conn net.Conn, addr string, cfg *ssh.C
 		return nil, nil, nil, fmt.Errorf("%w (%w)", ctx.Err(), err)
 	}
 	if err != nil {
+		// The I/O deadline can be ctx's own deadline, so the read may
+		// time out a hair before the AfterFunc fires; attribute it to ctx.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, nil, fmt.Errorf("%w (%w)", ctxErr, err)
+		}
+		if dl, ok := ctx.Deadline(); ok && !time.Now().Before(dl) {
+			return nil, nil, nil, fmt.Errorf("%w (%w)", context.DeadlineExceeded, err)
+		}
 		return nil, nil, nil, err
 	}
 	_ = conn.SetDeadline(time.Time{})
