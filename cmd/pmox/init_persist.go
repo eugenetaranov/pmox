@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -115,8 +114,7 @@ func writeInitialCloudInit(p prompter, canonicalURL, user, sshKeyPath string) {
 // the stored user+pubkey. If more than one server is configured, it
 // prompts the user to pick one. If the target file already exists, it
 // prompts for overwrite confirmation before clobbering user edits.
-func runRegenCloudInit(ctx context.Context, p prompter) error {
-	_ = ctx
+func runRegenCloudInit(p prompter) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -135,7 +133,10 @@ func runRegenCloudInit(ctx context.Context, p prompter) error {
 		for _, u := range urls {
 			opts = append(opts, huh.NewOption(u, u))
 		}
-		canonical = tui.SelectOne("Select server", opts, urls[0])
+		canonical, err = tui.SelectOne("Select server", opts, urls[0])
+		if err != nil {
+			return err
+		}
 		if canonical == "" {
 			return fmt.Errorf("%w: no server selected", exitcode.ErrUserInput)
 		}

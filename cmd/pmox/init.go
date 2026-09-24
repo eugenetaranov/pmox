@@ -82,7 +82,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return runRemove(newStdPrompter(ctx), configureRemove)
 	}
 	if configureRegenCloudCI {
-		return runRegenCloudInit(ctx, newStdPrompter(ctx))
+		return runRegenCloudInit(newStdPrompter(ctx))
 	}
 	return runInteractive(ctx, newStdPrompter(ctx))
 }
@@ -161,25 +161,9 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 
 	// Steps 7–10: auto-discovery pickers
 	client := pveclient.New(canonical, tokenID, secret, insecure)
-	node := pickNode(ctx, p, client)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	template := pickTemplate(ctx, p, client, node)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	storage := pickStorage(ctx, p, client, node)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	snippetStorage := pickSnippetStorage(ctx, p, client, node)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	bridge := pickBridge(ctx, p, client, node)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
+	defs, err := discoverDefaults(ctx, p, client)
+	if err != nil {
+		return err
 	}
 
 	// Step 11: SSH key
@@ -206,7 +190,8 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 
 	return persistServer(p, cfg, persistInput{
 		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
-		node: node, template: template, storage: storage, snippetStorage: snippetStorage, bridge: bridge,
+		node: defs.node, template: defs.template, storage: defs.storage,
+		snippetStorage: defs.snippetStorage, bridge: defs.bridge,
 		sshKey: sshKey, user: user, nodeSSH: nodeSSH, sshPassword: sshPassword, sshKeyPass: sshKeyPass,
 	})
 }

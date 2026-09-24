@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 const (
@@ -40,33 +40,62 @@ func setupCfg(t *testing.T, n int) *config.Config {
 	return cfg
 }
 
-// pipeStdin returns an *os.File that is a pipe read-end — never a TTY.
-// Close the returned cleanup function in a defer.
-func pipeStdin(t *testing.T) (*os.File, func()) {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
+// baseOpts returns non-interactive options (no Pick) for cfg.
+func baseOpts(cfg *config.Config) Options {
+	return Options{Cfg: cfg}
+}
+
+func TestResolve_PickerChoosesContext(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	opts := baseOpts(cfg)
+	var offered []Choice
+	opts.Pick = func(title string, choices []Choice) (string, error) {
+		offered = choices
+		return urlB, nil
 	}
-	return r, func() {
-		_ = r.Close()
-		_ = w.Close()
+
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.URL != urlB || r.Source != "interactive picker" {
+		t.Errorf("got URL=%q Source=%q, want %q via interactive picker", r.URL, r.Source, urlB)
+	}
+	if len(offered) != 2 {
+		t.Errorf("offered %d choices, want 2", len(offered))
 	}
 }
 
-func baseOpts(t *testing.T, cfg *config.Config) (Options, func()) {
-	t.Helper()
-	stdin, cleanup := pipeStdin(t)
-	return Options{
-		Cfg:   cfg,
-		Stdin: stdin,
-	}, cleanup
+// TestResolve_PickerAbortNeverFallsBack pins the Ctrl-C fix: an aborted
+// context picker must surface its error and never resolve to the first
+// context (which would run e.g. `pmox delete` against it).
+func TestResolve_PickerAbortNeverFallsBack(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	opts := baseOpts(cfg)
+	opts.Pick = func(string, []Choice) (string, error) { return "", tui.ErrAborted }
+
+	r, err := Resolve(context.Background(), opts)
+	if !errors.Is(err, tui.ErrAborted) {
+		t.Fatalf("err = %v, want picker abort error", err)
+	}
+	if r != nil {
+		t.Errorf("resolved %q after abort, want nil", r.URL)
+	}
+}
+
+func TestResolve_PickerUnknownValue(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	opts := baseOpts(cfg)
+	opts.Pick = func(string, []Choice) (string, error) { return "https://nope:8006/api2/json", nil }
+
+	if _, err := Resolve(context.Background(), opts); err == nil {
+		t.Fatal("expected error for unknown picker value")
+	}
 }
 
 func TestResolve_FlagTakesPrecedence(t *testing.T) {
 	cfg := setupCfg(t, 2)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Flag = urlB
 	opts.Env = urlA // should be ignored
 
@@ -84,8 +113,7 @@ func TestResolve_FlagTakesPrecedence(t *testing.T) {
 
 func TestResolve_EnvWhenFlagUnset(t *testing.T) {
 	cfg := setupCfg(t, 2)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Env = urlA
 
 	r, err := Resolve(context.Background(), opts)
@@ -101,8 +129,7 @@ func TestResolve_CurrentContextWhenSet(t *testing.T) {
 	cfg := setupCfg(t, 2)
 	// pve2's derived context name is its host, "pve2.lan".
 	cfg.CurrentContext = "pve2.lan"
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
@@ -119,8 +146,7 @@ func TestResolve_CurrentContextWhenSet(t *testing.T) {
 func TestResolve_ContextFlagByName(t *testing.T) {
 	cfg := setupCfg(t, 2)
 	cfg.Servers[urlB].Name = "lab" // explicit context name
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Context = "lab"
 
 	r, err := Resolve(context.Background(), opts)
@@ -138,8 +164,7 @@ func TestResolve_ContextFlagByName(t *testing.T) {
 func TestResolve_ServerFlagAcceptsContextName(t *testing.T) {
 	cfg := setupCfg(t, 2)
 	cfg.Servers[urlA].Name = "prod"
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Flag = "prod" // --server accepts a context name too
 
 	r, err := Resolve(context.Background(), opts)
@@ -154,8 +179,7 @@ func TestResolve_ServerFlagAcceptsContextName(t *testing.T) {
 func TestResolve_FlagOverridesCurrentContext(t *testing.T) {
 	cfg := setupCfg(t, 2)
 	cfg.CurrentContext = "pve2.lan"
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Flag = urlA // explicit flag beats the current context
 
 	r, err := Resolve(context.Background(), opts)
@@ -172,8 +196,7 @@ func TestResolve_StaleCurrentContextIgnored(t *testing.T) {
 	// hard-fail; with a single remaining server the ladder falls through.
 	cfg := setupCfg(t, 1)
 	cfg.CurrentContext = "gone"
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
@@ -186,8 +209,7 @@ func TestResolve_StaleCurrentContextIgnored(t *testing.T) {
 
 func TestResolve_SingleConfigured(t *testing.T) {
 	cfg := setupCfg(t, 1)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
@@ -200,8 +222,7 @@ func TestResolve_SingleConfigured(t *testing.T) {
 
 func TestResolve_ZeroServers(t *testing.T) {
 	cfg := setupCfg(t, 0)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	_, err := Resolve(context.Background(), opts)
 	if err == nil {
@@ -217,8 +238,7 @@ func TestResolve_ZeroServers(t *testing.T) {
 
 func TestResolve_NonTTYAmbiguity(t *testing.T) {
 	cfg := setupCfg(t, 2)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	_, err := Resolve(context.Background(), opts)
 	if err == nil {
@@ -238,8 +258,7 @@ func TestResolve_NonTTYAmbiguity(t *testing.T) {
 
 func TestResolve_FlagMissListsCandidates(t *testing.T) {
 	cfg := setupCfg(t, 1)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Flag = "https://pve9.lan:8006/api2/json"
 
 	_, err := Resolve(context.Background(), opts)
@@ -260,8 +279,7 @@ func TestResolve_FlagMissListsCandidates(t *testing.T) {
 
 func TestResolve_InvalidFlagShape(t *testing.T) {
 	cfg := setupCfg(t, 1)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	opts.Flag = "https://[oops" // unparseable URL (bad IPv6 bracket)
 
 	_, err := Resolve(context.Background(), opts)
@@ -282,9 +300,6 @@ func TestResolve_KeychainMiss(t *testing.T) {
 	opts := Options{
 		Cfg: cfg,
 	}
-	stdin, cleanup := pipeStdin(t)
-	defer cleanup()
-	opts.Stdin = stdin
 
 	_, err := Resolve(context.Background(), opts)
 	if err == nil {
@@ -300,8 +315,7 @@ func TestResolve_KeychainMiss(t *testing.T) {
 
 func TestResolve_ContextCancelled(t *testing.T) {
 	cfg := setupCfg(t, 1)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -355,8 +369,7 @@ func TestResolve_NodeSSH_PasswordMode(t *testing.T) {
 	if err := credstore.SetNodeSSHPassword(urlA, "hunter2"); err != nil {
 		t.Fatal(err)
 	}
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -381,8 +394,7 @@ func TestResolve_NodeSSH_KeyModeUnencrypted(t *testing.T) {
 		},
 	}}
 	_ = credstore.Set(urlA, "api")
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -405,8 +417,7 @@ func TestResolve_NodeSSH_KeyModeEncrypted(t *testing.T) {
 	}}
 	_ = credstore.Set(urlA, "api")
 	_ = credstore.SetNodeSSHKeyPassphrase(urlA, "pp")
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -418,8 +429,7 @@ func TestResolve_NodeSSH_KeyModeEncrypted(t *testing.T) {
 
 func TestResolve_NodeSSH_LegacyNoFields(t *testing.T) {
 	cfg := setupCfg(t, 1)
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -439,8 +449,7 @@ func TestResolve_NodeSSH_PasswordMissingInKeyring(t *testing.T) {
 	}}
 	_ = credstore.Set(urlA, "api")
 	// Intentionally no SetNodeSSHPassword — gap should be a hard error.
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	_, err := Resolve(context.Background(), opts)
 	if !errors.Is(err, exitcode.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
@@ -456,8 +465,7 @@ func TestResolve_NodeSSH_UnknownAuthIsError(t *testing.T) {
 		},
 	}}
 	_ = credstore.Set(urlA, "api")
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	_, err := Resolve(context.Background(), opts)
 	if !errors.Is(err, exitcode.ErrUserInput) || !strings.Contains(err.Error(), "kerberos") {
 		t.Fatalf("want ErrUserInput naming the auth mode, got %v", err)
@@ -473,8 +481,7 @@ func TestResolve_NodeSSH_DefaultUserRoot(t *testing.T) {
 		},
 	}}
 	_ = credstore.Set(urlA, "api")
-	opts, cleanup := baseOpts(t, cfg)
-	defer cleanup()
+	opts := baseOpts(cfg)
 	r, err := Resolve(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)

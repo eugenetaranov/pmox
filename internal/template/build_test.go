@@ -125,9 +125,9 @@ func baseOpts(f *fakePVE) Options {
 		Bridge:              "vmbr0",
 		Wait:                5 * time.Second,
 		CatalogueURL:        f.catalogue.URL,
-		PickImage:           func([]ImageEntry) int { return 0 },
-		PickTargetStorage:   func([]pveclient.Storage) int { return 0 },
-		PickSnippetsStorage: func([]pveclient.Storage) int { return 0 },
+		PickImage:           func([]ImageEntry) (int, error) { return 0, nil },
+		PickTargetStorage:   func([]pveclient.Storage) (int, error) { return 0, nil },
+		PickSnippetsStorage: func([]pveclient.Storage) (int, error) { return 0, nil },
 		UploadSnippet: func(ctx context.Context, storagePath, filename string, content []byte) error {
 			return nil
 		},

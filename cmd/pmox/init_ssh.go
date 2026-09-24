@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/charmbracelet/huh"
 
@@ -184,11 +183,7 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 		WithTheme(tui.Theme()).
 		Run()
 	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
-		}
-		return "", err
+		return "", tui.AbortErr(err)
 	}
 	return choice, nil
 }
@@ -213,11 +208,7 @@ func promptSSHKey(p prompter, current string) (string, error) {
 
 	choice, err := chooseSSHKeyAction(suggest)
 	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
-		}
-		return "", err
+		return "", tui.AbortErr(err)
 	}
 	switch choice {
 	case "generate":
@@ -329,8 +320,7 @@ func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error)
 			}
 			p.Errf("cannot read %s\n", displayPath(picked, home))
 		} else if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
+			return "", tui.ErrAborted
 		}
 	}
 	return sshKeyTextFallback(p, home, suggest)

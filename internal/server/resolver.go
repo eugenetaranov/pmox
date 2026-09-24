@@ -9,7 +9,7 @@
 //  4. PMOX_CONTEXT env var       (context name)
 //  5. current context            (set via `pmox config use-context`)
 //  6. exactly one configured server  (obvious default)
-//  7. interactive picker             (TTY only)
+//  7. interactive picker             (TTY only; Options.Pick)
 //  8. error                          (non-TTY + ambiguous)
 //
 // --server and PMOX_SERVER accept either a context name or a server URL;
@@ -27,28 +27,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
-
-	"github.com/charmbracelet/huh"
-	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
-	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // Options bundles the inputs Resolve needs. Everything is explicit
 // (no implicit os.Stdin / os.Getenv) so tests can run hermetically.
 type Options struct {
 	Cfg        *config.Config
-	Flag       string   // value of --server (URL or context name), empty if unset
-	Context    string   // value of --context (context name), empty if unset
-	Env        string   // value of PMOX_SERVER (URL or context name)
-	ContextEnv string   // value of PMOX_CONTEXT (context name)
-	Stdin      *os.File // for TTY detection + picker; os.Stdin in prod
+	Flag       string // value of --server (URL or context name), empty if unset
+	Context    string // value of --context (context name), empty if unset
+	Env        string // value of PMOX_SERVER (URL or context name)
+	ContextEnv string // value of PMOX_CONTEXT (context name)
+
+	// Pick draws the interactive context picker (rung 7) and returns the
+	// chosen Choice.Value. Callers set it only when a picker may be shown
+	// (TTY, input not disabled); nil falls through to the ambiguity
+	// error. A non-nil error (e.g. the user aborted) is returned as-is —
+	// Resolve never substitutes a default.
+	Pick func(title string, choices []Choice) (string, error)
+}
+
+// Choice is one entry offered to Options.Pick.
+type Choice struct {
+	Label string
+	Value string
 }
 
 // Resolved is the bundle returned on successful resolution.
@@ -175,19 +182,26 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(urls[0], opts.Cfg.Servers[urls[0]], "single configured")
 	}
 
-	// Rung 7: interactive picker (both streams must be a TTY and input
-	// must not be disabled — otherwise fall through to the error).
-	if opts.Stdin != nil && term.IsTerminal(int(opts.Stdin.Fd())) && tui.StderrIsTerminal() && !tui.NoInput() {
+	// Rung 7: interactive picker (only when the caller supplied one —
+	// otherwise fall through to the error).
+	if opts.Pick != nil {
 		contexts := opts.Cfg.Contexts()
-		options := make([]huh.Option[string], 0, len(contexts))
+		choices := make([]Choice, 0, len(contexts))
 		for _, c := range contexts {
-			options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", c.Name, c.URL), c.URL))
+			choices = append(choices, Choice{Label: fmt.Sprintf("%s (%s)", c.Name, c.URL), Value: c.URL})
 		}
-		selected := tui.SelectOne("Select context", options, contexts[0].URL)
+		selected, err := opts.Pick("Select context", choices)
+		if err != nil {
+			return nil, err
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		return hydrate(selected, opts.Cfg.Servers[selected], "interactive picker")
+		srv, ok := opts.Cfg.Servers[selected]
+		if !ok {
+			return nil, fmt.Errorf("picker returned unknown context %q", selected)
+		}
+		return hydrate(selected, srv, "interactive picker")
 	}
 
 	// Rung 8: non-TTY ambiguity

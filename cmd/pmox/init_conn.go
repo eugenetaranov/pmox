@@ -111,7 +111,7 @@ var selectTokenSourceFn = func() (string, error) {
 	return tui.SelectOne("API token", []huh.Option[string]{
 		huh.NewOption("Generate a new token (log in)", "generate"),
 		huh.NewOption("Paste an existing token", "paste"),
-	}, "generate"), nil
+	}, "generate")
 }
 
 // acquireToken obtains an API token id + secret. Interactively it offers

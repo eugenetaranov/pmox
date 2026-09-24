@@ -8,6 +8,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -22,6 +23,10 @@ const (
 	ExitTimeout      = 7
 	ExitHook         = 8
 	ExitWarnings     = 9 // doctor --strict: all checks passed but warnings present
+
+	// ExitInterrupted is the conventional 128+SIGINT code, used when the
+	// user aborts an interactive prompt (Ctrl-C) or interrupts pmox.
+	ExitInterrupted = 130
 )
 
 // Coder is implemented by errors that already know their exact process
@@ -52,6 +57,8 @@ func From(err error) int {
 		return carrier.ExitCode()
 	}
 	switch {
+	case errors.Is(err, tui.ErrAborted):
+		return ExitInterrupted
 	case errors.Is(err, pveclient.ErrUnauthorized):
 		return ExitUnauthorized
 	case errors.Is(err, pveclient.ErrNotFound):

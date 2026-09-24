@@ -6,11 +6,14 @@ import (
 	"io"
 	"os"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // session is what connect hands back: a PVE client whose API connection
@@ -47,7 +50,7 @@ func connect(ctx context.Context, cmd *cobra.Command, opts connectOptions) (*ses
 		Context:    contextFlag,
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:      opts.Stdin,
+		Pick:       contextPicker(opts.Stdin),
 	})
 	if err != nil {
 		return nil, err
@@ -71,6 +74,22 @@ func buildClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, *s
 		return nil, nil, err
 	}
 	return s.Client, s.Resolved, nil
+}
+
+// contextPicker returns the TUI-backed server.Options.Pick, or nil (no
+// picker; the resolver reports the ambiguity instead) unless stdin and
+// stderr are both terminals and input is not disabled.
+func contextPicker(stdin *os.File) func(string, []server.Choice) (string, error) {
+	if stdin == nil || !term.IsTerminal(int(stdin.Fd())) || !tui.StderrIsTerminal() || tui.NoInput() {
+		return nil
+	}
+	return func(title string, choices []server.Choice) (string, error) {
+		opts := make([]huh.Option[string], 0, len(choices))
+		for _, c := range choices {
+			opts = append(opts, huh.NewOption(c.Label, c.Value))
+		}
+		return tui.Select(title, opts)
+	}
 }
 
 // newAPIClient builds the PVE client for srv. pin, when non-empty, is

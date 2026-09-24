@@ -311,7 +311,10 @@ func TestValidateCredentialsUnauthorizedReturnsError(t *testing.T) {
 func TestPickOneAutoSingleOption(t *testing.T) {
 	p := &fakePrompter{}
 	opts := []huh.Option[string]{huh.NewOption("pve (online)", "pve")}
-	got := pickOneAuto(p, "Default node", opts, "pve")
+	got, err := pickOneAuto(p, "Default node", opts, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "pve" {
 		t.Errorf("got %q, want pve", got)
 	}
@@ -322,7 +325,10 @@ func TestPickOneAutoSingleOption(t *testing.T) {
 
 func TestPickOneAutoEmptyUsesFallback(t *testing.T) {
 	p := &fakePrompter{}
-	got := pickOneAuto(p, "Default node", nil, "fallback-node")
+	got, err := pickOneAuto(p, "Default node", nil, "fallback-node")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "fallback-node" {
 		t.Errorf("got %q, want fallback-node", got)
 	}
@@ -475,7 +481,7 @@ func TestRegenCloudInit_MissingFile(t *testing.T) {
 	}
 
 	p := &fakePrompter{}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	path, _ := config.CloudInitPath(url)
@@ -507,7 +513,7 @@ func TestRegenCloudInit_Overwrite(t *testing.T) {
 	}
 
 	p := &fakePrompter{inputs: []string{"y"}}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	got, _ := os.ReadFile(path)
@@ -539,7 +545,7 @@ func TestRegenCloudInit_Abort(t *testing.T) {
 	}
 
 	p := &fakePrompter{inputs: []string{"n"}}
-	if err := runRegenCloudInit(context.Background(), p); err != nil {
+	if err := runRegenCloudInit(p); err != nil {
 		t.Fatalf("runRegenCloudInit: %v", err)
 	}
 	got, _ := os.ReadFile(path)
@@ -579,7 +585,10 @@ func TestPickSnippetStorage_SingleMatch(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl,snippets"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local", got)
 	}
@@ -592,16 +601,19 @@ func TestPickSnippetStorage_MultiMatchUsesPicker(t *testing.T) {
 	prev := selectSnippetStorageFn
 	defer func() { selectSnippetStorageFn = prev }()
 	var gotTitle string
-	selectSnippetStorageFn = func(title string, _ []huh.Option[string], _ string) string {
+	selectSnippetStorageFn = func(title string, _ []huh.Option[string], _ string) (string, error) {
 		gotTitle = title
-		return "nfs-shared"
+		return "nfs-shared", nil
 	}
 	fc := &fakeSnippetClient{pools: []pveclient.Storage{
 		{Storage: "local", Type: "dir", Content: "iso,snippets"},
 		{Storage: "nfs-shared", Type: "nfs", Content: "snippets,backup"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "nfs-shared" {
 		t.Errorf("got %q, want nfs-shared", got)
 	}
@@ -616,7 +628,10 @@ func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl"},
 	}}
 	p := &fakePrompter{inputs: []string{"y"}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local", got)
 	}
@@ -633,7 +648,10 @@ func TestPickSnippetStorage_ZeroMatchEnableEnterDefaultsYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{""}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "local" {
 		t.Errorf("got %q, want local (Enter defaults to yes)", got)
 	}
@@ -647,7 +665,10 @@ func TestPickSnippetStorage_ZeroMatchEnableNo(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{"n"}}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "" {
 		t.Errorf("got %q, want empty (declined)", got)
 	}
@@ -664,7 +685,10 @@ func TestPickSnippetStorage_ZeroMatchNoCapableStorage(t *testing.T) {
 		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
 	}}
 	p := &fakePrompter{}
-	got := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
 	}

@@ -95,6 +95,30 @@ func dialPvessh(ctx context.Context, resolved *server.Resolved) (*pvessh.Client,
 	return pvessh.Dial(ctx, cfg)
 }
 
+// pickIndex shows labels in a picker and returns the chosen index,
+// defaulting to 0. An aborted picker returns tui.ErrAborted.
+func pickIndex(title string, labels []string) (int, error) {
+	options := make([]huh.Option[string], 0, len(labels))
+	for i, l := range labels {
+		options = append(options, huh.NewOption(l, strconv.Itoa(i)))
+	}
+	picked, err := tui.SelectOne(title, options, "0")
+	if err != nil {
+		return 0, err
+	}
+	idx, _ := strconv.Atoi(picked)
+	return idx, nil
+}
+
+// storageLabels renders "name (type)" picker labels for pools.
+func storageLabels(pools []pveclient.Storage) []string {
+	labels := make([]string, 0, len(pools))
+	for _, s := range pools {
+		labels = append(labels, fmt.Sprintf("%s (%s)", s.Storage, s.Type))
+	}
+	return labels
+}
+
 // runCreateTemplateWithClient runs everything after server resolution
 // (buildClient already emitted the --verbose server line). Extracted so
 // tests can drive it with a fake PVE server and without touching config
@@ -105,36 +129,19 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 		Node:     node,
 		Bridge:   bridge,
 		Wait:     wait,
-		Stderr:   cmd.ErrOrStderr(),
-		Verbose:  verbose,
 		Progress: newTemplateProgress(cmd.ErrOrStderr()),
-		PickImage: func(entries []template.ImageEntry) int {
-			options := make([]huh.Option[string], 0, len(entries))
-			for i, e := range entries {
-				options = append(options, huh.NewOption(e.Label, strconv.Itoa(i)))
+		PickImage: func(entries []template.ImageEntry) (int, error) {
+			labels := make([]string, 0, len(entries))
+			for _, e := range entries {
+				labels = append(labels, e.Label)
 			}
-			fallback := strconv.Itoa(0)
-			picked := tui.SelectOne("Ubuntu image", options, fallback)
-			idx, _ := strconv.Atoi(picked)
-			return idx
+			return pickIndex("Ubuntu image", labels)
 		},
-		PickTargetStorage: func(pools []pveclient.Storage) int {
-			options := make([]huh.Option[string], 0, len(pools))
-			for i, s := range pools {
-				options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", s.Storage, s.Type), strconv.Itoa(i)))
-			}
-			picked := tui.SelectOne("Target storage for the template disk", options, "0")
-			idx, _ := strconv.Atoi(picked)
-			return idx
+		PickTargetStorage: func(pools []pveclient.Storage) (int, error) {
+			return pickIndex("Target storage for the template disk", storageLabels(pools))
 		},
-		PickSnippetsStorage: func(pools []pveclient.Storage) int {
-			options := make([]huh.Option[string], 0, len(pools))
-			for i, s := range pools {
-				options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", s.Storage, s.Type), strconv.Itoa(i)))
-			}
-			picked := tui.SelectOne("Snippets storage", options, "0")
-			idx, _ := strconv.Atoi(picked)
-			return idx
+		PickSnippetsStorage: func(pools []pveclient.Storage) (int, error) {
+			return pickIndex("Snippets storage", storageLabels(pools))
 		},
 		UploadSnippet: upload,
 	}

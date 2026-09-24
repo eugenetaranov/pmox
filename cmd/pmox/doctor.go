@@ -95,7 +95,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Context:    contextFlag,
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:      nil, // doctor never prompts: no interactive picker
+		Pick:       nil, // doctor never prompts: no interactive picker
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)

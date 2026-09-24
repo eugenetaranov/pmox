@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"syscall"
 
 	"github.com/charmbracelet/huh"
 
@@ -279,18 +278,7 @@ func runConnectionForm(p prompter, prev connInputs) (connInputs, error) {
 // collectDefaults discovers and selects node/template/storage/snippet/bridge
 // (reusing the auto-selecting pickers).
 func collectDefaults(ctx context.Context, p prompter, conn resolvedConn, _ defaultsAnswers, _ bool) (defaultsAnswers, error) {
-	node := pickNode(ctx, p, conn.client)
-	if err := ctx.Err(); err != nil {
-		return defaultsAnswers{}, fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	template := pickTemplate(ctx, p, conn.client, node)
-	storage := pickStorage(ctx, p, conn.client, node)
-	snippet := pickSnippetStorage(ctx, p, conn.client, node)
-	bridge := pickBridge(ctx, p, conn.client, node)
-	if err := ctx.Err(); err != nil {
-		return defaultsAnswers{}, fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	return defaultsAnswers{node: node, template: template, storage: storage, snippetStorage: snippet, bridge: bridge}, nil
+	return discoverDefaults(ctx, p, conn.client)
 }
 
 // collectAccess gathers the SSH key, default user, and node SSH creds.
@@ -376,17 +364,9 @@ func printTabs(p prompter, active string) {
 	}
 }
 
-// runForm runs a huh form (themed), mapping a user abort to a clean
-// SIGINT-based exit.
+// runForm runs a huh form (themed), mapping a user abort to tui.ErrAborted.
 func runForm(f *huh.Form) error {
-	if err := f.WithTheme(tui.Theme()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-			return fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
-		}
-		return err
-	}
-	return nil
+	return tui.AbortErr(f.WithTheme(tui.Theme()).Run())
 }
 
 func validateNonEmpty(s string) error {

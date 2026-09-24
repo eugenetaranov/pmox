@@ -8,7 +8,6 @@ package template
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -30,8 +29,6 @@ type Options struct {
 	Node     string
 	Bridge   string
 	Wait     time.Duration
-	Stderr   io.Writer
-	Verbose  bool
 	Progress Progress
 
 	// CatalogueURL overrides the default Canonical simplestreams
@@ -39,9 +36,9 @@ type Options struct {
 	// leaves it empty (defaultCatalogueURL).
 	CatalogueURL string
 
-	PickImage           func([]ImageEntry) int
-	PickTargetStorage   func([]pveclient.Storage) int
-	PickSnippetsStorage func([]pveclient.Storage) int
+	PickImage           func([]ImageEntry) (int, error)
+	PickTargetStorage   func([]pveclient.Storage) (int, error)
+	PickSnippetsStorage func([]pveclient.Storage) (int, error)
 
 	// UploadSnippet writes the bake snippet to the PVE node's snippets
 	// directory via SFTP. Called once per Run, after the storage path
@@ -103,7 +100,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.PickImage == nil {
 		return nil, fmt.Errorf("pick image: no picker supplied")
 	}
-	idx := opts.PickImage(entries)
+	idx, err := opts.PickImage(entries)
+	if err != nil {
+		return nil, fmt.Errorf("pick image: %w", err)
+	}
 	if idx < 0 || idx >= len(entries) {
 		return nil, fmt.Errorf("pick image: picker returned out-of-range index %d", idx)
 	}

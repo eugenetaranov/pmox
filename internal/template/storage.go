@@ -51,7 +51,7 @@ type storagePick struct {
 	step  string // progress label for the ListStorage call
 	keep  func(pveclient.Storage) bool
 	none  string // error text when no pool survives the filter
-	chose func([]pveclient.Storage) int
+	chose func([]pveclient.Storage) (int, error)
 }
 
 // pickStorage lists storage on opts.Node, keeps active+enabled pools
@@ -75,7 +75,10 @@ func pickStorage(ctx context.Context, opts Options, p storagePick) (string, erro
 	if p.chose == nil {
 		return "", fmt.Errorf("pick %s: no picker supplied", p.what)
 	}
-	idx := p.chose(usable)
+	idx, err := p.chose(usable)
+	if err != nil {
+		return "", fmt.Errorf("pick %s: %w", p.what, err)
+	}
 	if idx < 0 || idx >= len(usable) {
 		return "", fmt.Errorf("pick %s: picker returned out-of-range index %d", p.what, idx)
 	}

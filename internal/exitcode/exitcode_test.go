@@ -8,6 +8,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -40,6 +41,9 @@ func TestFrom(t *testing.T) {
 		{"coder hook", &coderError{code: ExitHook}, ExitHook},
 		{"coder wrapped", fmt.Errorf("x: %w", &coderError{code: ExitWarnings}), ExitWarnings},
 		{"coder beats sentinel", &coderError{code: ExitHook, wrapped: ErrUserInput}, ExitHook},
+		{"picker aborted", tui.ErrAborted, ExitInterrupted},
+		{"picker aborted wrapped", fmt.Errorf("select context: %w", tui.ErrAborted), ExitInterrupted},
+		{"picker aborted beats user input", fmt.Errorf("%w: %w", ErrUserInput, tui.ErrAborted), ExitInterrupted},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +82,7 @@ func TestCodeValues(t *testing.T) {
 		{"ExitTimeout", ExitTimeout, 7},
 		{"ExitHook", ExitHook, 8},
 		{"ExitWarnings", ExitWarnings, 9},
+		{"ExitInterrupted", ExitInterrupted, 130},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
