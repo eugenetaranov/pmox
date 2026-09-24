@@ -12,6 +12,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -215,11 +216,11 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 }
 
 func generateTokenFromInputs(ctx context.Context, p prompter, baseURL string, insecure bool, in connInputs) (string, string, error) {
-	ticket, err := pveclient.Login(ctx, baseURL, insecure, in.loginUser, in.password)
+	issuer, err := setup.Login(ctx, baseURL, insecure, in.loginUser, in.password)
 	if err != nil {
 		return "", "", err
 	}
-	full, secret, err := pveclient.CreateToken(ctx, baseURL, insecure, ticket, in.loginUser, in.tokenName)
+	full, secret, err := issuer.Create(ctx, in.tokenName)
 	if err != nil {
 		return "", "", err
 	}

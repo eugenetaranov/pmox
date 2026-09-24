@@ -22,10 +22,10 @@ import (
 	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/config"
-	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
@@ -198,27 +198,8 @@ func runList(p prompter) error {
 }
 
 func runRemove(p prompter, rawURL string) error {
-	canonical, err := config.CanonicalizeURL(rawURL)
+	canonical, err := setup.RemoveServer(rawURL)
 	if err != nil {
-		return err
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	if !cfg.RemoveServer(canonical) {
-		return fmt.Errorf("%w: server %s is not configured", credstore.ErrNotFound, canonical)
-	}
-	// Clear the current context if it no longer resolves after removal.
-	if cfg.CurrentContext != "" {
-		if _, ok := cfg.ContextByName(cfg.CurrentContext); !ok {
-			cfg.CurrentContext = ""
-		}
-	}
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-	if err := credstore.RemoveAll(canonical); err != nil {
 		return err
 	}
 	p.Printf("removed %s\n", canonical)
@@ -359,29 +340,12 @@ func persistServer(p prompter, cfg *config.Config, in persistInput) error {
 		Insecure:       in.insecure,
 		NodeSSH:        in.nodeSSH,
 	}
-	cfg.AddServer(in.canonical, srv)
-	if err := cfg.Save(); err != nil {
+	if err := setup.SaveServer(cfg, in.canonical, srv, setup.Secrets{
+		Token:                in.secret,
+		NodeSSHPassword:      in.sshPassword,
+		NodeSSHKeyPassphrase: in.sshKeyPass,
+	}); err != nil {
 		return err
-	}
-	if err := credstore.Set(in.canonical, in.secret); err != nil {
-		// Best-effort revert: delete the server we just added and re-save.
-		cfg.RemoveServer(in.canonical)
-		_ = cfg.Save()
-		return fmt.Errorf("save secret to keychain: %w", err)
-	}
-	if in.sshPassword != "" {
-		if err := credstore.SetNodeSSHPassword(in.canonical, in.sshPassword); err != nil {
-			return fmt.Errorf("save node ssh password to keychain: %w", err)
-		}
-	} else {
-		_ = credstore.RemoveNodeSSHPassword(in.canonical)
-	}
-	if in.sshKeyPass != "" {
-		if err := credstore.SetNodeSSHKeyPassphrase(in.canonical, in.sshKeyPass); err != nil {
-			return fmt.Errorf("save node ssh key passphrase to keychain: %w", err)
-		}
-	} else {
-		_ = credstore.RemoveNodeSSHKeyPassphrase(in.canonical)
 	}
 
 	p.Printf("configured server %s\n", in.canonical)
@@ -411,26 +375,25 @@ func writeInitialCloudInit(p prompter, canonicalURL, user, sshKeyPath string) {
 		return
 	}
 	home, _ := os.UserHomeDir()
-	switch err := config.WriteStarterCloudInit(path, user, pubkeyContent); {
+	switch err := config.EnsureStarterCloudInit(path, user, pubkeyContent); {
 	case err == nil:
 		p.Printf("wrote cloud-init template to %s — edit it to customize packages, users, runcmd\n", displayPath(path, home))
-	case errors.Is(err, config.ErrCloudInitExists):
-		// The file exists. Only offer to regenerate when the selected key
-		// isn't already authorized (drift) — so re-running configure with
-		// the same key never nags and never clobbers user edits silently.
-		authorized, hasAny, aerr := config.CloudInitAuthorizesKey(path, pubkeyContent)
-		if aerr == nil && hasAny && !authorized {
-			p.Printf("cloud-init at %s authorizes a different SSH key than the one you selected.\n", displayPath(path, home))
-			ans, _ := p.Prompt("Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: ")
-			if strings.EqualFold(strings.TrimSpace(ans), "y") {
-				if werr := config.WriteCloudInit(path, user, pubkeyContent); werr != nil {
-					p.Errf("warning: could not regenerate cloud-init: %v\n", werr)
-				} else {
-					p.Printf("regenerated cloud-init at %s — relaunch existing VMs to apply the new key\n", displayPath(path, home))
-				}
-				return
-			}
+	case errors.Is(err, config.ErrCloudInitKeyDrift):
+		// Only offer to regenerate when the selected key isn't already
+		// authorized — so re-running configure with the same key never
+		// nags and never clobbers user edits silently.
+		p.Printf("cloud-init at %s authorizes a different SSH key than the one you selected.\n", displayPath(path, home))
+		ans, _ := p.Prompt("Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: ")
+		if !strings.EqualFold(strings.TrimSpace(ans), "y") {
+			p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
+			return
 		}
+		if werr := config.WriteCloudInit(path, user, pubkeyContent); werr != nil {
+			p.Errf("warning: could not regenerate cloud-init: %v\n", werr)
+		} else {
+			p.Printf("regenerated cloud-init at %s — relaunch existing VMs to apply the new key\n", displayPath(path, home))
+		}
+	case errors.Is(err, config.ErrCloudInitExists):
 		p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
 	default:
 		p.Errf("warning: could not write cloud-init template to %s: %v\n", path, err)
@@ -579,19 +542,15 @@ func promptReachableURL(ctx context.Context, p prompter) (string, bool, error) {
 // reachable PVE API, with insecure indicating whether TLS verification
 // had to be skipped.
 func probeURL(ctx context.Context, p prompter, canonical string) (insecure bool, ok bool) {
-	status, perr := probeEndpoint(ctx, canonical, false)
-	switch status {
+	r := setup.ProbeTLS(ctx, probeEndpoint, canonical)
+	switch r.Status {
 	case pveclient.Reachable:
-		return false, true
-	case pveclient.ReachTLSUntrusted:
-		// Confirm the host is actually reachable when we ignore the cert.
-		if s2, _ := probeEndpoint(ctx, canonical, true); s2 == pveclient.Reachable {
-			p.Errf("WARNING: TLS verification failed for %s\n", canonical)
-			p.Errf("         falling back to insecure mode; the certificate will not be verified.\n")
-			p.Errf("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.\n")
-			return true, true
+		if r.Insecure {
+			warnTLSFallback(p, canonical)
 		}
-		p.Errf("cannot reach %s: %v\n", canonical, perr)
+		return r.Insecure, true
+	case pveclient.ReachTLSUntrusted:
+		p.Errf("cannot reach %s: %v\n", canonical, r.Err)
 		return false, false
 	case pveclient.ReachNotPVE:
 		p.Errf("%s responded but does not look like a Proxmox VE API — check the address\n", canonical)
@@ -600,6 +559,14 @@ func probeURL(ctx context.Context, p prompter, canonical string) (insecure bool,
 		p.Errf("nothing responding at %s — check the address and that Proxmox is running\n", hostPort(canonical))
 		return false, false
 	}
+}
+
+// warnTLSFallback tells the user TLS verification failed for baseURL and
+// that pmox fell back to (and will record) insecure mode.
+func warnTLSFallback(p prompter, baseURL string) {
+	p.Errf("WARNING: TLS verification failed for %s\n", baseURL)
+	p.Errf("         falling back to insecure mode; the certificate will not be verified.\n")
+	p.Errf("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.\n")
 }
 
 // hostPort extracts host:port from a canonical URL for error messages,
@@ -666,7 +633,7 @@ func generateToken(ctx context.Context, p prompter, baseURL string, insecure boo
 	if err != nil {
 		return "", "", err
 	}
-	ticket, err := pveclient.Login(ctx, baseURL, insecure, user, password)
+	issuer, err := setup.Login(ctx, baseURL, insecure, user, password)
 	if err != nil {
 		return "", "", err
 	}
@@ -675,7 +642,7 @@ func generateToken(ctx context.Context, p prompter, baseURL string, insecure boo
 		if nerr != nil {
 			return "", "", nerr
 		}
-		full, value, cerr := pveclient.CreateToken(ctx, baseURL, insecure, ticket, user, name)
+		full, value, cerr := issuer.Create(ctx, name)
 		if cerr == nil {
 			p.Printf("created API token %s (privilege separation off)\n", full)
 			return full, value, nil
@@ -761,30 +728,14 @@ func promptSecret(p prompter) (string, error) {
 // re-warning. Otherwise it tries strict TLS first and falls back to
 // insecure on a TLS error. Returns the final insecure flag used.
 func validateCredentials(ctx context.Context, p prompter, baseURL, tokenID, secret string, knownInsecure bool) (bool, error) {
-	if knownInsecure {
-		client := pveclient.New(baseURL, tokenID, secret, true)
-		if _, err := client.GetVersion(ctx); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	client := pveclient.New(baseURL, tokenID, secret, false)
-	_, err := client.GetVersion(ctx)
-	if err == nil {
-		return false, nil
-	}
-	if !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+	insecure, err := setup.VerifyToken(ctx, baseURL, tokenID, secret, knownInsecure)
+	if err != nil {
 		return false, err
 	}
-	// Retry insecure.
-	client = pveclient.New(baseURL, tokenID, secret, true)
-	if _, err2 := client.GetVersion(ctx); err2 != nil {
-		return false, err2
+	if insecure && !knownInsecure {
+		warnTLSFallback(p, baseURL)
 	}
-	p.Errf("WARNING: TLS verification failed for %s\n", baseURL)
-	p.Errf("         falling back to insecure mode; the certificate will not be verified.\n")
-	p.Errf("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.\n")
-	return true, nil
+	return insecure, nil
 }
 
 func discoveryCtx(parent context.Context) (context.Context, context.CancelFunc) {
