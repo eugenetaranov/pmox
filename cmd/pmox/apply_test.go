@@ -11,6 +11,34 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
+// testTackStateDir resolves the tack state dir for the test's
+// XDG_STATE_HOME.
+func testTackStateDir(t *testing.T) string {
+	t.Helper()
+	dir, err := tackStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// With no HOME and no XDG override the tack dirs cannot be resolved; the
+// error must propagate instead of silently using a relative path.
+func TestTackDirs_PropagateHomeError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "")
+	if _, err := tackDir(); err == nil {
+		t.Error("tackDir: want error without HOME")
+	}
+	if _, err := tackStateDir(); err == nil {
+		t.Error("tackStateDir: want error without HOME")
+	}
+	if _, _, err := resolvePlaybook(&applyFlags{}, "web", "u", 1); err == nil {
+		t.Error("resolvePlaybook: want error without HOME")
+	}
+}
+
 func setupTackDir(t *testing.T, files ...string) string {
 	t.Helper()
 	cfg := t.TempDir()
@@ -65,7 +93,7 @@ func TestResolvePlaybookProfileArg(t *testing.T) {
 
 func TestResolvePlaybookRemembered(t *testing.T) {
 	dir := setupTackDir(t, "web.yaml")
-	if err := tackprofile.Set(tackStateDir(), testURL, 101, "web"); err != nil {
+	if err := tackprofile.Set(testTackStateDir(t), testURL, 101, "web"); err != nil {
 		t.Fatal(err)
 	}
 	pb, record, err := resolvePlaybook(&applyFlags{}, "", testURL, 101)

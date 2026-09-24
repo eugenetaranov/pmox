@@ -322,7 +322,13 @@ func doctorTack(cl *doctor.Checklist, deps doctorDeps) {
 			"install tack from https://github.com/tackhq/tack (optional)")
 		return
 	}
-	pb := filepath.Join(tackDir(), "playbook.yaml")
+	dir, err := tackDir()
+	if err != nil {
+		cl.Warn("tooling.tack", "tooling", "tack available but the tack config dir cannot be resolved: "+err.Error(),
+			"set HOME or XDG_CONFIG_HOME")
+		return
+	}
+	pb := filepath.Join(dir, "playbook.yaml")
 	if _, err := os.Stat(pb); err != nil {
 		cl.Warn("tooling.tack", "tooling", "tack available but no default playbook at "+pb,
 			"run 'pmox apply --init' to scaffold one, or use a profile/--playbook")

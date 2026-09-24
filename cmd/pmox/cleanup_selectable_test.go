@@ -136,9 +136,9 @@ func TestTackProfileItems(t *testing.T) {
 	urlGone := "https://gone.example:8006/api2/json"
 	cfg := &config.Config{Servers: map[string]*config.Server{urlA: {TokenID: "x@y!z"}}}
 
-	_ = tackprofile.Set(tackStateDir(), urlA, 101, "web")   // live VM → keep
-	_ = tackprofile.Set(tackStateDir(), urlA, 555, "old")   // reachable, VM gone → stale
-	_ = tackprofile.Set(tackStateDir(), urlGone, 1, "orph") // server gone → stale
+	_ = tackprofile.Set(testTackStateDir(t), urlA, 101, "web")   // live VM → keep
+	_ = tackprofile.Set(testTackStateDir(t), urlA, 555, "old")   // reachable, VM gone → stale
+	_ = tackprofile.Set(testTackStateDir(t), urlGone, 1, "orph") // server gone → stale
 
 	vmidsByURL := map[string]map[int]bool{urlA: {101: true}}
 	reachable := map[string]bool{urlA: true}

@@ -407,7 +407,11 @@ func cloudInitItems(cfg *config.Config) []cleanupItem {
 // whose VMID no longer exists on a reachable server. Entries for servers
 // that could not be listed this run are left alone.
 func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, reachableURLs map[string]bool) []cleanupItem {
-	entries, err := tackprofile.All(tackStateDir())
+	stateDir, err := tackStateDir()
+	if err != nil {
+		return nil
+	}
+	entries, err := tackprofile.All(stateDir)
 	if err != nil {
 		return nil
 	}
@@ -430,7 +434,7 @@ func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, re
 		items = append(items, cleanupItem{
 			Category: "tack-profile",
 			Detail:   fmt.Sprintf("%s vmid %d → profile %q", contextLabelFor(cfg, ee.ServerURL), ee.VMID, ee.Profile),
-			apply:    func() error { return tackprofile.Delete(tackStateDir(), ee.ServerURL, ee.VMID) },
+			apply:    func() error { return tackprofile.Delete(stateDir, ee.ServerURL, ee.VMID) },
 		})
 	}
 	return items

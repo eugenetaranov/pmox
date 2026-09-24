@@ -145,7 +145,11 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 	case f.tack != "":
 		path := f.tack
 		if path == tackDefaultSentinel {
-			path = filepath.Join(tackDir(), "playbook.yaml")
+			dir, err := tackDir()
+			if err != nil {
+				return nil, err
+			}
+			path = filepath.Join(dir, "playbook.yaml")
 		}
 		return &hook.TackHook{ConfigPath: path}, nil
 	case f.ansible != "":
