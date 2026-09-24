@@ -1,7 +1,12 @@
 package tack
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -40,6 +45,50 @@ func TestArgsFull(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Args = %v\nwant  %v", got, want)
+	}
+}
+
+// stubTack puts an executable named tack on PATH (only PATH entry).
+func stubTack(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub needs a POSIX shell")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tack"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestCommand(t *testing.T) {
+	stubTack(t)
+	cmd, err := Command(context.Background(), Options{Playbook: "pb.yaml", IP: "10.0.0.5", User: "u"})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if want := []string{"run", "pb.yaml", "-c", "ssh://u@10.0.0.5"}; !reflect.DeepEqual(cmd.Args[1:], want) {
+		t.Errorf("Args = %v, want %v", cmd.Args[1:], want)
+	}
+	if cmd.WaitDelay != waitDelay {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, waitDelay)
+	}
+	if cmd.Env == nil {
+		t.Error("Env not inherited")
+	}
+}
+
+func TestCommandValidates(t *testing.T) {
+	stubTack(t)
+	if _, err := Command(context.Background(), Options{IP: "10.0.0.5"}); err == nil {
+		t.Error("want error for missing playbook")
+	}
+	if _, err := Command(context.Background(), Options{Playbook: "pb.yaml"}); err == nil {
+		t.Error("want error for missing host")
+	}
+	t.Setenv("PATH", "")
+	if _, err := Command(context.Background(), Options{Playbook: "pb.yaml", IP: "x"}); !errors.Is(err, ErrNotInstalled) {
+		t.Errorf("want ErrNotInstalled, got %v", err)
 	}
 }
 

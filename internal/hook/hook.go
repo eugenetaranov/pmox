@@ -82,21 +82,22 @@ type TackHook struct {
 func (h *TackHook) Name() string { return "tack" }
 
 func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) error {
-	if err := tack.Available(); err != nil {
-		return fmt.Errorf("%w; or pass --post-create instead", err)
-	}
-	cmd := exec.CommandContext(ctx, "tack", tack.Args(tack.Options{
+	cmd, err := tack.Command(ctx, tack.Options{
 		Playbook:    h.ConfigPath,
 		User:        env.User,
 		IP:          env.IP,
 		KeyPath:     env.SSHKey,
 		Insecure:    env.Insecure,
 		AutoApprove: true,
-	})...)
-	cmd.Env = os.Environ()
+	})
+	if err != nil {
+		if errors.Is(err, tack.ErrNotInstalled) {
+			return fmt.Errorf("%w; or pass --post-create instead", err)
+		}
+		return err
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.WaitDelay = waitDelay
 	return cmd.Run()
 }
 
