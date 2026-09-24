@@ -27,7 +27,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -49,8 +48,6 @@ type Options struct {
 	Env        string   // value of PMOX_SERVER (URL or context name)
 	ContextEnv string   // value of PMOX_CONTEXT (context name)
 	Stdin      *os.File // for TTY detection + picker; os.Stdin in prod
-	Stdout     io.Writer
-	Stderr     io.Writer
 }
 
 // Resolved is the bundle returned on successful resolution.
@@ -69,10 +66,10 @@ type Resolved struct {
 	// server record has a node_ssh block. Commands that don't need SSH
 	// (everything except create-template) can ignore these fields.
 	NodeSSHUser          string
-	NodeSSHAuth          string // "password" | "key" | "" (unconfigured)
-	NodeSSHPassword      string // populated when NodeSSHAuth == "password"
-	NodeSSHKeyPath       string // populated when NodeSSHAuth == "key"
-	NodeSSHKeyPassphrase string // only when the key is passphrase-protected
+	NodeSSHAuth          config.NodeSSHAuth // AuthPassword | AuthKey | "" (unconfigured)
+	NodeSSHPassword      string             // populated when NodeSSHAuth == AuthPassword
+	NodeSSHKeyPath       string             // populated when NodeSSHAuth == AuthKey
+	NodeSSHKeyPassphrase string             // only when the key is passphrase-protected
 }
 
 // HasNodeSSH reports whether this server has SSH credentials resolved
@@ -82,9 +79,9 @@ func (r *Resolved) HasNodeSSH() bool {
 		return false
 	}
 	switch r.NodeSSHAuth {
-	case "password":
+	case config.AuthPassword:
 		return r.NodeSSHPassword != ""
-	case "key":
+	case config.AuthKey:
 		return r.NodeSSHKeyPath != ""
 	}
 	return false
@@ -250,13 +247,13 @@ func hydrateNodeSSH(r *Resolved) error {
 		return nil
 	}
 	ns := r.Server.NodeSSH
-	r.NodeSSHUser = ns.User
-	if r.NodeSSHUser == "" {
-		r.NodeSSHUser = "root"
-	}
+	r.NodeSSHUser = ns.EffectiveUser()
 	r.NodeSSHAuth = ns.Auth
 	switch ns.Auth {
-	case "password":
+	case "":
+		// Block present but no auth mode: treated as unconfigured
+		// (HasNodeSSH reports false).
+	case config.AuthPassword:
 		pw, err := credstore.GetNodeSSHPassword(r.URL)
 		if err != nil {
 			if errors.Is(err, credstore.ErrNotFound) {
@@ -265,7 +262,7 @@ func hydrateNodeSSH(r *Resolved) error {
 			return fmt.Errorf("load node SSH password for %s: %w", r.URL, err)
 		}
 		r.NodeSSHPassword = pw
-	case "key":
+	case config.AuthKey:
 		r.NodeSSHKeyPath = ns.KeyPath
 		// Passphrase is optional — absent keyring entry is fine.
 		pp, err := credstore.GetNodeSSHKeyPassphrase(r.URL)
@@ -274,6 +271,9 @@ func hydrateNodeSSH(r *Resolved) error {
 		} else if !errors.Is(err, credstore.ErrNotFound) {
 			return fmt.Errorf("load node SSH key passphrase for %s: %w", r.URL, err)
 		}
+	default:
+		return fmt.Errorf("%w: server %s has unknown node_ssh.auth %q (want %q or %q); re-run 'pmox init'",
+			exitcode.ErrUserInput, r.URL, ns.Auth, config.AuthPassword, config.AuthKey)
 	}
 	return nil
 }

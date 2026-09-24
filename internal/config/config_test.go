@@ -269,3 +269,53 @@ func TestRemoveServer(t *testing.T) {
 		t.Error("want false for missing server")
 	}
 }
+
+func TestValidateNodeSSHAuth(t *testing.T) {
+	cases := []struct {
+		auth    NodeSSHAuth
+		wantErr bool
+	}{
+		{"", false},
+		{AuthPassword, false},
+		{AuthKey, false},
+		{"passwrd", true},
+	}
+	for _, tc := range cases {
+		cfg := &Config{Servers: map[string]*Server{
+			"https://pve.lan:8006/api2/json":   {NodeSSH: &NodeSSH{Auth: tc.auth}},
+			"https://other.lan:8006/api2/json": {},
+		}}
+		if err := cfg.Validate(); (err != nil) != tc.wantErr {
+			t.Errorf("Validate(auth=%q) = %v, wantErr %v", tc.auth, err, tc.wantErr)
+		}
+	}
+}
+
+func TestLoadRejectsUnknownNodeSSHAuth(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := filepath.Join(dir, "pmox", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	yml := "servers:\n  https://pve.lan:8006/api2/json:\n    token_id: t@pam!x\n    node_ssh:\n      user: root\n      auth: bogus\n"
+	if err := os.WriteFile(p, []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "node_ssh.auth") {
+		t.Fatalf("Load: want node_ssh.auth error, got %v", err)
+	}
+}
+
+func TestNodeSSHEffectiveUser(t *testing.T) {
+	var nilNS *NodeSSH
+	if got := nilNS.EffectiveUser(); got != "root" {
+		t.Errorf("nil EffectiveUser = %q, want root", got)
+	}
+	if got := (&NodeSSH{}).EffectiveUser(); got != "root" {
+		t.Errorf("empty EffectiveUser = %q, want root", got)
+	}
+	if got := (&NodeSSH{User: "admin"}).EffectiveUser(); got != "admin" {
+		t.Errorf("EffectiveUser = %q, want admin", got)
+	}
+}

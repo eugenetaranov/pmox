@@ -12,6 +12,9 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/eugenetaranov/pmox/internal/atomicfile"
+	"github.com/eugenetaranov/pmox/internal/paths"
 )
 
 // Server is the persisted per-server configuration block.
@@ -43,13 +46,35 @@ type Server struct {
 	TLSPinSHA256 string `yaml:"tls_pin_sha256,omitempty"`
 }
 
+// NodeSSHAuth is the node-SSH authentication mode persisted in config.
+type NodeSSHAuth string
+
+// Node-SSH authentication modes. The empty value means "unconfigured".
+const (
+	AuthPassword NodeSSHAuth = "password"
+	AuthKey      NodeSSHAuth = "key"
+)
+
+// defaultNodeSSHUser is the user pmox SSHes into the node as when the
+// node_ssh block leaves user empty.
+const defaultNodeSSHUser = "root"
+
 // NodeSSH holds the SSH credentials pmox uses to reach the PVE node
 // itself (for snippet upload during create-template). Password and key
 // passphrase live in the keyring, not this struct.
 type NodeSSH struct {
-	User    string `yaml:"user"`               // default "root"
-	Auth    string `yaml:"auth"`               // "password" | "key"
-	KeyPath string `yaml:"key_path,omitempty"` // private key path when Auth == "key"
+	User    string      `yaml:"user"`               // see EffectiveUser
+	Auth    NodeSSHAuth `yaml:"auth"`               // AuthPassword | AuthKey
+	KeyPath string      `yaml:"key_path,omitempty"` // private key path when Auth == AuthKey
+}
+
+// EffectiveUser returns the configured node SSH user, defaulting to
+// "root" when unset.
+func (n *NodeSSH) EffectiveUser() string {
+	if n == nil || n.User == "" {
+		return defaultNodeSSHUser
+	}
+	return n.User
 }
 
 // Config is the top-level YAML shape on disk.
@@ -134,14 +159,11 @@ func hostPort(canonicalURL string) string {
 // Path returns the absolute path to the pmox config file.
 // It respects $XDG_CONFIG_HOME, falling back to $HOME/.config.
 func Path() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "config.yaml"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := paths.ConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".config", "pmox", "config.yaml"), nil
+	return filepath.Join(dir, "config.yaml"), nil
 }
 
 // Load reads the config file. A missing file returns an empty Config.
@@ -164,7 +186,29 @@ func Load() (*Config, error) {
 	if cfg.Servers == nil {
 		cfg.Servers = map[string]*Server{}
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config %s: %w", p, err)
+	}
 	return &cfg, nil
+}
+
+// Validate checks semantic constraints yaml decoding cannot express. It is
+// deliberately lenient: only values pmox could never act on are rejected,
+// so any config pmox itself wrote still loads.
+func (c *Config) Validate() error {
+	for _, u := range c.ServerURLs() {
+		srv := c.Servers[u]
+		if srv == nil || srv.NodeSSH == nil {
+			continue
+		}
+		switch srv.NodeSSH.Auth {
+		case "", AuthPassword, AuthKey:
+		default:
+			return fmt.Errorf("server %s: node_ssh.auth %q is not one of %q, %q",
+				u, srv.NodeSSH.Auth, AuthPassword, AuthKey)
+		}
+	}
+	return nil
 }
 
 // Save writes the config file atomically with mode 0600.
@@ -174,40 +218,15 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config dir %s: %w", dir, err)
-	}
-	// Ensure existing dir has the right mode.
-	_ = os.Chmod(dir, 0o700)
-
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+	if err := atomicfile.Write(p, data, 0o600); err != nil {
+		return fmt.Errorf("write config %s: %w", p, err)
 	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, p); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename temp file: %w", err)
-	}
+	// Tighten a pre-existing config dir.
+	_ = os.Chmod(filepath.Dir(p), 0o700)
 	return nil
 }
 

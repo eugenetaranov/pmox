@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -59,10 +58,8 @@ func baseOpts(t *testing.T, cfg *config.Config) (Options, func()) {
 	t.Helper()
 	stdin, cleanup := pipeStdin(t)
 	return Options{
-		Cfg:    cfg,
-		Stdin:  stdin,
-		Stdout: io.Discard,
-		Stderr: io.Discard,
+		Cfg:   cfg,
+		Stdin: stdin,
 	}, cleanup
 }
 
@@ -283,9 +280,7 @@ func TestResolve_KeychainMiss(t *testing.T) {
 	}}
 	// Note: no credstore.Set — keychain empty.
 	opts := Options{
-		Cfg:    cfg,
-		Stdout: io.Discard,
-		Stderr: io.Discard,
+		Cfg: cfg,
 	}
 	stdin, cleanup := pipeStdin(t)
 	defer cleanup()
@@ -449,6 +444,43 @@ func TestResolve_NodeSSH_PasswordMissingInKeyring(t *testing.T) {
 	_, err := Resolve(context.Background(), opts)
 	if !errors.Is(err, exitcode.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestResolve_NodeSSH_UnknownAuthIsError(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: "kerberos"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	_, err := Resolve(context.Background(), opts)
+	if !errors.Is(err, exitcode.ErrUserInput) || !strings.Contains(err.Error(), "kerberos") {
+		t.Fatalf("want ErrUserInput naming the auth mode, got %v", err)
+	}
+}
+
+func TestResolve_NodeSSH_DefaultUserRoot(t *testing.T) {
+	keyring.MockInit()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{Auth: config.AuthKey, KeyPath: "/k"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	opts, cleanup := baseOpts(t, cfg)
+	defer cleanup()
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.NodeSSHUser != "root" {
+		t.Fatalf("NodeSSHUser = %q, want root", r.NodeSSHUser)
 	}
 }
 

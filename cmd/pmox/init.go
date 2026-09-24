@@ -1235,9 +1235,9 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 
 		ns := &config.NodeSSH{User: userAns}
 		if password != "" {
-			ns.Auth = "password"
+			ns.Auth = config.AuthPassword
 		} else {
-			ns.Auth = "key"
+			ns.Auth = config.AuthKey
 			ns.KeyPath = keyPath
 		}
 		return ns, password, keyPass, nil

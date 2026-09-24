@@ -18,9 +18,11 @@ import (
 // selfReporter is implemented by errors that have already rendered their
 // own user-facing output (e.g. `pmox doctor`, which prints a full report
 // and only returns an error to carry the exit code). main skips the
-// generic "Error: ..." line for these.
+// generic "Error: ..." line for these. It is deliberately distinct from
+// exitcode.Coder: carrying an exit code does not imply the error was
+// already printed (e.g. hook failures).
 type selfReporter interface {
-	ExitCode() int
+	SelfReported()
 }
 
 var (

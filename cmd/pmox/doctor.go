@@ -35,6 +35,7 @@ type doctorError struct{ code int }
 
 func (e *doctorError) Error() string { return "doctor found blocking issues" }
 func (e *doctorError) ExitCode() int { return e.code }
+func (e *doctorError) SelfReported() {}
 
 func newDoctorCmd() *cobra.Command {
 	f := &doctorFlags{}
@@ -99,8 +100,6 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
 		Stdin:      os.Stdin,
-		Stdout:     cmd.OutOrStdout(),
-		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
@@ -520,7 +519,7 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
 		return
 	}
-	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+resolved.NodeSSHAuth+" auth)")
+	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+string(resolved.NodeSSHAuth)+" auth)")
 
 	host, err := sshHostFromURL(resolved.URL)
 	if err != nil {

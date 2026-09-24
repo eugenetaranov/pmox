@@ -77,8 +77,6 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
 		Stdin:      os.Stdin,
-		Stdout:     cmd.OutOrStdout(),
-		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return err

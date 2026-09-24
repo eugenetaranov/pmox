@@ -32,8 +32,6 @@ func buildClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, *s
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
 		Stdin:      os.Stdin,
-		Stdout:     cmd.OutOrStdout(),
-		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return nil, nil, err
