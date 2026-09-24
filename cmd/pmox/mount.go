@@ -180,7 +180,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	excludes := resolveExcludes(f.excludes)
-	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash())
+	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 
 	stderr := os.Stderr
 
@@ -442,7 +442,7 @@ func runMountDaemon(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, lo
 		childArgs = append(childArgs, "--exclude="+ex)
 	}
 	childArgs = append(childArgs, localPath, fmt.Sprintf("%s:%s", vmName, remotePath))
-	if extra := extraArgsAfterDash(); len(extra) > 0 {
+	if extra := extraArgsAfterDash(cmd); len(extra) > 0 {
 		childArgs = append(childArgs, "--")
 		childArgs = append(childArgs, extra...)
 	}
