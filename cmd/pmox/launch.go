@@ -25,11 +25,11 @@ import (
 // Built-in defaults applied when neither the CLI flag nor the resolved
 // server block supplies a value. Per design D7, these are literals.
 const (
-	defaultCPU      = 2
-	defaultMemMB    = 2048
-	defaultDiskSize = "20G"
-	defaultWait     = 3 * time.Minute
-	defaultUser     = "pmox"
+	defaultCPU    = 2
+	defaultMemGB  = 2
+	defaultDiskGB = 20
+	defaultWait   = 3 * time.Minute
+	defaultUser   = "pmox"
 	// tackDefaultSentinel is the value cobra assigns to --tack when the
 	// flag is given without an argument; it maps to the config playbook.
 	tackDefaultSentinel = "\x00pmox-default-playbook"
@@ -40,8 +40,8 @@ const (
 // test runs.
 type launchFlags struct {
 	cpu            int
-	memMB          int
-	disk           string
+	memGB          int
+	diskGB         int
 	template       string
 	storage        string
 	snippetStorage string
@@ -100,9 +100,9 @@ automatic rollback. If anything after clone fails, run
 			return runLaunch(cmd, args[0], f)
 		},
 	}
-	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPUs (default 2 if not configured)")
-	cmd.Flags().IntVar(&f.memMB, "mem", 0, "memory in MB (default 2048 if not configured)")
-	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
+	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPU cores (default 2)")
+	cmd.Flags().IntVar(&f.memGB, "mem", 0, "memory in GiB (default 2)")
+	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "disk size in GiB (default 20)")
 	cmd.Flags().StringVar(&f.template, "template", "", "template VMID or name (falls back to configured default)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
@@ -309,9 +309,13 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 	if cpu == 0 {
 		cpu = defaultCPU
 	}
-	mem := f.memMB
-	if mem == 0 {
-		mem = defaultMemMB
+	memGB := f.memGB
+	if memGB == 0 {
+		memGB = defaultMemGB
+	}
+	diskGB := f.diskGB
+	if diskGB == 0 {
+		diskGB = defaultDiskGB
 	}
 	wait := f.wait
 	if wait == 0 {
@@ -320,8 +324,8 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 
 	return launch.Options{
 		CPU:            cpu,
-		MemMB:          mem,
-		DiskSize:       firstNonEmpty(f.disk, defaultDiskSize),
+		MemMB:          memGB * 1024,
+		DiskSize:       fmt.Sprintf("%dG", diskGB),
 		Storage:        storage,
 		SnippetStorage: snippetStorage,
 		Bridge:         explicitBridge(f),

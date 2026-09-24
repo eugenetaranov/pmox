@@ -65,7 +65,7 @@ func TestResolveVMSpec_FlagsAndDefaults(t *testing.T) {
 	if opts.Storage != "fast" || opts.SnippetStorage != "local" || opts.Bridge != "" {
 		t.Errorf("storage/snippet/bridge = %q/%q/%q", opts.Storage, opts.SnippetStorage, opts.Bridge)
 	}
-	if opts.CPU != defaultCPU || opts.MemMB != defaultMemMB || opts.DiskSize != defaultDiskSize || opts.Wait != defaultWait {
+	if opts.CPU != defaultCPU || opts.MemMB != 2048 || opts.DiskSize != "20G" || opts.Wait != defaultWait {
 		t.Errorf("defaults not applied: %+v", opts)
 	}
 }

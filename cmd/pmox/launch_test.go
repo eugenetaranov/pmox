@@ -27,8 +27,8 @@ func TestResolveLaunchOptions_BuiltInDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)
 	}
-	if opts.CPU != defaultCPU || opts.MemMB != defaultMemMB || opts.DiskSize != defaultDiskSize {
-		t.Errorf("cpu/mem/disk = %d/%d/%q, want %d/%d/%q", opts.CPU, opts.MemMB, opts.DiskSize, defaultCPU, defaultMemMB, defaultDiskSize)
+	if opts.CPU != defaultCPU || opts.MemMB != 2048 || opts.DiskSize != "20G" {
+		t.Errorf("cpu/mem/disk = %d/%d/%q, want %d/2048/\"20G\"", opts.CPU, opts.MemMB, opts.DiskSize, defaultCPU)
 	}
 	if opts.Wait != defaultWait {
 		t.Errorf("wait = %v, want %v", opts.Wait, defaultWait)
@@ -51,7 +51,7 @@ func TestResolveLaunchOptions_CLIFlagWins(t *testing.T) {
 		},
 		Secret: "s",
 	}
-	f := &launchFlags{cpu: 8, memMB: 16384, disk: "80G", wait: 2 * time.Minute}
+	f := &launchFlags{cpu: 8, memGB: 16, diskGB: 80, wait: 2 * time.Minute}
 	opts, err := resolveLaunchOptions(context.Background(), nil, "web1", f, resolved, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveLaunchOptions err: %v", err)

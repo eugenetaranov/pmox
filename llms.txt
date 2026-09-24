@@ -46,7 +46,7 @@ Resolution order: `--server` → `--context` → `PMOX_SERVER` → `PMOX_CONTEXT
 `--ssh-insecure` — skip SSH host-key verification (env `PMOX_SSH_INSECURE`). By default guest-VM SSH (shell/exec/cp/sync/mount) pins host keys on first connect (TOFU) into `~/.config/pmox/known_hosts_guests` and aborts if a pinned key later changes; `--ssh-insecure` disables that.
 
 `pmox launch` / `pmox clone`:
-`--cpu <n>`, `--mem <MB>`, `--disk <size>`, `--storage <pool>`, `--snippet-storage <pool>`, `--bridge <name>`, `--node <name>`, `--wait <duration>`, `--no-wait-ssh`, `--post-create <path>`, `--tack <path>`, `--ansible <path>`, `--strict-hooks`.
+`--cpu <cores>`, `--mem <GiB>`, `--disk <GiB>`, `--storage <pool>`, `--snippet-storage <pool>`, `--bridge <name>`, `--node <name>`, `--wait <duration>`, `--no-wait-ssh`, `--post-create <path>`, `--tack <path>`, `--ansible <path>`, `--strict-hooks`.
 `--post-create` / `--tack` / `--ansible` are mutually exclusive — one per invocation.
 
 `pmox delete`:

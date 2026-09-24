@@ -43,9 +43,9 @@ configured snippet_storage, then to --storage with a warning.`,
 			return runClone(cmd, src, newName, f)
 		},
 	}
-	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPUs (default 2 if not configured)")
-	cmd.Flags().IntVar(&f.memMB, "mem", 0, "memory in MB (default 2048 if not configured)")
-	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
+	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPU cores (default 2)")
+	cmd.Flags().IntVar(&f.memGB, "mem", 0, "memory in GiB (default 2)")
+	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "disk size in GiB (default 20)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the clone's net0 (default: keep the source VM's bridge)")
