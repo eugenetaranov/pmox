@@ -18,17 +18,17 @@ import (
 )
 
 type fakePVE struct {
-	t           *testing.T
-	srv         *httptest.Server
-	client      *pveclient.Client
-	catalogue   *httptest.Server
-	mu          sync.Mutex
-	hits        []string
-	statusHits  int32
-	alwaysRun   bool
+	t            *testing.T
+	srv          *httptest.Server
+	client       *pveclient.Client
+	catalogue    *httptest.Server
+	mu           sync.Mutex
+	hits         []string
+	statusHits   int32
+	alwaysRun    bool
 	failDownload bool
-	failConvert bool
-	pveVersion  string
+	failConvert  bool
+	pveVersion   string
 }
 
 func init() {

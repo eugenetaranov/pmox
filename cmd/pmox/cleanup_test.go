@@ -44,10 +44,10 @@ func TestSnippetStoragesFor(t *testing.T) {
 
 func TestKnownHostToken(t *testing.T) {
 	cases := map[string]string{
-		"192.168.0.60 ssh-ed25519 AAAA":     "192.168.0.60",
-		"[192.168.0.60]:22 ssh-rsa BBBB":    "192.168.0.60",
-		"host.lan,10.0.0.1 ssh-ed25519 C":   "host.lan",
-		"":                                  "",
+		"192.168.0.60 ssh-ed25519 AAAA":   "192.168.0.60",
+		"[192.168.0.60]:22 ssh-rsa BBBB":  "192.168.0.60",
+		"host.lan,10.0.0.1 ssh-ed25519 C": "host.lan",
+		"":                                "",
 	}
 	for in, want := range cases {
 		if got := knownHostToken(in); got != want {

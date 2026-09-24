@@ -71,14 +71,14 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 		return err
 	}
 	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Context:  contextFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
+		Cfg:        cfg,
+		Flag:       serverFlag,
+		Context:    contextFlag,
+		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
+		Stdin:      os.Stdin,
+		Stdout:     cmd.OutOrStdout(),
+		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return err
@@ -200,4 +200,3 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 	fmt.Fprintf(cmd.OutOrStdout(), "created template %s (vmid=%d); launch with: pmox launch <name> --template %d\n", r.Name, r.VMID, r.VMID)
 	return nil
 }
-

@@ -26,14 +26,14 @@ func buildClient(ctx context.Context, cmd *cobra.Command) (*pveclient.Client, *s
 		return nil, nil, err
 	}
 	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Context:  contextFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
+		Cfg:        cfg,
+		Flag:       serverFlag,
+		Context:    contextFlag,
+		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
+		Stdin:      os.Stdin,
+		Stdout:     cmd.OutOrStdout(),
+		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return nil, nil, err

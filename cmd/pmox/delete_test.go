@@ -36,15 +36,15 @@ type fakePVE struct {
 	// return a 500 so tests can exercise the interrupted/failed-destroy path.
 	deleteFails bool
 
-	clusterHits        int32
-	statusHits         int32
-	shutdownHits       int32
-	stopHits           int32
-	deleteHits         int32
-	taskHits           int32
-	configHits         int32
-	snippetDeleteHits  int32
-	snippetDeletePath  string
+	clusterHits       int32
+	statusHits        int32
+	shutdownHits      int32
+	stopHits          int32
+	deleteHits        int32
+	taskHits          int32
+	configHits        int32
+	snippetDeleteHits int32
+	snippetDeletePath string
 }
 
 func newFakePVE(t *testing.T) *fakePVE {

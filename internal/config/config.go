@@ -47,8 +47,8 @@ type Server struct {
 // itself (for snippet upload during create-template). Password and key
 // passphrase live in the keyring, not this struct.
 type NodeSSH struct {
-	User    string `yaml:"user"`              // default "root"
-	Auth    string `yaml:"auth"`              // "password" | "key"
+	User    string `yaml:"user"`               // default "root"
+	Auth    string `yaml:"auth"`               // "password" | "key"
 	KeyPath string `yaml:"key_path,omitempty"` // private key path when Auth == "key"
 }
 

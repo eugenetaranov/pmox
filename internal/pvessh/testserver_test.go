@@ -19,12 +19,12 @@ import (
 // by the real filesystem under a configurable rootDir. Host key is a
 // fresh ed25519 keypair minted per test.
 type testServer struct {
-	addr       string
-	rootDir    string
-	hostKey    ssh.Signer
-	cfg        *ssh.ServerConfig
-	listener   net.Listener
-	wg         sync.WaitGroup
+	addr        string
+	rootDir     string
+	hostKey     ssh.Signer
+	cfg         *ssh.ServerConfig
+	listener    net.Listener
+	wg          sync.WaitGroup
 	disableSFTP bool
 
 	validPassword string

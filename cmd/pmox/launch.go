@@ -166,7 +166,6 @@ func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 	return user, sshKey
 }
 
-
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
 	if ctx == nil {

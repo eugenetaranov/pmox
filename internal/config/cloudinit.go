@@ -146,7 +146,7 @@ func RenderTemplate(user, sshPubkey string) ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	data := struct {
-		User     string
+		User      string
 		SSHPubkey string
 	}{User: user, SSHPubkey: sshPubkey}
 	if err := tmpl.Execute(&buf, data); err != nil {

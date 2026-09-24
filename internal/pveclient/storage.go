@@ -99,4 +99,3 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage string, params m
 	}
 	return parseDataString(body)
 }
-

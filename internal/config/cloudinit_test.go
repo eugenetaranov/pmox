@@ -218,7 +218,7 @@ func TestPubKeyBody(t *testing.T) {
 		"  - ssh-rsa RSABODY a@b":        "RSABODY",
 		"sk-ssh-ed25519@openssh.com X y": "X",
 		"not a key":                      "",
-		"":                              "",
+		"":                               "",
 	}
 	for in, want := range cases {
 		if got := pubKeyBody(in); got != want {

@@ -1543,4 +1543,3 @@ func sshKeyTextFallback(p prompter, home, suggest string) (string, error) {
 	}
 	return "", fmt.Errorf("%w: too many invalid ssh key attempts", exitcode.ErrUserInput)
 }
-

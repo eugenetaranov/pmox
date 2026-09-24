@@ -93,14 +93,14 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	cl.Pass("config.file", "config", "config loaded")
 
 	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:    cfg,
-		Flag:   serverFlag,
-		Context:  contextFlag,
-		Env:    os.Getenv("PMOX_SERVER"),
+		Cfg:        cfg,
+		Flag:       serverFlag,
+		Context:    contextFlag,
+		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:  os.Stdin,
-		Stdout: cmd.OutOrStdout(),
-		Stderr: cmd.ErrOrStderr(),
+		Stdin:      os.Stdin,
+		Stdout:     cmd.OutOrStdout(),
+		Stderr:     cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)

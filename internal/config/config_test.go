@@ -79,14 +79,14 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 
 	cfg := &Config{Servers: map[string]*Server{}}
 	cfg.AddServer("https://pve.home.lan:8006/api2/json", &Server{
-		TokenID:  "pmox@pve!homelab",
-		Node:     "pve1",
-		Template: "9000",
-		Storage:  "local-lvm",
-		Bridge:   "vmbr0",
-		SSHPubkey:   "~/.ssh/id_ed25519.pub",
-		User:     "ubuntu",
-		Insecure: true,
+		TokenID:   "pmox@pve!homelab",
+		Node:      "pve1",
+		Template:  "9000",
+		Storage:   "local-lvm",
+		Bridge:    "vmbr0",
+		SSHPubkey: "~/.ssh/id_ed25519.pub",
+		User:      "ubuntu",
+		Insecure:  true,
 	})
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

@@ -338,4 +338,3 @@ func guestHostKeyOpts() []string {
 		"-o", "UserKnownHostsFile=" + path,
 	}
 }
-
