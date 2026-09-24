@@ -58,6 +58,7 @@ func newCleanupCmd() *cobra.Command {
   secret        file-backend secrets.yaml entries for removed servers
   known-host    guest known_hosts pins for IPs no longer on a pmox VM
   ssh-key       the pmox-generated bootstrap SSH key, if no server uses it
+  api-token     server-side "pmox*" API tokens not used by any config entry
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
 
 Dry-run by default; pass --apply to delete. On a terminal it shows a
@@ -106,6 +107,7 @@ var cleanupCategories = []cleanupCategory{
 	{"secret", "Orphaned secrets", false},
 	{"known-host", "Stale known_hosts pins", false},
 	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
+	{"api-token", "Orphaned pmox API tokens", false},
 }
 
 func categoryByKey(k string) (cleanupCategory, bool) {
@@ -240,6 +242,8 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 			}
 		}
 
+		items = append(items, apiTokenItems(ctx, client, label, srv.TokenID)...)
+
 		if srv.Node == "" {
 			continue // no node → can't scope snippet storage
 		}
@@ -324,6 +328,45 @@ func deleteTemplate(ctx context.Context, c *pveclient.Client, node string, vmid 
 		return err
 	}
 	return c.WaitTask(ctx, node, upid, 120*time.Second)
+}
+
+// apiTokenItems flags server-side API tokens whose bare name looks
+// pmox-owned (starts with "pmox", matching the default/collision naming
+// 'pmox init' uses) but isn't the token currently configured for this
+// server. Only tokens under the same user@realm as the configured token
+// are considered, so another user's tokens are never touched.
+func apiTokenItems(ctx context.Context, client *pveclient.Client, label, currentTokenID string) []cleanupItem {
+	userid, currentName, ok := splitTokenID(currentTokenID)
+	if !ok {
+		return nil
+	}
+	toks, err := client.ListTokens(ctx, userid)
+	if err != nil {
+		return nil
+	}
+	var items []cleanupItem
+	for _, t := range toks {
+		if t.TokenID == currentName || !strings.HasPrefix(t.TokenID, "pmox") {
+			continue
+		}
+		c, uid, name := client, userid, t.TokenID
+		items = append(items, cleanupItem{
+			Category: "api-token",
+			Detail:   fmt.Sprintf("%s: token %s!%s (not the configured token)", label, uid, name),
+			apply:    func() error { return c.DeleteToken(ctx, uid, name) },
+		})
+	}
+	return items
+}
+
+// splitTokenID splits a full API token id "user@realm!name" into its
+// userid and token name.
+func splitTokenID(tokenID string) (userid, name string, ok bool) {
+	i := strings.LastIndexByte(tokenID, '!')
+	if i < 0 {
+		return "", "", false
+	}
+	return tokenID[:i], tokenID[i+1:], true
 }
 
 // cloudInitItems flags per-server cloud-init files whose server is no

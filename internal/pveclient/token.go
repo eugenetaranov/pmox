@@ -136,3 +136,34 @@ func CreateToken(ctx context.Context, baseURL string, insecure bool, t Ticket, u
 	}
 	return env.Data.FullTokenID, env.Data.Value, nil
 }
+
+// APIToken is one entry from GET /access/users/{userid}/token — an API
+// token's bare name (not the full user@realm!name id) plus its comment.
+type APIToken struct {
+	TokenID string `json:"tokenid"`
+	Comment string `json:"comment"`
+}
+
+// ListTokens fetches the API tokens configured for userid (user@realm),
+// authenticating with the client's own API token.
+func (c *Client) ListTokens(ctx context.Context, userid string) ([]APIToken, error) {
+	path := fmt.Sprintf("/access/users/%s/token", url.PathEscape(userid))
+	body, err := c.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data []APIToken `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse token list response: %w", err)
+	}
+	return resp.Data, nil
+}
+
+// DeleteToken removes the named API token from userid.
+func (c *Client) DeleteToken(ctx context.Context, userid, name string) error {
+	path := fmt.Sprintf("/access/users/%s/token/%s", url.PathEscape(userid), url.PathEscape(name))
+	_, err := c.request(ctx, "DELETE", path, nil)
+	return err
+}

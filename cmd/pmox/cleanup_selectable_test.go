@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
@@ -189,6 +193,40 @@ func TestSecretItemsKeychainSkipped(t *testing.T) {
 	cfg := &config.Config{Servers: map[string]*config.Server{}}
 	if items := secretItems(cfg); items != nil {
 		t.Errorf("keychain backend should yield no secret items, got %+v", items)
+	}
+}
+
+func TestSplitTokenID(t *testing.T) {
+	userid, name, ok := splitTokenID("root@pam!pmox21")
+	if !ok || userid != "root@pam" || name != "pmox21" {
+		t.Errorf("splitTokenID = %q %q %v", userid, name, ok)
+	}
+	if _, _, ok := splitTokenID("not-a-token-id"); ok {
+		t.Error("expected ok=false for a malformed token id")
+	}
+}
+
+func TestAPITokenItems(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/access/users/root@pam/token" {
+			t.Errorf("path = %q", r.URL.Path)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[
+			{"tokenid":"pmox"},
+			{"tokenid":"pmox21"},
+			{"tokenid":"other-tool"}
+		]}`))
+	}))
+	defer srv.Close()
+	client := pveclient.New(srv.URL, "root@pam!pmox21", "secret", false)
+
+	items := apiTokenItems(context.Background(), client, "lab", "root@pam!pmox21")
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1 (only 'pmox', not the configured 'pmox21' or 'other-tool'): %+v", len(items), items)
+	}
+	if items[0].Category != "api-token" {
+		t.Errorf("category = %q", items[0].Category)
 	}
 }
 

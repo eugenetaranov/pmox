@@ -84,6 +84,50 @@ func TestCreateTokenAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestListTokensSuccess(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/access/users/root@pam/token" || r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"tokenid":"pmox","comment":""},{"tokenid":"pmox21","comment":""}]}`))
+	})
+	toks, err := c.ListTokens(context.Background(), "root@pam")
+	if err != nil {
+		t.Fatalf("ListTokens: %v", err)
+	}
+	if len(toks) != 2 || toks[0].TokenID != "pmox" || toks[1].TokenID != "pmox21" {
+		t.Errorf("tokens = %+v", toks)
+	}
+}
+
+func TestDeleteTokenSuccess(t *testing.T) {
+	var gotMethod, gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":null}`))
+	})
+	if err := c.DeleteToken(context.Background(), "root@pam", "pmox21"); err != nil {
+		t.Fatalf("DeleteToken: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if gotPath != "/access/users/root@pam/token/pmox21" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestDeleteTokenNotFound(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	err := c.DeleteToken(context.Background(), "root@pam", "gone")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateTokenEscapesPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
