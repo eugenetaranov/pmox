@@ -8,6 +8,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 func TestFrom(t *testing.T) {
@@ -34,8 +35,8 @@ func TestFrom(t *testing.T) {
 		{"pveclient timeout", pveclient.ErrTimeout, ExitTimeout},
 		{"pveclient timeout wrapped", fmt.Errorf("x: %w", pveclient.ErrTimeout), ExitTimeout},
 		{"context deadline exceeded", context.DeadlineExceeded, ExitTimeout},
-		{"hook error", &fakeHookError{}, ExitHook},
-		{"hook error wrapped", fmt.Errorf("launch: %w", &fakeHookError{}), ExitHook},
+		{"ambiguous vm", vm.ErrAmbiguous, ExitUserError},
+		{"ambiguous vm wrapped", fmt.Errorf("resolve: %w", vm.ErrAmbiguous), ExitUserError},
 		{"coder hook", &coderError{code: ExitHook}, ExitHook},
 		{"coder wrapped", fmt.Errorf("x: %w", &coderError{code: ExitWarnings}), ExitWarnings},
 		{"coder beats sentinel", &coderError{code: ExitHook, wrapped: ErrUserInput}, ExitHook},
@@ -48,14 +49,6 @@ func TestFrom(t *testing.T) {
 		})
 	}
 }
-
-// fakeHookError is a minimal stand-in for *launch.HookError that lets
-// exitcode's test suite verify the ExitHook mapping without importing
-// internal/launch (which would create a cycle).
-type fakeHookError struct{}
-
-func (e *fakeHookError) Error() string { return "fake hook failed" }
-func (e *fakeHookError) IsHookError()  {}
 
 // coderError implements Coder, optionally wrapping another error.
 type coderError struct {

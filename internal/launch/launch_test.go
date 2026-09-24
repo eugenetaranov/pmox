@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
@@ -406,6 +407,9 @@ func TestRun_HookFailureStrict(t *testing.T) {
 	var hookErr *HookError
 	if !errors.As(err, &hookErr) {
 		t.Errorf("err = %T (%v), want *HookError", err, err)
+	}
+	if got := exitcode.From(err); got != exitcode.ExitHook {
+		t.Errorf("exitcode.From = %d, want %d", got, exitcode.ExitHook)
 	}
 	if atomic.LoadInt32(&f.deleteHit) != 0 {
 		t.Errorf("strict hook failure issued %d DELETE calls, want 0", f.deleteHit)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/progress"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
@@ -20,8 +21,8 @@ import (
 	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
-// HookError wraps a hook execution failure. It is the sentinel type
-// exitcode.From maps to ExitHook via errors.As.
+// HookError wraps a hook execution failure. It implements
+// exitcode.Coder, so exitcode.From maps it to ExitHook.
 type HookError struct {
 	Hook string
 	Err  error
@@ -30,10 +31,8 @@ type HookError struct {
 func (e *HookError) Error() string { return fmt.Sprintf("%s hook failed: %v", e.Hook, e.Err) }
 func (e *HookError) Unwrap() error { return e.Err }
 
-// IsHookError is a marker method used by internal/exitcode to detect
-// HookError via a local interface. Using an interface avoids an import
-// cycle between exitcode and launch.
-func (e *HookError) IsHookError() {}
+// ExitCode implements exitcode.Coder: a failed hook exits with ExitHook.
+func (e *HookError) ExitCode() int { return exitcode.ExitHook }
 
 // Progress receives phase-level UI callbacks. A nil Progress is valid —
 // Run checks and no-ops. See progress.Reporter.
