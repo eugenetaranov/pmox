@@ -132,7 +132,7 @@ func (c *Client) do(ctx context.Context, method, path string, query, form url.Va
 		}
 	}
 
-	resp, respBody, err := send(c.HTTPClient, req)
+	resp, respBody, err := send(c.HTTPClient, req) //nolint:bodyclose // send reads and closes the body
 	if err != nil {
 		return nil, classifyTransportError(err)
 	}

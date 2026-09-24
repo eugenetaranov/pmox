@@ -78,7 +78,7 @@ func Spawn(stateDir, exe string, args []string, rec Record) (Record, error) {
 		killErr := proc.Kill()
 		_, _ = proc.Wait()
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			return rec, fmt.Errorf("record mount: %w (and failed to stop pid %d: %v)", err, rec.PID, killErr)
+			return rec, fmt.Errorf("record mount: %w (and failed to stop pid %d: %w)", err, rec.PID, killErr)
 		}
 		return rec, fmt.Errorf("record mount: %w", err)
 	}

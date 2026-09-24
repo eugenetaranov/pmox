@@ -45,7 +45,7 @@ func Probe(ctx context.Context, baseURL string, insecure bool) (ReachStatus, err
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, body, err := send(client, req)
+	resp, body, err := send(client, req) //nolint:bodyclose // send reads and closes the body
 	if err != nil {
 		if isTLSError(err) {
 			return ReachTLSUntrusted, err

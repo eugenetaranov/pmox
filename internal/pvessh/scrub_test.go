@@ -30,10 +30,10 @@ func TestScrub_RedactsAndPreservesChain(t *testing.T) {
 
 func TestScrub_Passthrough(t *testing.T) {
 	orig := fmt.Errorf("connection refused: %w", errSentinel)
-	if got := scrub(orig, Config{Password: "hunter2"}); got != orig {
+	if got := scrub(orig, Config{Password: "hunter2"}); got != orig { //nolint:errorlint // identity check: unchanged error must be returned as-is
 		t.Errorf("error without password should be returned unchanged, got %v", got)
 	}
-	if got := scrub(orig, Config{}); got != orig {
+	if got := scrub(orig, Config{}); got != orig { //nolint:errorlint // identity check: unchanged error must be returned as-is
 		t.Errorf("no password configured should return err unchanged, got %v", got)
 	}
 	if scrub(nil, Config{Password: "x"}) != nil {

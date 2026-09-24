@@ -25,7 +25,8 @@ func TestStateDirHonorsXDG(t *testing.T) {
 
 func TestLogPath(t *testing.T) {
 	dir := "/state"
-	if LogPath(dir, "web1", "/a", "/b") != LogPath(dir, "web1", "/a", "/b") {
+	first, second := LogPath(dir, "web1", "/a", "/b"), LogPath(dir, "web1", "/a", "/b")
+	if first != second {
 		t.Error("LogPath must be deterministic")
 	}
 	if LogPath(dir, "web1", "/a", "/b") == LogPath(dir, "web2", "/a", "/b") {
