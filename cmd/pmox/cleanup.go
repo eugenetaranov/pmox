@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -441,7 +440,7 @@ func tackProfileItems(cfg *config.Config, vmidsByURL map[string]map[int]bool, re
 // longer in the config. Keychain entries are not enumerable and are out of
 // scope (handled at removal time).
 func secretItems(cfg *config.Config) []cleanupItem {
-	if credstore.ActiveBackend() != "file" {
+	if credstore.ActiveBackend() != credstore.BackendFile {
 		return nil
 	}
 	urls, err := credstore.FileStoreURLs()
@@ -458,16 +457,7 @@ func secretItems(cfg *config.Config) []cleanupItem {
 			Category: "secret",
 			Detail:   "orphaned secret for " + uu,
 			apply: func() error {
-				for _, rmErr := range []error{
-					credstore.Remove(uu),
-					credstore.RemoveNodeSSHPassword(uu),
-					credstore.RemoveNodeSSHKeyPassphrase(uu),
-				} {
-					if rmErr != nil && !errors.Is(rmErr, credstore.ErrNotFound) {
-						return rmErr
-					}
-				}
-				return nil
+				return credstore.RemoveAll(uu)
 			},
 		})
 	}

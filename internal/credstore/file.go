@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/eugenetaranov/pmox/internal/atomicfile"
+	"github.com/eugenetaranov/pmox/internal/paths"
 )
 
 // FileStoreURLs returns the canonical server URLs that have entries in
@@ -16,7 +19,7 @@ import (
 // when the file does not exist. The OS keychain cannot be enumerated, so
 // this covers only the file backend.
 func FileStoreURLs() ([]string, error) {
-	m, err := loadSecrets()
+	m, err := defaultStore.file.load()
 	if err != nil {
 		return nil, err
 	}
@@ -33,19 +36,19 @@ func FileStoreURLs() ([]string, error) {
 // fallback used when the OS keychain is unavailable. The file is 0600
 // inside a 0700 dir and written atomically. Secrets never go into
 // config.yaml.
-type fileBackend struct{}
+type fileBackend struct {
+	// path resolves the secrets file location.
+	path func() (string, error)
+}
 
-// secretsPath is a var so tests can point it at a temp file; the default
-// respects XDG_CONFIG_HOME and falls back to ~/.config.
-var secretsPath = func() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "secrets.yaml"), nil
-	}
-	home, err := os.UserHomeDir()
+// defaultSecretsPath returns <config-dir>/secrets.yaml, respecting
+// XDG_CONFIG_HOME and falling back to ~/.config/pmox.
+func defaultSecretsPath() (string, error) {
+	dir, err := paths.ConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".config", "pmox", "secrets.yaml"), nil
+	return filepath.Join(dir, "secrets.yaml"), nil
 }
 
 // splitAccount turns an account string into (url, kind). Accounts are a
@@ -58,8 +61,8 @@ func splitAccount(account string) (url, kind string) {
 	return account, "token"
 }
 
-func loadSecrets() (map[string]map[string]string, error) {
-	p, err := secretsPath()
+func (f *fileBackend) load() (map[string]map[string]string, error) {
+	p, err := f.path()
 	if err != nil {
 		return nil, err
 	}
@@ -80,49 +83,26 @@ func loadSecrets() (map[string]map[string]string, error) {
 	return m, nil
 }
 
-func saveSecrets(m map[string]map[string]string) error {
-	p, err := secretsPath()
+func (f *fileBackend) save(m map[string]map[string]string) error {
+	p, err := f.path()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create secrets dir %s: %w", dir, err)
-	}
-	_ = os.Chmod(dir, 0o700)
 	data, err := yaml.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("marshal secrets: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".secrets-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+	if err := atomicfile.Write(p, data, 0o600); err != nil {
+		return fmt.Errorf("write secrets file %s: %w", p, err)
 	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, p); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename temp file: %w", err)
-	}
+	// Tighten a pre-existing secrets dir.
+	_ = os.Chmod(filepath.Dir(p), 0o700)
 	return nil
 }
 
-func (fileBackend) get(account string) (string, error) {
+func (f *fileBackend) get(account string) (string, error) {
 	url, kind := splitAccount(account)
-	m, err := loadSecrets()
+	m, err := f.load()
 	if err != nil {
 		return "", err
 	}
@@ -134,9 +114,9 @@ func (fileBackend) get(account string) (string, error) {
 	return "", fmt.Errorf("%w: %s", ErrNotFound, account)
 }
 
-func (fileBackend) set(account, secret string) error {
+func (f *fileBackend) set(account, secret string) error {
 	url, kind := splitAccount(account)
-	m, err := loadSecrets()
+	m, err := f.load()
 	if err != nil {
 		return err
 	}
@@ -144,12 +124,12 @@ func (fileBackend) set(account, secret string) error {
 		m[url] = map[string]string{}
 	}
 	m[url][kind] = secret
-	return saveSecrets(m)
+	return f.save(m)
 }
 
-func (fileBackend) remove(account string) error {
+func (f *fileBackend) remove(account string) error {
 	url, kind := splitAccount(account)
-	m, err := loadSecrets()
+	m, err := f.load()
 	if err != nil {
 		return err
 	}
@@ -164,5 +144,5 @@ func (fileBackend) remove(account string) error {
 	if len(km) == 0 {
 		delete(m, url)
 	}
-	return saveSecrets(m)
+	return f.save(m)
 }

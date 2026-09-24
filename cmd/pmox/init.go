@@ -217,13 +217,7 @@ func runRemove(p prompter, rawURL string) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	if err := credstore.Remove(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
-		return err
-	}
-	if err := credstore.RemoveNodeSSHPassword(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
-		return err
-	}
-	if err := credstore.RemoveNodeSSHKeyPassphrase(canonical); err != nil && !errors.Is(err, credstore.ErrNotFound) {
+	if err := credstore.RemoveAll(canonical); err != nil {
 		return err
 	}
 	p.Printf("removed %s\n", canonical)

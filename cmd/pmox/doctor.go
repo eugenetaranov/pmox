@@ -221,7 +221,7 @@ func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 // the plaintext file fallback is in use.
 func doctorSecretBackend(cl *doctor.Checklist) {
 	switch credstore.ActiveBackend() {
-	case "keychain":
+	case credstore.BackendKeychain:
 		cl.Pass("config.secret_store", "config", "secrets stored in the OS keychain")
 	default:
 		cl.Warn("config.secret_store", "config",
