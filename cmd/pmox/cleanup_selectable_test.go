@@ -191,3 +191,49 @@ func TestSecretItemsKeychainSkipped(t *testing.T) {
 		t.Errorf("keychain backend should yield no secret items, got %+v", items)
 	}
 }
+
+func TestSSHKeyItems(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	priv := filepath.Join(sshDir, "pmox_ed25519")
+	pub := priv + ".pub"
+	if err := os.WriteFile(priv, []byte("priv"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pub, []byte("pub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Referenced by a configured server → not orphaned.
+	cfgInUse := &config.Config{Servers: map[string]*config.Server{
+		"https://a.example:8006/api2/json": {TokenID: "x@y!z", SSHPubkey: pub},
+	}}
+	if items := sshKeyItems(cfgInUse); items != nil {
+		t.Errorf("key in use should yield no items, got %+v", items)
+	}
+
+	// No server references it → orphaned.
+	cfgOrphan := &config.Config{Servers: map[string]*config.Server{
+		"https://a.example:8006/api2/json": {TokenID: "x@y!z", SSHPubkey: "/some/other/key.pub"},
+	}}
+	items := sshKeyItems(cfgOrphan)
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1: %+v", len(items), items)
+	}
+	if items[0].Category != "ssh-key" {
+		t.Errorf("category = %q", items[0].Category)
+	}
+	if err := items[0].apply(); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := os.Stat(priv); !os.IsNotExist(err) {
+		t.Error("private key not removed")
+	}
+	if _, err := os.Stat(pub); !os.IsNotExist(err) {
+		t.Error("public key not removed")
+	}
+}

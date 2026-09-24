@@ -54,6 +54,7 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 		Options(opts...).
 		Value(&selected).
 		Filtering(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -62,6 +63,28 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 		return fallback
 	}
 	return selected
+}
+
+// Confirm runs a themed yes/no picker (huh.Confirm) and reports the choice.
+// Use it in place of a raw "[y/N]" text prompt anywhere the wizard needs a
+// binary decision. On abort (Ctrl+C) it re-raises SIGINT, like Select.
+func Confirm(title string, defaultYes bool) (bool, error) {
+	fmt.Println()
+	answer := defaultYes
+	err := huh.NewConfirm().
+		Title(title).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&answer).
+		WithTheme(Theme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		}
+		return false, ErrCancelled
+	}
+	return answer, nil
 }
 
 // Select runs a single-choice picker and reports cancellation explicitly
@@ -82,6 +105,7 @@ func Select(title string, opts []huh.Option[string]) (string, error) {
 		Options(opts...).
 		Value(&selected).
 		Filtering(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -111,6 +135,7 @@ func SelectMultiChecked(title string, opts []huh.Option[string]) ([]string, erro
 		Options(opts...).
 		Value(&selected).
 		Filterable(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -132,6 +157,7 @@ func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
 		Options(opts...).
 		Value(&selected).
 		Filterable(len(opts) > filterThreshold).
+		WithTheme(Theme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {

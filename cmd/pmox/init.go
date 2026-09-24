@@ -147,7 +147,7 @@ func (p *stdPrompter) Printf(format string, args ...interface{}) {
 }
 
 func (p *stdPrompter) Errf(format string, args ...interface{}) {
-	fmt.Fprintf(p.err, format, args...)
+	fmt.Fprint(p.err, tui.Warnf(fmt.Sprintf(format, args...)))
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -230,7 +230,16 @@ func runRemove(p prompter, rawURL string) error {
 	return nil
 }
 
+// runInteractive dispatches to the form-based flow on a terminal, or the
+// linear prompt flow when input is non-interactive (pipes/CI/--no-input).
 func runInteractive(ctx context.Context, p prompter) error {
+	if interactiveFn() {
+		return runInteractiveForm(ctx, p)
+	}
+	return runInteractiveLinear(ctx, p)
+}
+
+func runInteractiveLinear(ctx context.Context, p prompter) error {
 	// Step 1: URL + reachability probe (before any credential prompt). The
 	// probe's TLS decision (strict vs insecure) is reused below so the user
 	// is never warned or handshaked twice.
@@ -313,55 +322,81 @@ func runInteractive(ctx context.Context, p prompter) error {
 		return err
 	}
 
-	// Step 13: save
+	return persistServer(p, cfg, persistInput{
+		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure,
+		node: node, template: template, storage: storage, snippetStorage: snippetStorage, bridge: bridge,
+		sshKey: sshKey, user: user, nodeSSH: nodeSSH, sshPassword: sshPassword, sshKeyPass: sshKeyPass,
+	})
+}
+
+// persistInput bundles everything init collects for a server, ready to
+// write to config + the secret store.
+type persistInput struct {
+	canonical      string
+	tokenID        string
+	secret         string
+	insecure       bool
+	node           string
+	template       string
+	storage        string
+	snippetStorage string
+	bridge         string
+	sshKey         string
+	user           string
+	nodeSSH        *config.NodeSSH
+	sshPassword    string
+	sshKeyPass     string
+}
+
+// persistServer writes the collected server config, stores its secrets,
+// and writes the starter cloud-init template. Shared by the linear and
+// form init flows.
+func persistServer(p prompter, cfg *config.Config, in persistInput) error {
 	srv := &config.Server{
-		TokenID:        tokenID,
-		Node:           node,
-		Template:       template,
-		Storage:        storage,
-		SnippetStorage: snippetStorage,
-		Bridge:         bridge,
-		SSHPubkey:      sshKey,
-		User:           user,
-		Insecure:       insecure,
-		NodeSSH:        nodeSSH,
+		TokenID:        in.tokenID,
+		Node:           in.node,
+		Template:       in.template,
+		Storage:        in.storage,
+		SnippetStorage: in.snippetStorage,
+		Bridge:         in.bridge,
+		SSHPubkey:      in.sshKey,
+		User:           in.user,
+		Insecure:       in.insecure,
+		NodeSSH:        in.nodeSSH,
 	}
-	cfg.AddServer(canonical, srv)
+	cfg.AddServer(in.canonical, srv)
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	if err := credstore.Set(canonical, secret); err != nil {
+	if err := credstore.Set(in.canonical, in.secret); err != nil {
 		// Best-effort revert: delete the server we just added and re-save.
-		cfg.RemoveServer(canonical)
+		cfg.RemoveServer(in.canonical)
 		_ = cfg.Save()
 		return fmt.Errorf("save secret to keychain: %w", err)
 	}
-	if sshPassword != "" {
-		if err := credstore.SetNodeSSHPassword(canonical, sshPassword); err != nil {
+	if in.sshPassword != "" {
+		if err := credstore.SetNodeSSHPassword(in.canonical, in.sshPassword); err != nil {
 			return fmt.Errorf("save node ssh password to keychain: %w", err)
 		}
 	} else {
-		_ = credstore.RemoveNodeSSHPassword(canonical)
+		_ = credstore.RemoveNodeSSHPassword(in.canonical)
 	}
-	if sshKeyPass != "" {
-		if err := credstore.SetNodeSSHKeyPassphrase(canonical, sshKeyPass); err != nil {
+	if in.sshKeyPass != "" {
+		if err := credstore.SetNodeSSHKeyPassphrase(in.canonical, in.sshKeyPass); err != nil {
 			return fmt.Errorf("save node ssh key passphrase to keychain: %w", err)
 		}
 	} else {
-		_ = credstore.RemoveNodeSSHKeyPassphrase(canonical)
+		_ = credstore.RemoveNodeSSHKeyPassphrase(in.canonical)
 	}
 
-	// Step 14
-	p.Printf("configured server %s\n", canonical)
+	p.Printf("configured server %s\n", in.canonical)
 	if path, perr := config.Path(); perr == nil {
 		home, _ := os.UserHomeDir()
 		p.Printf("config saved to %s\n", displayPath(path, home))
 	}
-
-	// Step 15: write the starter cloud-init template for this server.
-	// Failures here are non-fatal — the credentials are already saved,
-	// and the user can always rerun with --regen-cloud-init.
-	writeInitialCloudInit(p, canonical, user, sshKey)
+	// Starter cloud-init is non-fatal — creds are saved; user can rerun
+	// with --regen-cloud-init.
+	writeInitialCloudInit(p, in.canonical, in.user, in.sshKey)
 	return nil
 }
 
@@ -1125,13 +1160,9 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 			userAns = "root"
 		}
 
-		authAns, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
+		authAns, err := promptSSHAuthMethod(p)
 		if err != nil {
 			return nil, "", "", err
-		}
-		authAns = strings.ToLower(strings.TrimSpace(authAns))
-		if authAns == "" {
-			authAns = "p"
 		}
 
 		cfg := pvessh.Config{
@@ -1212,6 +1243,43 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 		return ns, password, keyPass, nil
 	}
 	return nil, "", "", fmt.Errorf("%w: too many failed SSH credential attempts", exitcode.ErrUserInput)
+}
+
+// promptSSHAuthMethod asks how to authenticate the node SSH connection.
+// Interactively it's a themed picker; non-interactively (the linear
+// fallback, no TTY) it falls back to a plain "p/k" text prompt.
+func promptSSHAuthMethod(p prompter) (string, error) {
+	if !interactiveFn() {
+		ans, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
+		if err != nil {
+			return "", err
+		}
+		ans = strings.ToLower(strings.TrimSpace(ans))
+		if ans == "" {
+			ans = "p"
+		}
+		return ans, nil
+	}
+
+	choice := "password"
+	err := huh.NewSelect[string]().
+		Title("Authenticate with").
+		Options(
+			huh.NewOption("Password", "password"),
+			huh.NewOption("SSH key file", "key"),
+		).
+		Value(&choice).
+		Filtering(false).
+		WithTheme(tui.Theme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+			return "", fmt.Errorf("%w: interrupted", exitcode.ErrUserInput)
+		}
+		return "", err
+	}
+	return choice, nil
 }
 
 // sshHostFromURL extracts host:22 from a canonical PVE API URL.
@@ -1338,6 +1406,7 @@ func chooseSSHKeyAction(suggest string) (string, error) {
 		).
 		Value(&choice).
 		Filtering(false).
+		WithTheme(tui.Theme()).
 		Run()
 	return choice, err
 }
@@ -1381,6 +1450,7 @@ func browseForKey(home string) (string, bool) {
 		FileAllowed(true).
 		DirAllowed(false).
 		Value(&selected).
+		WithTheme(tui.Theme()).
 		Run()
 	if err != nil || selected == "" {
 		return "", false
@@ -1424,6 +1494,7 @@ func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error)
 			Options(opts...).
 			Value(&picked).
 			Filtering(false).
+			WithTheme(tui.Theme()).
 			Run()
 		if err == nil && picked != "" {
 			if _, rErr := os.ReadFile(picked); rErr == nil {
