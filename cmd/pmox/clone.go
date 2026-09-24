@@ -48,7 +48,7 @@ configured snippet_storage, then to --storage with a warning.`,
 	cmd.Flags().StringVar(&f.disk, "disk", "", "disk size (e.g. 20G; default 20G if not configured)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
-	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
+	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the clone's net0 (default: keep the source VM's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	addHookFlags(cmd, f)
@@ -57,6 +57,7 @@ configured snippet_storage, then to --storage with a warning.`,
 
 func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error {
 	ctx := cmd.Context()
+	f.bridgeSet = cmd.Flags().Changed("bridge")
 	// Resolve hook flags first so mutual-exclusion errors short-circuit
 	// before any config load / server resolution / PVE call.
 	hk, err := resolveHook(f)

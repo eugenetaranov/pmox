@@ -53,6 +53,10 @@ type launchFlags struct {
 	tack           string
 	ansible        string
 	strictHooks    bool
+	// bridgeSet is true when --bridge was passed explicitly. Only then is
+	// the new VM's net0 rewritten; the configured default bridge is for
+	// create-template, and a launched/cloned VM keeps its source's NIC.
+	bridgeSet bool
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -103,7 +107,7 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")
 	cmd.Flags().StringVar(&f.node, "node", "", "cluster node to launch on (falls back to configured default)")
-	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge (falls back to configured default)")
+	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the VM's net0 (default: keep the template's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
 	addHookFlags(cmd, f)
@@ -183,6 +187,7 @@ func applyHookOptions(opts *launch.Options, hk hook.Hook, f *launchFlags, srv *c
 
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
+	f.bridgeSet = cmd.Flags().Changed("bridge")
 
 	// Resolve hook flags before any config load / server resolution /
 	// PVE call so --post-create + --tack (etc.) fail immediately with
@@ -281,7 +286,9 @@ func resolveLaunchOptions(ctx context.Context, client *pveclient.Client, name st
 // resolveVMSpec resolves the per-VM resources shared by launch and
 // clone — CPU, memory, disk, storage, snippet storage, bridge, wait
 // budget and cloud-init path — layering flag > configured default >
-// built-in. The returned Options has Client/Node/Name/TemplateID unset.
+// built-in. The bridge is the exception: it comes only from an explicit
+// --bridge (see explicitBridge). The returned Options has
+// Client/Node/Name/TemplateID unset.
 // An empty storage is rejected: it would otherwise reach PVE as
 // ide2=":cloudinit".
 func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
@@ -317,12 +324,24 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 		DiskSize:       firstNonEmpty(f.disk, defaultDiskSize),
 		Storage:        storage,
 		SnippetStorage: snippetStorage,
-		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
+		Bridge:         explicitBridge(f),
 		Wait:           wait,
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
 		Stderr:         stderr,
 	}, nil
+}
+
+// explicitBridge returns the bridge to force onto the new VM's net0: the
+// --bridge value when the flag was passed, else "" (keep the NIC cloned
+// from the template/source VM). The configured server bridge is never
+// applied here — it would silently move clones off their source bridge
+// and needs VM.Config.Network on every launch.
+func explicitBridge(f *launchFlags) string {
+	if !f.bridgeSet {
+		return ""
+	}
+	return f.bridge
 }
 
 // resolveSnippetStorage layers --snippet-storage > server.SnippetStorage

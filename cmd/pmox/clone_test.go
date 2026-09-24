@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
@@ -59,7 +61,8 @@ func TestResolveVMSpec_FlagsAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveVMSpec err: %v", err)
 	}
-	if opts.Storage != "fast" || opts.SnippetStorage != "local" || opts.Bridge != "vmbr1" {
+	// The configured bridge is NOT applied: the VM keeps its source NIC.
+	if opts.Storage != "fast" || opts.SnippetStorage != "local" || opts.Bridge != "" {
 		t.Errorf("storage/snippet/bridge = %q/%q/%q", opts.Storage, opts.SnippetStorage, opts.Bridge)
 	}
 	if opts.CPU != defaultCPU || opts.MemMB != defaultMemMB || opts.DiskSize != defaultDiskSize || opts.Wait != defaultWait {
@@ -175,6 +178,72 @@ func TestApplyHookOptions_SetsSSHInsecure(t *testing.T) {
 		}
 		if !opts.StrictHooks || opts.User != "admin" || opts.SSHKeyPath != "/keys/id_ed25519" {
 			t.Errorf("hook fields = strict:%v user:%q key:%q", opts.StrictHooks, opts.User, opts.SSHKeyPath)
+		}
+	}
+}
+
+// Only an explicit --bridge rewrites net0; the configured server bridge
+// (set by init for create-template) never does.
+func TestResolveVMSpec_BridgeOnlyFromExplicitFlag(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Storage: "local", Bridge: "vmbr1"},
+		Secret: "s",
+	}
+	cases := []struct {
+		name string
+		f    launchFlags
+		want string
+	}{
+		{"default ignores configured bridge", launchFlags{}, ""},
+		{"explicit --bridge", launchFlags{bridge: "vmbr9", bridgeSet: true}, "vmbr9"},
+		{"explicit --bridge equal to configured", launchFlags{bridge: "vmbr1", bridgeSet: true}, "vmbr1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := resolveVMSpec(&tc.f, resolved, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("resolveVMSpec: %v", err)
+			}
+			if opts.Bridge != tc.want {
+				t.Errorf("Bridge = %q, want %q", opts.Bridge, tc.want)
+			}
+		})
+	}
+}
+
+// launch and clone record whether --bridge was passed on the command line.
+func TestBridgeFlagChangedIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"unset", nil, false},
+		{"set", []string{"--bridge", "vmbr2"}, true},
+	} {
+		for cmdName, run := range map[string]func(cmd *cobra.Command, f *launchFlags) error{
+			"launch": func(cmd *cobra.Command, f *launchFlags) error { return runLaunch(cmd, "web1", f) },
+			"clone":  func(cmd *cobra.Command, f *launchFlags) error { return runClone(cmd, "src", "dst", f) },
+		} {
+			t.Run(cmdName+"/"+tc.name, func(t *testing.T) {
+				// No config: the run stops at server resolution, after
+				// the flag has been recorded.
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				f := &launchFlags{}
+				cmd := &cobra.Command{}
+				cmd.Flags().StringVar(&f.bridge, "bridge", "", "")
+				if err := cmd.ParseFlags(tc.args); err != nil {
+					t.Fatal(err)
+				}
+				cmd.SetContext(context.Background())
+				cmd.SetErr(&bytes.Buffer{})
+				_ = run(cmd, f)
+				if f.bridgeSet != tc.want {
+					t.Errorf("bridgeSet = %v, want %v", f.bridgeSet, tc.want)
+				}
+			})
 		}
 	}
 }
