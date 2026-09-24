@@ -56,7 +56,7 @@ var mountResolveDestFn = func(ctx context.Context, client *pveclient.Client, std
 	if r, p, isRemote := parseRemoteArg(dest); isRemote {
 		return r, p, nil
 	}
-	picked, err := vmPickFn(ctx, client, stderr)
+	picked, err := vmPickFn(ctx, client)
 	if err != nil {
 		return "", "", err
 	}
@@ -508,7 +508,7 @@ var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+	picked, err := vmPickFn(ctx, client)
 	if err != nil {
 		return "", err
 	}

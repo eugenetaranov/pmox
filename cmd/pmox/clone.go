@@ -77,7 +77,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	}
 	// No source given → pick one interactively (like shell/delete do).
 	if srcArg == "" {
-		picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+		picked, err := vmPickFn(ctx, client)
 		if err != nil {
 			return err
 		}

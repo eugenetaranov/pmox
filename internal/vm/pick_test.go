@@ -50,7 +50,7 @@ func TestPick_ZeroPMOXVMs(t *testing.T) {
 	client := clusterServer(t, noTaggedFixture)
 	defer withPickerStubs(t, true, true, false, nil)()
 
-	_, err := Pick(context.Background(), client, nil)
+	_, err := Pick(context.Background(), client)
 	if !errors.Is(err, ErrNoPMOXVMs) {
 		t.Fatalf("err = %v, want ErrNoPMOXVMs", err)
 	}
@@ -64,7 +64,7 @@ func TestPick_SinglePMOXVM_AutoSelect(t *testing.T) {
 		return "", nil
 	})()
 
-	ref, err := Pick(context.Background(), client, nil)
+	ref, err := Pick(context.Background(), client)
 	if err != nil {
 		t.Fatalf("Pick: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPick_SingleVM_AutoSelectEvenWithoutTTY(t *testing.T) {
 	client := clusterServer(t, oneTaggedFixture)
 	defer withPickerStubs(t, false, false, false, nil)()
 
-	ref, err := Pick(context.Background(), client, nil)
+	ref, err := Pick(context.Background(), client)
 	if err != nil {
 		t.Fatalf("Pick: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestPick_MultiVM_WithTTY_UsesPicker(t *testing.T) {
 		return opts[0].Value, nil
 	})()
 
-	ref, err := Pick(context.Background(), client, nil)
+	ref, err := Pick(context.Background(), client)
 	if err != nil {
 		t.Fatalf("Pick: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestPick_MultiVM_NoStdinTTY(t *testing.T) {
 	client := clusterServer(t, threeTaggedFixture)
 	defer withPickerStubs(t, false, true, false, nil)()
 
-	_, err := Pick(context.Background(), client, nil)
+	_, err := Pick(context.Background(), client)
 	if !errors.Is(err, ErrPickerNonTTY) {
 		t.Fatalf("err = %v, want ErrPickerNonTTY", err)
 	}
@@ -135,7 +135,7 @@ func TestPick_MultiVM_NoStderrTTY(t *testing.T) {
 	client := clusterServer(t, threeTaggedFixture)
 	defer withPickerStubs(t, true, false, false, nil)()
 
-	_, err := Pick(context.Background(), client, nil)
+	_, err := Pick(context.Background(), client)
 	if !errors.Is(err, ErrPickerNonTTY) {
 		t.Fatalf("err = %v, want ErrPickerNonTTY", err)
 	}
@@ -149,7 +149,7 @@ func TestPick_MultiVM_NoInputDisablesPicker(t *testing.T) {
 		return "", nil
 	})()
 
-	_, err := Pick(context.Background(), client, nil)
+	_, err := Pick(context.Background(), client)
 	if !errors.Is(err, ErrPickerNonTTY) {
 		t.Fatalf("err = %v, want ErrPickerNonTTY when no-input", err)
 	}
@@ -161,7 +161,7 @@ func TestPick_UserAborts(t *testing.T) {
 		return "", tui.ErrCancelled
 	})()
 
-	_, err := Pick(context.Background(), client, nil)
+	_, err := Pick(context.Background(), client)
 	if !errors.Is(err, tui.ErrCancelled) {
 		t.Fatalf("expected ErrCancelled on abort, got %v", err)
 	}
