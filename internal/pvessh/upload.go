@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/eugenetaranov/pmox/internal/paths"
 )
 
 // UploadSnippet writes content to <storagePath>/snippets/<filename>
@@ -220,12 +222,9 @@ func keyBase64(key ssh.PublicKey) string {
 // KnownHostsPath returns the pmox-managed known_hosts path,
 // respecting $XDG_CONFIG_HOME and falling back to ~/.config/pmox/known_hosts.
 func KnownHostsPath() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pmox", "known_hosts"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := paths.ConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".config", "pmox", "known_hosts"), nil
+	return filepath.Join(dir, "known_hosts"), nil
 }

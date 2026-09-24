@@ -1116,7 +1116,7 @@ var (
 // before returning. Returns (NodeSSH block for YAML, password secret,
 // key passphrase secret).
 func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*config.NodeSSH, string, string, error) {
-	host, err := sshHostFromURL(canonicalURL)
+	host, err := pvessh.HostFromURL(canonicalURL)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -1127,9 +1127,9 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 		if err != nil {
 			return nil, "", "", err
 		}
-		if need, err := needsHostKeyPin(kh, host); err != nil {
+		if pinned, err := pvessh.KnownHostsHas(kh, host); err != nil {
 			return nil, "", "", err
-		} else if need {
+		} else if !pinned {
 			if std, ok := p.(*stdPrompter); ok {
 				if err := sshPinHostKeyFn(ctx, host, kh, std.out, std.in); err != nil {
 					return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
@@ -1274,49 +1274,6 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 		return "", err
 	}
 	return choice, nil
-}
-
-// sshHostFromURL extracts host:22 from a canonical PVE API URL.
-func sshHostFromURL(canonicalURL string) (string, error) {
-	u, err := url.Parse(canonicalURL)
-	if err != nil {
-		return "", fmt.Errorf("parse server url: %w", err)
-	}
-	h := u.Hostname()
-	if h == "" {
-		return "", fmt.Errorf("server url has no host: %s", canonicalURL)
-	}
-	return h + ":22", nil
-}
-
-// needsHostKeyPin reports whether the known_hosts file is missing an
-// entry for host. A missing file counts as needing a pin.
-func needsHostKeyPin(knownHostsPath, host string) (bool, error) {
-	data, err := os.ReadFile(knownHostsPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return true, nil
-		}
-		return false, fmt.Errorf("read %s: %w", knownHostsPath, err)
-	}
-	h := strings.TrimSuffix(host, ":22")
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// known_hosts lines start with "host[,host2] type base64".
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		for _, n := range strings.Split(fields[0], ",") {
-			if n == h || n == host {
-				return false, nil
-			}
-		}
-	}
-	return true, nil
 }
 
 func expandHome(p string) string {

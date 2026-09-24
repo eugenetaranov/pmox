@@ -20,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -605,7 +606,7 @@ func staleKnownHostItems(liveIPs map[string]bool, complete bool, ew io.Writer) [
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		host := knownHostToken(trimmed)
+		host := pvessh.KnownHostToken(trimmed)
 		if host != "" && !liveIPs[host] {
 			staleHosts = append(staleHosts, host)
 		}
@@ -620,56 +621,11 @@ func staleKnownHostItems(liveIPs map[string]bool, complete bool, ew io.Writer) [
 	}}
 }
 
-// knownHostToken returns the host field of a known_hosts line, stripping
-// any [host]:port bracketing and a trailing :port.
-func knownHostToken(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return ""
-	}
-	h := fields[0]
-	// Take the first host if it's a comma-list, and strip [..]:port form.
-	if i := strings.IndexByte(h, ','); i >= 0 {
-		h = h[:i]
-	}
-	h = strings.TrimPrefix(h, "[")
-	h = strings.ReplaceAll(h, "]", "")
-	if i := strings.LastIndex(h, ":"); i >= 0 && !strings.Contains(h[i+1:], ":") {
-		// strip a trailing :port (but not part of an IPv6 literal)
-		if _, err := strconv.Atoi(h[i+1:]); err == nil {
-			h = h[:i]
-		}
-	}
-	return h
-}
-
 // pruneKnownHosts rewrites the known_hosts file, dropping lines whose host
 // is not in liveIPs.
 func pruneKnownHosts(path string, liveIPs map[string]bool) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var kept []string
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#") {
-			kept = append(kept, line)
-			continue
-		}
-		if host := knownHostToken(trimmed); host != "" && !liveIPs[host] {
-			continue // stale — drop
-		}
-		kept = append(kept, line)
-	}
-	out := strings.Join(kept, "\n")
-	if out != "" {
-		out += "\n"
-	}
-	return os.WriteFile(path, []byte(out), 0o600)
+	_, err := pvessh.KnownHostsPrune(path, func(host string) bool { return liveIPs[host] })
+	return err
 }
 
 // reportCleanup prints (and, with apply, performs) the planned removals.
