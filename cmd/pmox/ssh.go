@@ -197,8 +197,8 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 		return nil, err
 	}
 
-	if !f.force && !vm.HasPMOXTag(ref.Tags) {
-		return nil, fmt.Errorf("refusing to connect to VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	if err := ref.RequirePMOXTag("connect to", f.force); err != nil {
+		return nil, err
 	}
 
 	ip, err := getOrStartVM(ctx, cmd, client, ref)

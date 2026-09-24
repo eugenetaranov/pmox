@@ -175,8 +175,8 @@ func resolveDeleteRefs(ctx context.Context, client *pveclient.Client, args []str
 		if err != nil {
 			return nil, err
 		}
-		if !f.force && !vm.HasPMOXTag(ref.Tags) {
-			return nil, fmt.Errorf("refusing to delete VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+		if err := ref.RequirePMOXTag("delete", f.force); err != nil {
+			return nil, err
 		}
 		refs = append(refs, ref)
 	}

@@ -95,8 +95,8 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 	if err != nil {
 		return nil, err
 	}
-	if !f.force && !vm.HasPMOXTag(ref.Tags) {
-		return nil, fmt.Errorf("refusing to report SSH details for VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	if err := ref.RequirePMOXTag("report SSH details for", f.force); err != nil {
+		return nil, err
 	}
 
 	status, err := client.GetStatus(ctx, ref.Node, ref.VMID)

@@ -111,8 +111,8 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	if err != nil {
 		return err
 	}
-	if !f.force && !vm.HasPMOXTag(ref.Tags) {
-		return fmt.Errorf("refusing to apply to VM %q (vmid %d): not tagged \"pmox\" — pass --force to override", ref.Name, ref.VMID)
+	if err := ref.RequirePMOXTag("apply to", f.force); err != nil {
+		return err
 	}
 
 	playbook, recordProfile, err := resolvePlaybook(f, profileArg, resolved.URL, ref.VMID)
