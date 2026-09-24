@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -34,7 +33,9 @@ var snippetFileRe = regexp.MustCompile(`(?:^|/)pmox-(\d+)-user-data\.yaml$`)
 type cleanupItem struct {
 	Category string `json:"category"`
 	Detail   string `json:"detail"`
-	apply    func() error
+	// Error is set (JSON output only) when --apply failed to remove it.
+	Error string `json:"error,omitempty"`
+	apply func() error
 }
 
 func newCleanupCmd() *cobra.Command {
@@ -683,19 +684,25 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 	w := cmd.OutOrStdout()
 
 	if outputMode == "json" {
+		var failed int
+		if apply {
+			for i := range items {
+				if err := items[i].apply(); err != nil {
+					failed++
+					items[i].Error = err.Error()
+				}
+			}
+		}
 		out := struct {
 			Applied bool          `json:"applied"`
 			Items   []cleanupItem `json:"items"`
 			Total   int           `json:"total"`
-		}{Applied: apply, Items: items, Total: len(items)}
-		if apply {
-			for _, it := range items {
-				_ = it.apply()
-			}
+			Failed  int           `json:"failed"`
+		}{Applied: apply, Items: items, Total: len(items), Failed: failed}
+		if err := printJSON(w, out); err != nil {
+			return err
 		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		return removalError(len(items), failed)
 	}
 
 	if len(items) == 0 {
@@ -731,9 +738,17 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "failed to remove %q: %v\n", it.Detail, err)
 		}
 	}
-	if failed > 0 {
-		return fmt.Errorf("removed %d of %d item(s); %d failed", len(items)-failed, len(items), failed)
+	if err := removalError(len(items), failed); err != nil {
+		return err
 	}
 	fmt.Fprintf(w, "\nRemoved %d item(s).\n", len(items))
 	return nil
+}
+
+// removalError reports a partial --apply, or nil when nothing failed.
+func removalError(total, failed int) error {
+	if failed == 0 {
+		return nil
+	}
+	return fmt.Errorf("removed %d of %d item(s); %d failed", total-failed, total, failed)
 }
