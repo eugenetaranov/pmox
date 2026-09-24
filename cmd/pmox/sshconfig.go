@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,9 +77,7 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 	out := cmd.OutOrStdout()
 	switch {
 	case outputMode == "json":
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(info)
+		return printJSON(out, info)
 	case asCommand:
 		fmt.Fprintln(out, info.Command)
 	default:

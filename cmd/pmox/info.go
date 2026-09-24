@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -71,9 +70,7 @@ func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	info := vm.BuildInfo(ref, status, cfg, ifaces)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(info)
+		return printJSON(cmd.OutOrStdout(), info)
 	}
 	vm.RenderInfo(cmd.OutOrStdout(), info)
 	return nil

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -73,9 +72,7 @@ func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	fetchIPs(ctx, client, rows)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return printJSON(cmd.OutOrStdout(), rows)
 	}
 	vm.RenderTable(cmd.OutOrStdout(), rows)
 	return nil

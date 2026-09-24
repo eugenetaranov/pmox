@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -128,9 +127,7 @@ func finishDoctor(cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serv
 	report := cl.Finalize(serverURL, source, f.strict)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
+		if err := printJSON(cmd.OutOrStdout(), report); err != nil {
 			return err
 		}
 	} else {

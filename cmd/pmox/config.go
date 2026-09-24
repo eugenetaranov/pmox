@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -80,9 +79,7 @@ func runGetContexts(cmd *cobra.Command) error {
 		for _, c := range contexts {
 			out.Contexts = append(out.Contexts, row{c.Name, c.URL, c.Current})
 		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		return printJSON(w, out)
 	}
 
 	if len(contexts) == 0 {
