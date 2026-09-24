@@ -47,19 +47,10 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 	if len(opts) == 1 {
 		return opts[0].Value
 	}
-	fmt.Println()
-	selected := opts[0].Value
-	err := huh.NewSelect[string]().
-		Title(title).
-		Options(opts...).
-		Value(&selected).
-		Filtering(len(opts) > filterThreshold).
-		WithTheme(Theme()).
-		Run()
+	selected, err := runPicker(opts[0].Value, func(v *string) huh.Field {
+		return selectField(title, opts, v)
+	})
 	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		}
 		return fallback
 	}
 	return selected
@@ -69,22 +60,14 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) string 
 // Use it in place of a raw "[y/N]" text prompt anywhere the wizard needs a
 // binary decision. On abort (Ctrl+C) it re-raises SIGINT, like Select.
 func Confirm(title string, defaultYes bool) (bool, error) {
-	fmt.Println()
-	answer := defaultYes
-	err := huh.NewConfirm().
-		Title(title).
-		Affirmative("Yes").
-		Negative("No").
-		Value(&answer).
-		WithTheme(Theme()).
-		Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		}
-		return false, ErrCancelled
-	}
-	return answer, nil
+	return runPicker(defaultYes, func(v *bool) huh.Field {
+		return huh.NewConfirm().
+			Title(title).
+			Affirmative("Yes").
+			Negative("No").
+			Value(v).
+			WithTheme(Theme())
+	})
 }
 
 // Select runs a single-choice picker and reports cancellation explicitly
@@ -98,27 +81,30 @@ func Select(title string, opts []huh.Option[string]) (string, error) {
 	if len(opts) == 1 {
 		return opts[0].Value, nil
 	}
-	fmt.Println()
-	selected := opts[0].Value
-	err := huh.NewSelect[string]().
-		Title(title).
-		Options(opts...).
-		Value(&selected).
-		Filtering(len(opts) > filterThreshold).
-		WithTheme(Theme()).
-		Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		}
-		return "", ErrCancelled
-	}
-	return selected, nil
+	return runPicker(opts[0].Value, func(v *string) huh.Field {
+		return selectField(title, opts, v)
+	})
 }
 
 // SelectMulti runs a multi-choice picker (space toggles, enter confirms)
 // and returns the chosen values. An empty selection or abort returns
 // ErrCancelled so callers never proceed on "nothing selected".
+func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
+	if len(opts) == 0 {
+		return nil, ErrCancelled
+	}
+	selected, err := runPicker(nil, func(v *[]string) huh.Field {
+		return multiSelectField(title, opts, v)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(selected) == 0 {
+		return nil, ErrCancelled
+	}
+	return selected, nil
+}
+
 // SelectMultiChecked runs a multi-select whose options may arrive
 // pre-checked (via huh.NewOption(...).Selected(true)). Unlike SelectMulti,
 // an empty final selection is returned as an empty slice (nil error), not
@@ -128,45 +114,42 @@ func SelectMultiChecked(title string, opts []huh.Option[string]) ([]string, erro
 	if len(opts) == 0 {
 		return nil, nil
 	}
-	fmt.Println()
-	var selected []string
-	err := huh.NewMultiSelect[string]().
-		Title(title).
-		Options(opts...).
-		Value(&selected).
-		Filterable(len(opts) > filterThreshold).
-		WithTheme(Theme()).
-		Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		}
-		return nil, ErrCancelled
-	}
-	return selected, nil
+	return runPicker(nil, func(v *[]string) huh.Field {
+		return multiSelectField(title, opts, v)
+	})
 }
 
-func SelectMulti(title string, opts []huh.Option[string]) ([]string, error) {
-	if len(opts) == 0 {
-		return nil, ErrCancelled
-	}
+// runPicker prints a blank separator line, runs the field built around a
+// value seeded with initial, and returns the final value. Any error is
+// reported as ErrCancelled; a user abort (Ctrl+C / Esc) additionally
+// re-raises SIGINT so the root signal handler cancels the process context.
+func runPicker[T any](initial T, build func(*T) huh.Field) (T, error) {
 	fmt.Println()
-	var selected []string
-	err := huh.NewMultiSelect[string]().
-		Title(title).
-		Options(opts...).
-		Value(&selected).
-		Filterable(len(opts) > filterThreshold).
-		WithTheme(Theme()).
-		Run()
-	if err != nil {
+	value := initial
+	if err := build(&value).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
 		}
-		return nil, ErrCancelled
+		var zero T
+		return zero, ErrCancelled
 	}
-	if len(selected) == 0 {
-		return nil, ErrCancelled
-	}
-	return selected, nil
+	return value, nil
+}
+
+func selectField(title string, opts []huh.Option[string], v *string) huh.Field {
+	return huh.NewSelect[string]().
+		Title(title).
+		Options(opts...).
+		Value(v).
+		Filtering(len(opts) > filterThreshold).
+		WithTheme(Theme())
+}
+
+func multiSelectField(title string, opts []huh.Option[string], v *[]string) huh.Field {
+	return huh.NewMultiSelect[string]().
+		Title(title).
+		Options(opts...).
+		Value(v).
+		Filterable(len(opts) > filterThreshold).
+		WithTheme(Theme())
 }

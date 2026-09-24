@@ -255,7 +255,7 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	if templateStr == "" {
 		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template or run 'pmox init'", exitcode.ErrNotFound)
 	}
-	templateID, templateName, err := resolveTemplate(ctx, client, node, templateStr)
+	templateID, _, err := resolveTemplate(ctx, client, node, templateStr)
 	if err != nil {
 		return launch.Options{}, err
 	}
@@ -289,7 +289,6 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		Client:         client,
 		Node:           node,
 		Name:           name,
-		TemplateName:   templateName,
 		TemplateID:     templateID,
 		CPU:            cpu,
 		MemMB:          mem,
@@ -301,7 +300,6 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
 		Stderr:         stderr,
-		Verbose:        verbose,
 	}, nil
 }
 

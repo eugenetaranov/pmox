@@ -428,7 +428,7 @@ func TestSSH_ResolveIdentityKey_NothingConfigured(t *testing.T) {
 func stubVMPick(t *testing.T, ref *vm.Ref, err error) {
 	t.Helper()
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		return ref, err
 	}
 	t.Cleanup(func() { vmPickFn = orig })
@@ -437,7 +437,7 @@ func stubVMPick(t *testing.T, ref *vm.Ref, err error) {
 func TestResolveTargetArg_ExplicitArgBypassesPicker(t *testing.T) {
 	called := false
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		called = true
 		return nil, nil
 	}

@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 // sshConnInfo is the resolved connection detail for a VM.
@@ -114,7 +114,7 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 	if err != nil {
 		return nil, fmt.Errorf("VM %q is running but the guest agent is not responding; is qemu-guest-agent installed?", ref.Name)
 	}
-	ip := launch.PickIPv4(ifaces)
+	ip := vmwait.PickIPv4(ifaces)
 	if ip == "" {
 		return nil, fmt.Errorf("VM %q is running but the guest agent reports no usable IPv4 address yet", ref.Name)
 	}

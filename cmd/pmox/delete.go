@@ -112,7 +112,7 @@ func resolveTargetArg(ctx context.Context, client *pveclient.Client, args []stri
 	if len(args) == 1 {
 		return args[0], nil
 	}
-	ref, err := vmPickFn(ctx, client, stderr)
+	ref, err := vmPickFn(ctx, client)
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +126,7 @@ func resolveTargetArgs(ctx context.Context, client *pveclient.Client, args []str
 	if len(args) > 0 {
 		return args, nil
 	}
-	refs, err := vmPickMultiFn(ctx, client, stderr)
+	refs, err := vmPickMultiFn(ctx, client)
 	if err != nil {
 		return nil, err
 	}

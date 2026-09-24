@@ -366,7 +366,7 @@ func newTestUmountCmd() *cobra.Command {
 func TestMountResolveDest_BareArgInvokesPicker(t *testing.T) {
 	called := false
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		called = true
 		return &vm.Ref{VMID: 104, Name: "web1"}, nil
 	}
@@ -383,7 +383,7 @@ func TestMountResolveDest_BareArgInvokesPicker(t *testing.T) {
 // the picker at all.
 func TestMountResolveDest_ExplicitArgBypassesPicker(t *testing.T) {
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		t.Fatalf("picker must not run for explicit <name>:<path>")
 		return nil, nil
 	}

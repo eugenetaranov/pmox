@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 const listIPConcurrency = 8
@@ -97,7 +97,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 			if err != nil {
 				return
 			}
-			rows[i].IP = launch.PickIPv4(ifaces)
+			rows[i].IP = vmwait.PickIPv4(ifaces)
 		}(i)
 	}
 	wg.Wait()

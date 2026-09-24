@@ -1,8 +1,8 @@
 // Package launch implements the 9-step state machine that turns a
 // Proxmox template into a running, reachable VM. It owns the clone →
-// tag → resize → config → start → wait-IP → wait-SSH sequence, the
-// snippet upload, the IP-picking heuristic, and the SSH reachability
-// wait.
+// tag → resize → config → start → wait-IP → wait-SSH sequence and the
+// snippet upload. The IP-picking heuristic and the IP/SSH waits live
+// in internal/vmwait.
 package launch
 
 import (
@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/eugenetaranov/pmox/internal/hook"
+	"github.com/eugenetaranov/pmox/internal/progress"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/snippet"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 // HookError wraps a hook execution failure. It is the sentinel type
@@ -34,30 +36,28 @@ func (e *HookError) Unwrap() error { return e.Err }
 func (e *HookError) IsHookError() {}
 
 // Progress receives phase-level UI callbacks. A nil Progress is valid —
-// Run checks and no-ops. Start is called before a phase begins; Done is
-// called after the phase completes (err is nil on success). Implementations
-// must be safe to call from a single goroutine in order.
-type Progress interface {
-	Start(step string)
-	Done(err error)
-}
+// Run checks and no-ops. See progress.Reporter.
+type Progress = progress.Reporter
 
 // Options bundles everything Run needs to launch a VM.
 type Options struct {
 	Client         *pveclient.Client
 	Node           string
 	Name           string
-	TemplateName   string
 	TemplateID     int
 	CPU            int
 	MemMB          int
 	DiskSize       string
 	Storage        string
 	SnippetStorage string
-	Bridge         string
-	Wait           time.Duration
-	NoWaitSSH      bool
-	CloudInitPath  string
+	// Bridge, when non-empty, replaces the bridge= parameter of the
+	// cloned VM's net0 (model, MAC and other params are preserved).
+	Bridge string
+	// Wait is the total budget for the wait-IP and wait-SSH phases
+	// combined. Zero means 3 minutes.
+	Wait          time.Duration
+	NoWaitSSH     bool
+	CloudInitPath string
 	// Hook is an optional post-SSH-ready hook (--post-create, --tack,
 	// --ansible). Nil means no hook phase.
 	Hook hook.Hook
@@ -73,31 +73,28 @@ type Options struct {
 	// SSHInsecure skips SSH host-key verification for the hook (tack).
 	SSHInsecure bool
 	// WaitForSSHFn is a test seam. When non-nil, the launch state
-	// machine calls it instead of the real WaitForSSH so hook tests
-	// can run without a live SSH endpoint. Production code leaves
-	// it nil.
+	// machine calls it instead of the real vmwait.WaitForSSH so hook
+	// tests can run without a live SSH endpoint. Production code
+	// leaves it nil.
 	WaitForSSHFn func(ctx context.Context, ip string, timeout time.Duration) error
+	// PollInterval overrides vmwait.DefaultPollInterval for the
+	// wait-IP / wait-SSH phases. Test seam; production leaves it zero.
+	PollInterval time.Duration
 	// UploadSnippet writes the cloud-init snippet to the PVE node's
 	// snippets/ directory via SFTP. PVE's HTTP /upload endpoint
 	// rejects content=snippets, so the launcher cannot use the API
 	// path. The CLI layer injects a closure that lazily dials pvessh.
 	UploadSnippet func(ctx context.Context, storagePath, filename string, content []byte) error
-	Stderr        io.Writer
-	Verbose       bool
-	Progress      Progress
+	// Stderr receives launch warnings; nil suppresses them. Hook
+	// stderr also goes here, falling back to os.Stderr when nil.
+	Stderr io.Writer
+	// Stdout receives hook stdout; nil means os.Stdout.
+	Stdout   io.Writer
+	Progress Progress
 }
 
-func (o Options) pStart(step string) {
-	if o.Progress != nil {
-		o.Progress.Start(step)
-	}
-}
-
-func (o Options) pDone(err error) {
-	if o.Progress != nil {
-		o.Progress.Done(err)
-	}
-}
+func (o Options) pStart(step string) { progress.Start(o.Progress, step) }
+func (o Options) pDone(err error)    { progress.Done(o.Progress, err) }
 
 // Result is the launch state-machine success payload.
 type Result struct {
@@ -191,6 +188,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("upload cloud-init snippet for vm %d: %w (run pmox delete %d)", vmid, err, vmid)
 	}
 	kv := BuildCustomKV(opts, vmid)
+	if opts.Bridge != "" {
+		net0, err := bridgedNet0(ctx, opts, vmid)
+		if err != nil {
+			opts.pDone(err)
+			return nil, fmt.Errorf("set bridge on vm %d: %w (run pmox delete %d)", vmid, err, vmid)
+		}
+		if net0 != "" {
+			kv["net0"] = net0
+		}
+	}
 	if err := opts.Client.SetConfig(ctx, opts.Node, vmid, kv); err != nil {
 		opts.pDone(err)
 		return nil, fmt.Errorf("push cloud-init config on vm %d: %w (run pmox delete %d)", vmid, err, vmid)
@@ -210,14 +217,22 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	opts.pDone(nil)
 
-	// Phase 7 — wait for the guest agent to report a usable IPv4.
+	// Phases 7–8 share a single --wait budget: the SSH wait gets
+	// whatever the IP wait left over, so the worst case is Wait, not
+	// 2×Wait.
 	waitBudget := opts.Wait
 	if waitBudget <= 0 {
 		waitBudget = 3 * time.Minute
 	}
 	overallDeadline := time.Now().Add(waitBudget)
+	var waitOpts []vmwait.Option
+	if opts.PollInterval > 0 {
+		waitOpts = append(waitOpts, vmwait.WithPollInterval(opts.PollInterval))
+	}
+
+	// Phase 7 — wait for the guest agent to report a usable IPv4.
 	opts.pStart("Waiting for guest agent to report IP")
-	ip, err := WaitForIP(ctx, opts.Client, opts.Node, vmid, waitBudget)
+	ip, err := vmwait.WaitForIP(ctx, opts.Client, opts.Node, vmid, waitBudget, waitOpts...)
 	opts.pDone(err)
 	if err != nil {
 		return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
@@ -228,9 +243,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		opts.pStart(fmt.Sprintf("Waiting for ssh on %s", ip))
 		waitFn := opts.WaitForSSHFn
 		if waitFn == nil {
-			waitFn = WaitForSSH
+			waitFn = func(ctx context.Context, ip string, timeout time.Duration) error {
+				return vmwait.WaitForSSH(ctx, ip, timeout, waitOpts...)
+			}
 		}
-		err := waitFn(ctx, ip, waitBudget)
+		err := waitFn(ctx, ip, time.Until(overallDeadline))
 		opts.pDone(err)
 		if err != nil {
 			return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
@@ -258,8 +275,15 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 				SSHKey:   opts.SSHKeyPath,
 				Insecure: opts.SSHInsecure,
 			}
+			stdout, stderr := opts.Stdout, opts.Stderr
+			if stdout == nil {
+				stdout = os.Stdout
+			}
+			if stderr == nil {
+				stderr = os.Stderr
+			}
 			opts.pStart(fmt.Sprintf("Running %s hook", opts.Hook.Name()))
-			hookErr := opts.Hook.Run(hookCtx, env, os.Stdout, os.Stderr)
+			hookErr := opts.Hook.Run(hookCtx, env, stdout, stderr)
 			cancel()
 			opts.pDone(hookErr)
 			if hookErr != nil {
@@ -275,4 +299,20 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Phase 9 — done.
 	return &Result{VMID: vmid, IP: ip}, nil
+}
+
+// bridgedNet0 reads the cloned VM's net0 and returns it with its
+// bridge set to opts.Bridge. It returns "" when net0 already uses that
+// bridge, so the config push leaves the NIC untouched.
+func bridgedNet0(ctx context.Context, opts Options, vmid int) (string, error) {
+	cfg, err := opts.Client.GetConfig(ctx, opts.Node, vmid)
+	if err != nil {
+		return "", fmt.Errorf("read net0: %w", err)
+	}
+	cur := cfg["net0"]
+	next := setNet0Bridge(cur, opts.Bridge)
+	if next == cur {
+		return "", nil
+	}
+	return next, nil
 }

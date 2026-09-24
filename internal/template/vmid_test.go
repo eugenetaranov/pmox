@@ -29,7 +29,7 @@ func newVMIDStub(t *testing.T, vmids []int) *pveclient.Client {
 
 func TestReserveVMID_EmptyRange(t *testing.T) {
 	c := newVMIDStub(t, []int{100, 101})
-	got, err := reserveVMID(context.Background(), c, "pve")
+	got, err := reserveVMID(context.Background(), c)
 	if err != nil {
 		t.Fatalf("reserveVMID: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestReserveVMID_EmptyRange(t *testing.T) {
 
 func TestReserveVMID_LowestGap(t *testing.T) {
 	c := newVMIDStub(t, []int{9000, 9001, 9003})
-	got, err := reserveVMID(context.Background(), c, "pve")
+	got, err := reserveVMID(context.Background(), c)
 	if err != nil {
 		t.Fatalf("reserveVMID: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestReserveVMID_Full(t *testing.T) {
 		full = append(full, i)
 	}
 	c := newVMIDStub(t, full)
-	_, err := reserveVMID(context.Background(), c, "pve")
+	_, err := reserveVMID(context.Background(), c)
 	if err == nil {
 		t.Fatal("expected error")
 	}

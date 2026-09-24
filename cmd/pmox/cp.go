@@ -21,7 +21,7 @@ func ensureVMRef(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	if ref != "" {
 		return ref, nil
 	}
-	picked, err := vmPickFn(ctx, client, cmd.ErrOrStderr())
+	picked, err := vmPickFn(ctx, client)
 	if err != nil {
 		return "", err
 	}

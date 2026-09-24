@@ -76,7 +76,7 @@ func TestInfo_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	outputMode = "text"
 
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		return &vm.Ref{VMID: 104}, nil
 	}
 	t.Cleanup(func() { vmPickFn = orig })

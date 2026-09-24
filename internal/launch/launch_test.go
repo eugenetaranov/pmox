@@ -33,6 +33,9 @@ type launchFake struct {
 	failTagCfg   bool
 	failStart    bool
 	agentTimeout bool
+
+	// net0 is what GET /config reports for the cloned VM's NIC.
+	net0 string
 }
 
 func newLaunchFake(t *testing.T) *launchFake {
@@ -61,6 +64,10 @@ func newLaunchFake(t *testing.T) *launchFake {
 			return
 		}
 		fmt.Fprint(w, `{"data":null}`)
+	})
+
+	f.srv.Handle("GET", "/config", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		fmt.Fprintf(w, `{"data":{"net0":%q}}`, f.net0)
 	})
 
 	f.srv.Handle("PUT", "/resize", pvetest.JSON(`{"data":null}`))
@@ -152,6 +159,7 @@ func baseOpts(t *testing.T, c *pveclient.Client) (Options, *stubUpload) {
 		NoWaitSSH:      true,
 		CloudInitPath:  writeCI(t),
 		UploadSnippet:  stub.fn,
+		PollInterval:   10 * time.Millisecond,
 	}, stub
 }
 
@@ -476,12 +484,115 @@ func TestRun_WaitIPTimeout(t *testing.T) {
 	f := newLaunchFake(t)
 	f.agentTimeout = true
 	opts, _ := baseOpts(t, f.client())
-	opts.Wait = 1500 * time.Millisecond
+	opts.Wait = 200 * time.Millisecond
 	_, err := Run(context.Background(), opts)
 	if err == nil {
 		t.Fatal("Run err=nil, want IP wait timeout")
 	}
 	if !strings.Contains(err.Error(), "qemu-guest-agent not responding on VM") {
 		t.Errorf("err = %v, want qemu-guest-agent message", err)
+	}
+	if !errors.Is(err, pveclient.ErrTimeout) {
+		t.Errorf("err = %v, want wrapped pveclient.ErrTimeout", err)
+	}
+}
+
+func TestRun_BridgeRewritesNet0(t *testing.T) {
+	f := newLaunchFake(t)
+	f.net0 = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"
+	opts, _ := baseOpts(t, f.client())
+	opts.Bridge = "vmbr7"
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	bodies := f.configBodies()
+	if len(bodies) < 2 {
+		t.Fatalf("want 2 config bodies, got %d", len(bodies))
+	}
+	parsed, _ := url.ParseQuery(bodies[1])
+	if got, want := parsed.Get("net0"), "virtio=BC:24:11:AA:BB:CC,bridge=vmbr7,firewall=1"; got != want {
+		t.Errorf("net0 = %q, want %q", got, want)
+	}
+	if parsed.Get("cicustom") == "" {
+		t.Errorf("net0 must ride along with the cloud-init config push: %v", parsed)
+	}
+}
+
+func TestRun_BridgeUnchangedSkipsNet0(t *testing.T) {
+	f := newLaunchFake(t)
+	f.net0 = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0"
+	opts, _ := baseOpts(t, f.client())
+	opts.Bridge = "vmbr0"
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	for _, b := range f.configBodies() {
+		if parsed, _ := url.ParseQuery(b); parsed.Get("net0") != "" {
+			t.Errorf("net0 pushed although bridge unchanged: %q", b)
+		}
+	}
+}
+
+func TestRun_NoBridgeSkipsGetConfig(t *testing.T) {
+	f := newLaunchFake(t)
+	opts, _ := baseOpts(t, f.client())
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	for _, p := range f.srv.OrderedPaths() {
+		if strings.HasPrefix(p, "GET ") && strings.HasSuffix(p, "/config") {
+			t.Errorf("unexpected GET config without --bridge: %v", f.orderedPaths())
+		}
+	}
+}
+
+// The IP and SSH waits share one --wait budget: the SSH wait must get
+// only what the IP wait left over, never a fresh full budget.
+func TestRun_WaitBudgetShared(t *testing.T) {
+	f := newLaunchFake(t)
+	opts, _ := baseOpts(t, f.client())
+	opts.Wait = 2 * time.Second
+	opts.NoWaitSSH = false
+	var got time.Duration
+	opts.WaitForSSHFn = func(_ context.Context, _ string, timeout time.Duration) error {
+		got = timeout
+		return nil
+	}
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if got <= 0 || got >= opts.Wait {
+		t.Errorf("ssh wait timeout = %v, want in (0, %v)", got, opts.Wait)
+	}
+}
+
+// writerHook writes to the stdout/stderr Run hands it.
+type writerHook struct{}
+
+func (writerHook) Name() string { return "writer" }
+
+func (writerHook) Run(_ context.Context, _ hook.Env, stdout, stderr io.Writer) error {
+	fmt.Fprint(stdout, "hook-out")
+	fmt.Fprint(stderr, "hook-err")
+	return nil
+}
+
+func TestRun_HookUsesOptionWriters(t *testing.T) {
+	f := newLaunchFake(t)
+	var stdout, stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = writerHook{}
+	opts.Stdout = &stdout
+	opts.Stderr = &stderr
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if stdout.String() != "hook-out" {
+		t.Errorf("stdout = %q, want hook-out", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "hook-err") {
+		t.Errorf("stderr = %q, want hook-err", stderr.String())
 	}
 }

@@ -509,7 +509,7 @@ func TestDelete_AlreadyGoneShortCircuitsBeforePrompt(t *testing.T) {
 func stubDeletePick(t *testing.T, ref *vm.Ref, err error) {
 	t.Helper()
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		return ref, err
 	}
 	t.Cleanup(func() { vmPickFn = orig })
@@ -518,7 +518,7 @@ func stubDeletePick(t *testing.T, ref *vm.Ref, err error) {
 func stubDeletePickMulti(t *testing.T, refs []*vm.Ref, err error) {
 	t.Helper()
 	orig := vmPickMultiFn
-	vmPickMultiFn = func(context.Context, *pveclient.Client, io.Writer) ([]*vm.Ref, error) {
+	vmPickMultiFn = func(context.Context, *pveclient.Client) ([]*vm.Ref, error) {
 		return refs, err
 	}
 	t.Cleanup(func() { vmPickMultiFn = orig })

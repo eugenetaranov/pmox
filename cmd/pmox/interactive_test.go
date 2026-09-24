@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
@@ -14,7 +13,7 @@ import (
 func TestEnsureVMRef_ExplicitPassthrough(t *testing.T) {
 	// An explicit ref must never trigger the picker.
 	orig := vmPickFn
-	vmPickFn = func(context.Context, *pveclient.Client, io.Writer) (*vm.Ref, error) {
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
 		t.Fatal("picker must not run when a VM ref is given")
 		return nil, nil
 	}
