@@ -83,6 +83,11 @@ type prompter interface {
 	PromptSecret(msg string) (string, error)
 	Printf(format string, args ...interface{})
 	Errf(format string, args ...interface{})
+	// In and Out expose the raw terminal streams for flows that drive
+	// their own dialogue (host-key pinning). In must share any buffering
+	// Prompt uses so no typed-ahead input is lost.
+	In() io.Reader
+	Out() io.Writer
 }
 
 type stdPrompter struct {
@@ -143,6 +148,9 @@ func (p *stdPrompter) PromptSecret(msg string) (string, error) {
 	return string(b), nil
 }
 
+func (p *stdPrompter) In() io.Reader  { return p.in }
+func (p *stdPrompter) Out() io.Writer { return p.out }
+
 func (p *stdPrompter) Printf(format string, args ...interface{}) {
 	fmt.Fprintf(p.out, format, args...)
 }
@@ -156,18 +164,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	nexcl := 0
-	if configureList {
-		nexcl++
+	// Checked here rather than with cobra's MarkFlagsMutuallyExclusive:
+	// cobra validates flag groups before RunE, so its error can't carry
+	// exitcode.ErrUserInput.
+	modes := 0
+	for _, set := range []bool{configureList, configureRemove != "", configureRegenCloudCI} {
+		if set {
+			modes++
+		}
 	}
-	if configureRemove != "" {
-		nexcl++
-	}
-	if configureRegenCloudCI {
-		nexcl++
-	}
-	if nexcl > 1 {
-		return fmt.Errorf("--list, --remove, and --regen-cloud-init are mutually exclusive")
+	if modes > 1 {
+		return fmt.Errorf("%w: --list, --remove, and --regen-cloud-init are mutually exclusive", exitcode.ErrUserInput)
 	}
 	if configureList {
 		return runList(newStdPrompter(ctx))
@@ -1014,16 +1021,8 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 		if pinned, err := pvessh.KnownHostsHas(kh, host); err != nil {
 			return nil, "", "", err
 		} else if !pinned {
-			if std, ok := p.(*stdPrompter); ok {
-				if err := sshPinHostKeyFn(ctx, host, kh, std.out, std.in); err != nil {
-					return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
-				}
-			} else {
-				// Non-TTY prompter (tests): fall back to the seam with
-				// a throwaway reader/writer. Real tests stub the seam.
-				if err := sshPinHostKeyFn(ctx, host, kh, io.Discard, strings.NewReader("yes\n")); err != nil {
-					return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
-				}
+			if err := sshPinHostKeyFn(ctx, host, kh, p.Out(), p.In()); err != nil {
+				return nil, "", "", fmt.Errorf("pin host key for %s: %w", host, err)
 			}
 		}
 	}

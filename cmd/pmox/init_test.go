@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,10 @@ func (f *fakePrompter) Printf(format string, args ...interface{}) {
 func (f *fakePrompter) Errf(format string, args ...interface{}) {
 	fmt.Fprintf(&f.err, format, args...)
 }
+
+// In/Out feed host-key pinning a throwaway "yes"; tests stub the seam.
+func (f *fakePrompter) In() io.Reader  { return strings.NewReader("yes\n") }
+func (f *fakePrompter) Out() io.Writer { return io.Discard }
 
 func TestListEmpty(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
