@@ -57,9 +57,6 @@ Examples:
 
 func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
@@ -104,7 +101,7 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 		}
 		return nil, fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
 	}
-	if status.Status != "running" {
+	if !status.IsRunning() {
 		return nil, fmt.Errorf("VM %q (vmid %d) is %s, not running — run 'pmox start %s' first", ref.Name, ref.VMID, status.Status, ref.Name)
 	}
 

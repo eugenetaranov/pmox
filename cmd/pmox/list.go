@@ -42,9 +42,6 @@ Use --output json for machine-readable output.`,
 
 func runListCmd(cmd *cobra.Command, f *listFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
@@ -82,7 +79,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 	sem := make(chan struct{}, listIPConcurrency)
 	var wg sync.WaitGroup
 	for i := range rows {
-		if rows[i].Status != "running" {
+		if pveclient.VMState(rows[i].Status) != pveclient.StateRunning {
 			continue
 		}
 		wg.Add(1)

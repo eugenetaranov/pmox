@@ -111,9 +111,6 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
@@ -147,9 +144,6 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
@@ -259,7 +253,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		return "", fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
 	}
 
-	if status.Status == "stopped" {
+	if status.State() == pveclient.StateStopped {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Starting VM %q...\n", ref.Name)
 		upid, err := client.Start(ctx, ref.Node, ref.VMID)
 		if err != nil {

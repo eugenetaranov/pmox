@@ -182,9 +182,6 @@ func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[
 
 func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -229,7 +226,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 					apply:    func() error { return deleteTemplate(ctx, c, node, vmid) },
 				})
 			}
-			if !vm.HasPMOXTag(r.Tags) || r.Status != "running" {
+			if !vm.HasPMOXTag(r.Tags) || !r.IsRunning() {
 				continue
 			}
 			ifaces, aerr := client.AgentNetwork(ctx, r.Node, r.VMID)

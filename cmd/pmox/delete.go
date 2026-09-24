@@ -70,9 +70,6 @@ stderr so scripted loops are idempotent.`,
 
 func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	assumeYes := f.yes || envBool("PMOX_ASSUME_YES")
 
@@ -246,7 +243,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 		cicustom = cfg["cicustom"]
 	}
 
-	if status.Status == "running" {
+	if status.IsRunning() {
 		label := fmt.Sprintf("Shutting down VM %d", ref.VMID)
 		stopFn := client.Shutdown
 		if f.hard {
