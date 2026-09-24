@@ -110,7 +110,7 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 			if err != nil {
 				return nil, "", "", err
 			}
-			kp = strings.TrimSpace(expandHome(kp))
+			kp = strings.TrimSpace(sshkey.ExpandHome(kp))
 			if kp == "" {
 				p.Errf("key path cannot be empty\n")
 				continue
@@ -187,10 +187,6 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 	}
 	return choice, nil
 }
-
-// expandHome expands a leading "~/" to the user's home directory. It is
-// shared by several commands; see sshkey.ExpandHome.
-func expandHome(p string) string { return sshkey.ExpandHome(p) }
 
 // promptSSHKey resolves the SSH public key pmox injects into cloud-init.
 // Interactively it leads with a top-level choice — generate a new

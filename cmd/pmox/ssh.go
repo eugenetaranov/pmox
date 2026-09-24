@@ -16,6 +16,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/vm"
 	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
@@ -289,7 +290,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 
 func resolveIdentityKey(flagValue, configPubkey string) (string, error) {
 	if flagValue != "" {
-		expanded := expandHome(flagValue)
+		expanded := sshkey.ExpandHome(flagValue)
 		if _, err := os.Stat(expanded); err != nil {
 			return "", fmt.Errorf("identity key %q not found", flagValue)
 		}
@@ -301,7 +302,7 @@ func resolveIdentityKey(flagValue, configPubkey string) (string, error) {
 	}
 
 	privPath := derivePrivateKeyPath(configPubkey)
-	expanded := expandHome(privPath)
+	expanded := sshkey.ExpandHome(privPath)
 	if _, err := os.Stat(expanded); err != nil {
 		return "", fmt.Errorf("derived private key %q (from %s) not found; pass --identity explicitly", privPath, configPubkey)
 	}

@@ -59,9 +59,6 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Checked here rather than with cobra's MarkFlagsMutuallyExclusive:
 	// cobra validates flag groups before RunE, so its error can't carry
 	// exitcode.ErrUserInput.

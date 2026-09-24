@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -136,6 +137,7 @@ func TestApplyNoConfigSuggestsInitEarly(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	cmd := newApplyCmd()
+	cmd.SetContext(context.Background())
 	err := runApply(cmd, nil, &applyFlags{})
 	if err == nil || !strings.Contains(err.Error(), "--init") {
 		t.Fatalf("want early --init hint, got %v", err)

@@ -19,6 +19,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 )
 
 // Built-in defaults applied when neither the CLI flag nor the resolved
@@ -165,7 +166,7 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 	user = firstNonEmpty(srv.User, defaultUser)
 	if srv.SSHPubkey != "" {
-		sshKey = expandHome(strings.TrimSuffix(srv.SSHPubkey, ".pub"))
+		sshKey = sshkey.ExpandHome(strings.TrimSuffix(srv.SSHPubkey, ".pub"))
 	}
 	return user, sshKey
 }
@@ -363,14 +364,7 @@ func resolveTemplate(ctx context.Context, client *pveclient.Client, node, raw st
 // readSSHKey resolves a path (expanding ~) and returns the file
 // contents trimmed of leading/trailing whitespace.
 func readSSHKey(path string) (string, error) {
-	expanded := path
-	if strings.HasPrefix(expanded, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			expanded = filepath.Join(home, expanded[2:])
-		}
-	}
-	data, err := os.ReadFile(expanded)
+	data, err := os.ReadFile(sshkey.ExpandHome(path))
 	if err != nil {
 		return "", fmt.Errorf("read ssh key %s: %w", path, err)
 	}

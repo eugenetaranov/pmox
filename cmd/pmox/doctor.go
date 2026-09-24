@@ -20,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/snippet"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -237,7 +238,7 @@ func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
 	if err != nil {
 		return
 	}
-	pub, err := os.ReadFile(expandHome(sshPubkeyPath))
+	pub, err := os.ReadFile(sshkey.ExpandHome(sshPubkeyPath))
 	if err != nil {
 		cl.Warn("config.cloud_init_key", "config", "cannot read ssh_pubkey "+sshPubkeyPath+": "+err.Error(), "fix 'ssh_pubkey' in config or re-run 'pmox init'")
 		return

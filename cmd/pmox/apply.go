@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/paths"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tack"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -67,9 +67,6 @@ Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 
 func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	if f.initCfg {
 		return runApplyInit(cmd)
@@ -164,7 +161,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 // playbook path and the profile name to remember ("" = do not record).
 func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (playbook, recordProfile string, err error) {
 	if f.playbook != "" {
-		return expandHome(f.playbook), "", nil
+		return sshkey.ExpandHome(f.playbook), "", nil
 	}
 	dir, err := tackDir()
 	if err != nil {
