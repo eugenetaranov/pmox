@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -110,14 +111,12 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
@@ -139,37 +138,18 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return fmt.Errorf("ssh binary not found on PATH; install OpenSSH to use pmox exec")
 	}
 
-	// Extract remote command via the literal "--" separator in os.Args.
-	var remoteArgs []string
-	for i, a := range os.Args {
-		if a == "--" {
-			remoteArgs = os.Args[i+1:]
-			break
-		}
-	}
-	if len(remoteArgs) == 0 {
-		return fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
-	}
-
-	// Determine whether a VM positional was supplied before "--".
-	// cobra's ArgsLenAtDash() returns the number of positional args
-	// before "--". 0 = no VM arg, 1 = VM arg present.
-	var vmArgs []string
-	if n := cmd.ArgsLenAtDash(); n == 1 {
-		vmArgs = []string{args[0]}
-	} else if n > 1 {
-		return fmt.Errorf("exec takes at most one VM positional argument before `--`")
-	}
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	client, srv, err := buildSSHClient(ctx, cmd)
+	vmArgs, remoteArgs, err := splitExecArgs(cmd, args)
 	if err != nil {
 		return err
 	}
+
+	ctx := cmd.Context()
+
+	client, resolved, err := buildClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	srv := resolved.Server
 
 	vmArg, err := resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
 	if err != nil {
@@ -182,7 +162,53 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), remoteArgs)
-	return sshRunFn(sshPath, sshArgs)
+	return runRemote(sshPath, sshArgs)
+}
+
+// splitExecArgs splits exec's positionals at the literal "--": at most
+// one VM argument before it, and the (required) remote command after.
+func splitExecArgs(cmd *cobra.Command, args []string) (vmArgs, remoteArgs []string, err error) {
+	n := cmd.ArgsLenAtDash()
+	if n >= 0 {
+		remoteArgs = args[n:]
+	}
+	if len(remoteArgs) == 0 {
+		return nil, nil, fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
+	}
+	if n > 1 {
+		return nil, nil, fmt.Errorf("exec takes at most one VM positional argument before `--`")
+	}
+	return args[:n], remoteArgs, nil
+}
+
+// runRemote runs ssh for exec. A non-zero exit from ssh (the remote
+// command's status, or 255 for an ssh-level failure) becomes a
+// remoteExitError so pmox exits with the same code.
+func runRemote(sshPath string, sshArgs []string) error {
+	err := sshRunFn(sshPath, sshArgs)
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return &remoteExitError{err: ee}
+	}
+	return err
+}
+
+// remoteExitError propagates a remote command's exit status as pmox's
+// own (exitcode.Coder). The remote side already wrote its output, so it
+// is also selfReporter: main prints no extra "Error:" line.
+type remoteExitError struct{ err *exec.ExitError }
+
+func (e *remoteExitError) Error() string { return "remote command failed: " + e.err.Error() }
+func (e *remoteExitError) Unwrap() error { return e.err }
+func (e *remoteExitError) SelfReported() {}
+
+// ExitCode returns the remote status, or ExitGeneric when ssh was
+// killed by a signal and has no status.
+func (e *remoteExitError) ExitCode() int {
+	if code := e.err.ExitCode(); code > 0 {
+		return code
+	}
+	return exitcode.ExitGeneric
 }
 
 type sshTarget struct {
@@ -227,7 +253,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		return "", fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
 	}
 
-	if status.Status == "stopped" {
+	if status.State() == pveclient.StateStopped {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Starting VM %q...\n", ref.Name)
 		upid, err := client.Start(ctx, ref.Node, ref.VMID)
 		if err != nil {

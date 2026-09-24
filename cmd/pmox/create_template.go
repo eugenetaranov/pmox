@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
@@ -56,9 +55,6 @@ Requires PVE 8.0+ and an interactive TTY.`,
 
 func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Enforce interactive TTY — the flow has picker prompts that
 	// cannot be driven from a pipe or file.
@@ -66,18 +62,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 		return fmt.Errorf("%w: interactive TTY required for pmox create-template", exitcode.ErrUserInput)
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	resolved, err := server.Resolve(ctx, server.Options{
-		Cfg:        cfg,
-		Flag:       serverFlag,
-		Context:    contextFlag,
-		Env:        os.Getenv("PMOX_SERVER"),
-		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:      os.Stdin,
-	})
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -87,37 +72,17 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	}
 
 	srv := resolved.Server
-	if err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved); err != nil {
-		return err
-	}
-	client := pveclient.New(resolved.URL, srv.TokenID, resolved.Secret, srv.Insecure)
 	node := firstNonEmpty(f.node, srv.Node)
 	if node == "" {
 		return fmt.Errorf("%w: no node configured; pass --node or run 'pmox init'", exitcode.ErrNotFound)
 	}
 	bridge := firstNonEmpty(f.bridge, srv.Bridge, "vmbr0")
 
-	// Lazily dial SSH: only phase 5 (upload snippet) actually needs it,
-	// so failures in earlier phases surface cleanly without paying the
-	// SSH handshake cost or its failure modes.
-	var sshClient *pvessh.Client
-	defer func() {
-		if sshClient != nil {
-			_ = sshClient.Close()
-		}
-	}()
-	upload := func(ctx context.Context, storagePath, filename string, content []byte) error {
-		if sshClient == nil {
-			c, err := dialPvessh(ctx, resolved)
-			if err != nil {
-				return fmt.Errorf("ssh to %s: %w", resolved.URL, err)
-			}
-			sshClient = c
-		}
-		return sshClient.UploadSnippet(ctx, storagePath, filename, content)
-	}
+	// Lazily dial SSH: only phase 5 (upload snippet) actually needs it.
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
 
-	return runCreateTemplateWithClient(ctx, cmd, client, resolved.URL, resolved.Source, node, bridge, f.wait, upload)
+	return runCreateTemplateWithClient(ctx, cmd, client, node, bridge, f.wait, upload)
 }
 
 // dialPvessh opens an SSH+SFTP session to the PVE node named in the
@@ -144,14 +109,11 @@ func dialPvessh(ctx context.Context, resolved *server.Resolved) (*pvessh.Client,
 	})
 }
 
-// runCreateTemplateWithClient runs everything from the verbose log
-// line onward. Extracted so tests can drive it with a fake PVE server
-// and without touching config loading.
-func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, resolvedURL, resolvedSource, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
-	if verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolvedURL, resolvedSource)
-	}
-
+// runCreateTemplateWithClient runs everything after server resolution
+// (buildClient already emitted the --verbose server line). Extracted so
+// tests can drive it with a fake PVE server and without touching config
+// loading.
+func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
 	opts := template.Options{
 		Client:   client,
 		Node:     node,

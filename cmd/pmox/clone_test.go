@@ -42,7 +42,7 @@ func TestClone_ResolveVMSpecRejectsEmptyStorage(t *testing.T) {
 
 	// launch reports the identical error.
 	resolved.Server.Template = "9000"
-	_, lerr := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved, &bytes.Buffer{})
+	_, lerr := resolveLaunchOptions(context.Background(), nil, "web1", &launchFlags{}, resolved, &bytes.Buffer{})
 	if lerr == nil || lerr.Error() != err.Error() {
 		t.Errorf("launch err = %v, want %v", lerr, err)
 	}

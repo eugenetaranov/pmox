@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -77,9 +76,6 @@ type doctorDeps struct {
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	parent := cmd.Context()
-	if parent == nil {
-		parent = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
 
@@ -99,7 +95,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Context:    contextFlag,
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Stdin:      os.Stdin,
+		Stdin:      nil, // doctor never prompts: no interactive picker
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
@@ -115,7 +111,9 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		sshDial: func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
 	}
 
-	client := pveclient.New(resolved.URL, resolved.Server.TokenID, resolved.Secret, resolved.Server.Insecure)
+	// doctor never pins (that's a mutation), but a pin that is already
+	// stored is enforced on the API connection like every other command.
+	client := newAPIClient(resolved.URL, resolved.Server, resolved.Secret, storedPin(resolved.Server))
 	executeDoctor(ctx, cl, client, resolved, deps, f.strict)
 	return finishDoctor(cmd, f, cl, resolved.URL, resolved.Source)
 }
@@ -126,9 +124,7 @@ func finishDoctor(cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serv
 	report := cl.Finalize(serverURL, source, f.strict)
 
 	if outputMode == "json" {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
+		if err := printJSON(cmd.OutOrStdout(), report); err != nil {
 			return err
 		}
 	} else {
@@ -354,10 +350,10 @@ func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient
 		cl.Fail("api.reachable", "api", "TLS verification failed: "+err.Error(), "install a trusted cert, or set insecure: true if this is a self-signed homelab cert", exitcode.ExitNetworkError)
 		return false
 	case errors.Is(err, pveclient.ErrNetwork), errors.Is(err, context.DeadlineExceeded):
-		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), "check the host is up and port 8006 is reachable (firewall?)", errExitCode(err))
+		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), "check the host is up and port 8006 is reachable (firewall?)", exitcode.From(err))
 		return false
 	default:
-		cl.Fail("api.reachable", "api", "API error: "+err.Error(), "", errExitCode(err))
+		cl.Fail("api.reachable", "api", "API error: "+err.Error(), "", exitcode.From(err))
 		return false
 	}
 }
@@ -390,7 +386,7 @@ func doctorNode(ctx context.Context, cl *doctor.Checklist, client *pveclient.Cli
 	}
 	resources, err := client.ClusterResources(ctx, "node")
 	if err != nil {
-		cl.Fail("api.node", "api", "could not list cluster nodes: "+err.Error(), "", errExitCode(err))
+		cl.Fail("api.node", "api", "could not list cluster nodes: "+err.Error(), "", exitcode.From(err))
 		return false
 	}
 	for _, r := range resources {
@@ -428,7 +424,7 @@ func doctorBridge(ctx context.Context, cl *doctor.Checklist, client *pveclient.C
 func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, node, diskStorage, snippetStorage string) {
 	storages, err := client.ListStorage(ctx, node)
 	if err != nil {
-		cl.Fail("storage.disk", "storage", "could not list storage: "+err.Error(), "", errExitCode(err))
+		cl.Fail("storage.disk", "storage", "could not list storage: "+err.Error(), "", exitcode.From(err))
 		return
 	}
 
@@ -456,7 +452,7 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 			if alt := firstSnippetStorage(storages); alt != "" && alt != snippetStorage {
 				hint += ", or use --snippet-storage " + alt + " (already snippet-capable)"
 			}
-			cl.Fail("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' does not support 'snippets'", hint, errExitCode(err))
+			cl.Fail("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' does not support 'snippets'", hint, exitcode.From(err))
 		} else {
 			cl.Pass("storage.snippets", "storage", "snippet storage '"+snippetStorage+"' supports 'snippets'")
 		}
@@ -480,7 +476,7 @@ func doctorTemplate(ctx context.Context, cl *doctor.Checklist, client *pveclient
 	}
 	id, _, err := resolveTemplate(ctx, client, node, template)
 	if err != nil {
-		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", errExitCode(err))
+		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
 		return
 	}
 
@@ -544,30 +540,10 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 	cl.Pass("ssh.known_host", "ssh", "node host key is pinned")
 
 	if err := deps.sshDial(ctx); err != nil {
-		cl.Fail("ssh.dial", "ssh", "SSH+SFTP to "+host+" failed: "+err.Error(), "check node SSH credentials and that sshd is reachable on the node", errExitCode(err))
+		cl.Fail("ssh.dial", "ssh", "SSH+SFTP to "+host+" failed: "+err.Error(), "check node SSH credentials and that sshd is reachable on the node", exitcode.From(err))
 		return
 	}
 	cl.Pass("ssh.dial", "ssh", "SSH+SFTP dial ok")
-}
-
-// errExitCode maps a probe error to the closest exit-code category.
-func errExitCode(err error) int {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return exitcode.ExitTimeout
-	case errors.Is(err, pveclient.ErrUnauthorized):
-		return exitcode.ExitUnauthorized
-	case errors.Is(err, pveclient.ErrTLSVerificationFailed), errors.Is(err, pveclient.ErrNetwork):
-		return exitcode.ExitNetworkError
-	case errors.Is(err, pveclient.ErrTimeout):
-		return exitcode.ExitTimeout
-	case errors.Is(err, pveclient.ErrNotFound):
-		return exitcode.ExitNotFound
-	case errors.Is(err, pveclient.ErrAPIError):
-		return exitcode.ExitAPIError
-	default:
-		return exitcode.ExitGeneric
-	}
 }
 
 // knownHostsHasEntry reports whether the pmox-managed known_hosts file

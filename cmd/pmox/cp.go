@@ -78,13 +78,14 @@ func rsyncSSHOption(target *sshTarget, hostKeyOpts []string) string {
 	return strings.Join(parts, " ")
 }
 
-func extraArgsAfterDash() []string {
-	for i, a := range os.Args {
-		if a == "--" {
-			return os.Args[i+1:]
-		}
+// extraArgsAfterDash returns the pass-through arguments that followed a
+// literal "--" on cmd's command line (nil if there was none).
+func extraArgsAfterDash(cmd *cobra.Command) []string {
+	n := cmd.ArgsLenAtDash()
+	if n < 0 {
+		return nil
 	}
-	return nil
+	return cmd.Flags().Args()[n:]
 }
 
 // scpRunFn runs scp. Tests override this.
@@ -143,10 +144,11 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 	}
 
 	ctx := cmd.Context()
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {
@@ -158,7 +160,7 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 		return err
 	}
 
-	scpArgs := buildScpArgs(scpPath, target, localArg, remote.remotePath, localIsSource, recursive, guestHostKeyOpts(), extraArgsAfterDash())
+	scpArgs := buildScpArgs(scpPath, target, localArg, remote.remotePath, localIsSource, recursive, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 	return scpRunFn(scpPath, scpArgs)
 }
 
@@ -214,10 +216,11 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	ctx := cmd.Context()
-	client, srv, err := buildSSHClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	srv := resolved.Server
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {
@@ -229,7 +232,7 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, guestHostKeyOpts(), extraArgsAfterDash())
+	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 	return rsyncRunFn(rsyncPath, rsyncArgs)
 }
 

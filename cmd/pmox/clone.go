@@ -58,9 +58,6 @@ configured snippet_storage, then to --storage with a warning.`,
 
 func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Resolve hook flags first so mutual-exclusion errors short-circuit
 	// before any config load / server resolution / PVE call.
 	hk, err := resolveHook(f)

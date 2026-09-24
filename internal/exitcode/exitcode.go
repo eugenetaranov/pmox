@@ -8,6 +8,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 const (
@@ -32,13 +33,6 @@ type Coder interface {
 	ExitCode() int
 }
 
-// hookErrMarker is the legacy marker implemented by *launch.HookError.
-// New error types should implement Coder instead; this remains so hook
-// errors that only carry the marker still map to ExitHook.
-type hookErrMarker interface {
-	IsHookError()
-}
-
 // ErrUserInput is a sentinel for interactive-prompt input errors
 // (invalid entries, too many attempts).
 var ErrUserInput = errors.New("user input error")
@@ -56,10 +50,6 @@ func From(err error) int {
 	var carrier Coder
 	if errors.As(err, &carrier) {
 		return carrier.ExitCode()
-	}
-	var hookErr hookErrMarker
-	if errors.As(err, &hookErr) {
-		return ExitHook
 	}
 	switch {
 	case errors.Is(err, pveclient.ErrUnauthorized):
@@ -79,6 +69,8 @@ func From(err error) int {
 	case errors.Is(err, pveclient.ErrTLSVerificationFailed):
 		return ExitNetworkError
 	case errors.Is(err, ErrUserInput):
+		return ExitUserError
+	case errors.Is(err, vm.ErrAmbiguous):
 		return ExitUserError
 	case errors.Is(err, ErrNotFound):
 		return ExitNotFound

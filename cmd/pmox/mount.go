@@ -179,7 +179,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	excludes := resolveExcludes(f.excludes)
-	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash())
+	rsyncArgs := buildMountRsyncArgs(rsyncPath, target, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 
 	stderr := cmd.ErrOrStderr()
 
@@ -414,7 +414,7 @@ func runMountDaemon(cmd *cobra.Command, localPath, vmName, remotePath, serverURL
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	childArgs := mountChildArgs(exe, f, serverURL, localPath, vmName, remotePath, sshInsecure, extraArgsAfterDash())
+	childArgs := mountChildArgs(exe, f, serverURL, localPath, vmName, remotePath, sshInsecure, extraArgsAfterDash(cmd))
 	logPath := mount.LogPath(stateDir, vmName, localPath, remotePath)
 	rec, err := mountStartDaemonFn(stateDir, exe, childArgs, mount.Record{
 		VMName:     vmName,
@@ -443,7 +443,7 @@ func runMountDaemon(cmd *cobra.Command, localPath, vmName, remotePath, serverURL
 // a fixed VM name and skip the client/config plumbing.
 var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
 	ctx := cmd.Context()
-	client, _, err := buildSSHClient(ctx, cmd)
+	client, _, err := buildClient(ctx, cmd)
 	if err != nil {
 		return "", err
 	}
