@@ -281,6 +281,61 @@ func storedPinFor(cfg *config.Config, canonical string) string {
 	return storedPin(srv)
 }
 
+// confirmRepinFn asks whether to trust a changed certificate; overridable
+// in tests.
+var confirmRepinFn = tui.Confirm
+
+// resolveInitPin returns the TLS pin init must enforce on every
+// credentialed connection to canonical (login, token creation,
+// validation, discovery), checked BEFORE any credential is sent.
+//
+// Without a stored pin, or on a strictly verified connection, it returns
+// the stored pin unchanged (TOFU / CA-verified). Otherwise it fetches the
+// presented certificate:
+//
+//   - matches the pin (or can't be fetched): the stored pin is enforced,
+//     so a swapped certificate still fails the handshake.
+//   - differs, interactive: both fingerprints are shown and the user must
+//     explicitly confirm (default No; declining returns tui.ErrAborted).
+//     The NEW fingerprint is then enforced and saved with the server.
+//   - differs, non-interactive: an error wrapping
+//     pveclient.ErrTLSVerificationFailed explaining how to re-pin.
+//
+// accepted is a fingerprint the user already accepted earlier in this run
+// (the form flow loops on errors); it is honored without asking again.
+func resolveInitPin(ctx context.Context, p prompter, cfg *config.Config, canonical string, insecure bool, accepted string) (string, error) {
+	pin := storedPinFor(cfg, canonical)
+	if pin == "" || !insecure {
+		return pin, nil
+	}
+	fp, err := fetchCertFingerprint(ctx, canonical)
+	if err != nil {
+		return pin, nil
+	}
+	oldFP, newFP := pveclient.NormalizePin(pin), pveclient.NormalizePin(fp)
+	if newFP == oldFP {
+		return pin, nil
+	}
+	if accepted != "" && pveclient.NormalizePin(accepted) == newFP {
+		return fp, nil
+	}
+	if !interactiveFn() {
+		return "", fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, re-run 'pmox init' in an interactive terminal to review and re-pin it, or clear tls_pin_sha256 for this server in the pmox config",
+			pveclient.ErrTLSVerificationFailed, canonical, oldFP, newFP)
+	}
+	p.Errf("TLS certificate for %s CHANGED since it was pinned.\n  pinned: sha256:%s\n  now:    sha256:%s\nThis may be a man-in-the-middle attack. Only re-pin if you deliberately replaced the certificate.\n",
+		canonical, oldFP, newFP)
+	ok, err := confirmRepinFn("Trust the new certificate and re-pin it?", false)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", tui.ErrAborted
+	}
+	p.Printf("re-pinning TLS certificate for %s (sha256:%s)\n", canonical, newFP)
+	return fp, nil
+}
+
 // newInitClient builds the discovery client for a validated connection,
 // enforcing pin when the connection is insecure.
 func newInitClient(canonical, tokenID, secret string, insecure bool, pin string) *pveclient.Client {

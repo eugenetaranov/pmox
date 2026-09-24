@@ -143,8 +143,13 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 	}
 
 	// Re-configuring a pinned server: every credentialed connection below
-	// is checked against the stored pin (empty on a first-ever connect).
-	pin := storedPinFor(cfg, canonical)
+	// is checked against the stored pin (empty on a first-ever connect),
+	// or against a new certificate the user re-pinned — decided before
+	// any credential is prompted for or sent.
+	pin, err := resolveInitPin(ctx, p, cfg, canonical, insecure, "")
+	if err != nil {
+		return err
+	}
 
 	// Steps 3–4: acquire an API token — paste an existing one or log in
 	// and generate one.

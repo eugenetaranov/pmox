@@ -292,7 +292,7 @@ func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 	}
 	cl.Fail("config.tls_pin", "config",
 		"TLS certificate CHANGED from the pinned fingerprint (possible MITM)",
-		"if you deliberately replaced the cert, clear tls_pin_sha256 in config (or re-run 'pmox init')",
+		"if you deliberately replaced the cert, re-run 'pmox init' interactively to review and re-pin it, or clear tls_pin_sha256 in config",
 		exitcode.ExitNetworkError)
 }
 

@@ -159,6 +159,7 @@ var errOverwriteDeclined = errors.New("overwrite declined")
 // before any server-side mutation (token creation), so declining never
 // leaves an orphaned token on the Proxmox host.
 func establishConnection(ctx context.Context, p prompter, cfg *config.Config, prev connInputs, confirmed map[string]bool) (resolvedConn, connInputs, error) {
+	repinned := map[string]string{} // canonical URL -> re-pin accepted this run
 	for {
 		in, err := runConnectionForm(p, prev)
 		if err != nil {
@@ -188,8 +189,15 @@ func establishConnection(ctx context.Context, p prompter, cfg *config.Config, pr
 			continue // probeURL already reported why
 		}
 		// Re-configuring a pinned server: authenticate every credentialed
-		// connection against the stored pin (empty on a first-ever connect).
-		pin := storedPinFor(cfg, canonical)
+		// connection against the stored pin (empty on a first-ever
+		// connect), or a changed certificate the user explicitly re-pinned.
+		pin, perr := resolveInitPin(ctx, p, cfg, canonical, insecure, repinned[canonical])
+		if perr != nil {
+			return resolvedConn{}, in, perr
+		}
+		if pin != storedPinFor(cfg, canonical) {
+			repinned[canonical] = pin
+		}
 
 		var tokenID, secret string
 		if in.tokenSource == "paste" {

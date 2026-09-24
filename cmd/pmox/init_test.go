@@ -22,6 +22,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 func init() {
@@ -729,5 +730,141 @@ func TestPickSnippetStorage_ZeroMatchNoCapableStorage(t *testing.T) {
 	}
 	if !strings.Contains(p.err.String(), "/etc/pve/storage.cfg") {
 		t.Errorf("missing manual remediation in stderr: %q", p.err.String())
+	}
+}
+
+// stubRepin stubs the certificate probe, interactivity and the re-pin
+// confirmation for resolveInitPin tests. It returns a pointer to the
+// number of times the confirmation was shown.
+func stubRepin(t *testing.T, fp string, fpErr error, interactive, answer bool) *int {
+	t.Helper()
+	withStubbedFingerprint(t, fp, fpErr)
+	origInteractive, origConfirm := interactiveFn, confirmRepinFn
+	asked := 0
+	interactiveFn = func() bool { return interactive }
+	confirmRepinFn = func(_ string, defaultYes bool) (bool, error) {
+		asked++
+		if defaultYes {
+			t.Error("re-pin confirmation must default to No")
+		}
+		return answer, nil
+	}
+	t.Cleanup(func() { interactiveFn, confirmRepinFn = origInteractive, origConfirm })
+	return &asked
+}
+
+func repinCfg(pin string) (*config.Config, string) {
+	url := "https://pve.home.lan:8006/api2/json"
+	return &config.Config{Servers: map[string]*config.Server{
+		url: {TokenID: "a@pam!x", Insecure: true, TLSPinSHA256: pin},
+	}}, url
+}
+
+func TestResolveInitPin(t *testing.T) {
+	oldFP, newFP := strings.Repeat("aa", 32), strings.Repeat("bb", 32)
+
+	t.Run("matching cert keeps stored pin without asking", func(t *testing.T) {
+		asked := stubRepin(t, oldFP, nil, true, true)
+		cfg, url := repinCfg("SHA256:" + strings.ToUpper(oldFP))
+		pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, "")
+		if err != nil || pveclient.NormalizePin(pin) != oldFP || *asked != 0 {
+			t.Fatalf("pin, err, asked = %q, %v, %d", pin, err, *asked)
+		}
+	})
+	t.Run("no stored pin stays TOFU", func(t *testing.T) {
+		stubRepin(t, "", errors.New("must not be probed"), true, true)
+		cfg, url := repinCfg("")
+		if pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); pin != "" || err != nil {
+			t.Fatalf("pin, err = %q, %v", pin, err)
+		}
+	})
+	t.Run("unfetchable cert keeps enforcing stored pin", func(t *testing.T) {
+		stubRepin(t, "", errors.New("network down"), true, true)
+		cfg, url := repinCfg(oldFP)
+		if pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); pin != oldFP || err != nil {
+			t.Fatalf("pin, err = %q, %v", pin, err)
+		}
+	})
+	t.Run("changed cert, interactive, confirmed re-pins", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, true, true)
+		cfg, url := repinCfg(oldFP)
+		p := &fakePrompter{}
+		pin, err := resolveInitPin(context.Background(), p, cfg, url, true, "")
+		if err != nil || pin != newFP || *asked != 1 {
+			t.Fatalf("pin, err, asked = %q, %v, %d; want new fingerprint", pin, err, *asked)
+		}
+		if !strings.Contains(p.err.String(), oldFP) || !strings.Contains(p.err.String(), newFP) {
+			t.Errorf("both fingerprints must be shown, got %q", p.err.String())
+		}
+	})
+	t.Run("changed cert, interactive, declined aborts", func(t *testing.T) {
+		stubRepin(t, newFP, nil, true, false)
+		cfg, url := repinCfg(oldFP)
+		if _, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, ""); !errors.Is(err, tui.ErrAborted) {
+			t.Fatalf("err = %v, want tui.ErrAborted", err)
+		}
+	})
+	t.Run("changed cert already accepted this run is not re-asked", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, true, false)
+		cfg, url := repinCfg(oldFP)
+		pin, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, newFP)
+		if err != nil || pin != newFP || *asked != 0 {
+			t.Fatalf("pin, err, asked = %q, %v, %d", pin, err, *asked)
+		}
+	})
+	t.Run("changed cert, non-interactive fails with how to re-pin", func(t *testing.T) {
+		asked := stubRepin(t, newFP, nil, false, true)
+		cfg, url := repinCfg(oldFP)
+		_, err := resolveInitPin(context.Background(), &fakePrompter{}, cfg, url, true, "")
+		if !errors.Is(err, pveclient.ErrTLSVerificationFailed) || *asked != 0 {
+			t.Fatalf("err, asked = %v, %d; want ErrTLSVerificationFailed without asking", err, *asked)
+		}
+		for _, want := range []string{oldFP, newFP, "interactive", "tls_pin_sha256"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error missing %q: %v", want, err)
+			}
+		}
+	})
+}
+
+// The linear flow checks a changed certificate before prompting for (and
+// so before sending) any credential.
+func TestInitLinearChangedCertFailsBeforeCredentials(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stubProbe(t, false, pveclient.ReachTLSUntrusted, pveclient.Reachable)
+	stubRepin(t, strings.Repeat("bb", 32), nil, false, true)
+	cfg, url := repinCfg(strings.Repeat("aa", 32))
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakePrompter{inputs: []string{url, "y"}}
+	err := runInteractiveLinear(context.Background(), p)
+	if !errors.Is(err, pveclient.ErrTLSVerificationFailed) {
+		t.Fatalf("err = %v, want ErrTLSVerificationFailed", err)
+	}
+	if p.idx != 2 || p.sidx != 0 {
+		t.Errorf("prompted past the pin check: inputs used %d, secrets used %d", p.idx, p.sidx)
+	}
+}
+
+// A re-pinned fingerprint is what persistServer stores.
+func TestPersistServerSavesRepinnedFingerprint(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	newFP := strings.Repeat("bb", 32)
+	cfg, url := repinCfg(strings.Repeat("aa", 32))
+	err := persistServer(&fakePrompter{}, cfg, persistInput{
+		canonical: url, tokenID: "a@pam!x", secret: "s", insecure: true, pin: newFP,
+		sshKey: writePubKey(t, "ssh-ed25519 AAAA test@host\n"), user: "ubuntu",
+	})
+	if err != nil {
+		t.Fatalf("persistServer: %v", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Servers[url].TLSPinSHA256; got != newFP {
+		t.Errorf("saved pin = %q, want %q", got, newFP)
 	}
 }
