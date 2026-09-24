@@ -1,4 +1,4 @@
-package launch
+package vmwait
 
 import (
 	"context"
@@ -107,6 +107,10 @@ func agentNetworkServer(t *testing.T, handler func(hit int) (status int, body st
 	return c, srv.Close
 }
 
+// fastPoll keeps the WaitForIP loops from sleeping the production 1s
+// between polls.
+var fastPoll = WithPollInterval(10 * time.Millisecond)
+
 func TestWaitForIP_HappyPath(t *testing.T) {
 	c, stop := agentNetworkServer(t, func(hit int) (int, string) {
 		if hit < 3 {
@@ -116,11 +120,9 @@ func TestWaitForIP_HappyPath(t *testing.T) {
 	})
 	defer stop()
 
-	// Use a fast-poll override by wrapping a context — poll is 1s, so
-	// three empties cost ~2s. Use a generous timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ip, err := WaitForIP(ctx, c, "pve", 100, 10*time.Second)
+	ip, err := WaitForIP(ctx, c, "pve", 100, 10*time.Second, fastPoll)
 	if err != nil {
 		t.Fatalf("WaitForIP err: %v", err)
 	}
@@ -135,12 +137,15 @@ func TestWaitForIP_Timeout(t *testing.T) {
 	})
 	defer stop()
 
-	ip, err := WaitForIP(context.Background(), c, "pve", 100, 2*time.Second)
+	ip, err := WaitForIP(context.Background(), c, "pve", 100, 200*time.Millisecond, fastPoll)
 	if err == nil {
 		t.Fatalf("WaitForIP ip=%q err=nil, want timeout error", ip)
 	}
 	if !strings.Contains(err.Error(), "qemu-guest-agent not responding on VM") {
 		t.Errorf("err = %v, want qemu-guest-agent not responding message", err)
+	}
+	if !errors.Is(err, pveclient.ErrTimeout) {
+		t.Errorf("err = %v, want wrapped pveclient.ErrTimeout", err)
 	}
 }
 
@@ -156,7 +161,7 @@ func TestWaitForIP_FatalErrorFailsFast(t *testing.T) {
 	defer stop()
 
 	start := time.Now()
-	_, err := WaitForIP(context.Background(), c, "pve", 100, 30*time.Second)
+	_, err := WaitForIP(context.Background(), c, "pve", 100, 30*time.Second, fastPoll)
 	if !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Fatalf("err = %v, want ErrUnauthorized", err)
 	}
@@ -177,7 +182,7 @@ func TestWaitForIP_TimeoutNoIP(t *testing.T) {
 	})
 	defer stop()
 
-	ip, err := WaitForIP(context.Background(), c, "pve", 111, 2*time.Second)
+	ip, err := WaitForIP(context.Background(), c, "pve", 111, 200*time.Millisecond, fastPoll)
 	if err == nil {
 		t.Fatalf("WaitForIP ip=%q err=nil, want timeout error", ip)
 	}
@@ -197,7 +202,7 @@ func TestWaitForIP_ContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := WaitForIP(ctx, c, "pve", 100, 10*time.Second)
+	_, err := WaitForIP(ctx, c, "pve", 100, 10*time.Second, fastPoll)
 	if err == nil {
 		t.Fatal("WaitForIP err=nil, want ctx.Err()")
 	}

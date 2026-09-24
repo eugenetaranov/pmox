@@ -122,7 +122,6 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 		CloudInitPath:  cloudInitPath,
 		UploadSnippet:  upload,
 		Stderr:         cmd.ErrOrStderr(),
-		Verbose:        verbose,
 		Progress:       newLaunchProgress(cmd.ErrOrStderr()),
 		Hook:           hk,
 		StrictHooks:    f.strictHooks,
@@ -144,7 +143,6 @@ func executeClone(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	partial.Node = ref.Node
 	partial.Name = newName
 	partial.TemplateID = ref.VMID
-	partial.TemplateName = ref.Name
 	r, err := launch.Run(ctx, partial)
 	if err != nil {
 		return err

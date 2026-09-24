@@ -19,12 +19,12 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 // snippetFileRe matches a pmox-owned cloud-init snippet and captures its
@@ -237,7 +237,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 				ipsComplete = false // can't confirm this VM's IP → don't risk pruning its pin
 				continue
 			}
-			if ip := launch.PickIPv4(ifaces); ip != "" {
+			if ip := vmwait.PickIPv4(ifaces); ip != "" {
 				liveIPs[ip] = true
 			}
 		}

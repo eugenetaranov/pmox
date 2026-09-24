@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 const startTaskTimeout = 120 * time.Second
@@ -75,7 +75,7 @@ func executeStart(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		fmt.Fprintf(cmd.OutOrStdout(), "started %s (vmid=%d)\n", ref.Name, ref.VMID)
 		return nil
 	}
-	ip, err := launch.WaitForIP(ctx, client, ref.Node, ref.VMID, f.wait)
+	ip, err := vmwait.WaitForIP(ctx, client, ref.Node, ref.VMID, f.wait)
 	if err != nil {
 		return fmt.Errorf("wait for ip on vm %d: %w", ref.VMID, err)
 	}

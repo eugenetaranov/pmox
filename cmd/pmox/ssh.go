@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 const (
@@ -238,13 +238,13 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		}
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for IP...\n")
-		ip, err := launch.WaitForIP(ctx, client, ref.Node, ref.VMID, sshIPTimeout)
+		ip, err := vmwait.WaitForIP(ctx, client, ref.Node, ref.VMID, sshIPTimeout)
 		if err != nil {
 			return "", err
 		}
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for SSH...\n")
-		if err := launch.WaitForSSH(ctx, ip, sshReadyTimeout); err != nil {
+		if err := vmwait.WaitForSSH(ctx, ip, sshReadyTimeout); err != nil {
 			return "", err
 		}
 		return ip, nil
@@ -254,7 +254,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	if err != nil {
 		return "", fmt.Errorf("VM %q is running but guest agent is not responding; is qemu-guest-agent installed?", ref.Name)
 	}
-	ip := launch.PickIPv4(ifaces)
+	ip := vmwait.PickIPv4(ifaces)
 	if ip == "" {
 		return "", fmt.Errorf("VM %q is running but guest agent returned no usable IPv4 address", ref.Name)
 	}

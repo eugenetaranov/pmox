@@ -1,4 +1,4 @@
-package launch
+package vmwait
 
 import (
 	"context"
@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
 
 // WaitForSSH dials `<ip>:22` with exponential backoff and runs an SSH
@@ -21,10 +24,16 @@ import (
 // finishes generating host keys, so a bare TCP dial can succeed against
 // a server that will immediately slam the connection shut. Running the
 // handshake proves sshd is actually ready to serve.
-func WaitForSSH(ctx context.Context, ip string, timeout time.Duration) error {
+//
+// Each attempt's dial and handshake are bounded by the overall timeout
+// and by ctx. On timeout the error wraps pveclient.ErrTimeout and the
+// last dial/handshake failure.
+func WaitForSSH(ctx context.Context, ip string, timeout time.Duration, opts ...Option) error {
+	cfg := newConfig(opts)
 	deadline := time.Now().Add(timeout)
-	backoff := 500 * time.Millisecond
-	addr := net.JoinHostPort(ip, "22")
+	backoff := cfg.pollInterval / 2
+	maxBackoff := 5 * cfg.pollInterval
+	addr := net.JoinHostPort(ip, cfg.sshPort)
 	var lastErr error
 	for {
 		if ctx.Err() != nil {
@@ -32,20 +41,15 @@ func WaitForSSH(ctx context.Context, ip string, timeout time.Duration) error {
 		}
 		if time.Now().After(deadline) {
 			if lastErr == nil {
-				lastErr = context.DeadlineExceeded
+				return fmt.Errorf("wait for ssh on %s: %w", ip, pveclient.ErrTimeout)
 			}
-			return fmt.Errorf("wait for ssh on %s: %w", ip, lastErr)
+			return fmt.Errorf("wait for ssh on %s: %w: %w", ip, pveclient.ErrTimeout, lastErr)
 		}
 
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-		if err != nil {
+		if err := probeSSH(ctx, addr, deadline); err != nil {
 			lastErr = err
 		} else {
-			hsErr := sshHandshake(conn)
-			if hsErr == nil || handshakeMeansReady(hsErr) {
-				return nil
-			}
-			lastErr = hsErr
+			return nil
 		}
 
 		select {
@@ -54,22 +58,49 @@ func WaitForSSH(ctx context.Context, ip string, timeout time.Duration) error {
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > 5*time.Second {
-			backoff = 5 * time.Second
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 	}
 }
 
+// probeSSH makes one dial+handshake attempt against addr. It returns
+// nil when sshd answered the banner. The dial is capped at 2s and the
+// handshake at 5s, both clipped to deadline and cancelled with ctx.
+func probeSSH(ctx context.Context, addr string, deadline time.Time) error {
+	dialTimeout := min(2*time.Second, time.Until(deadline))
+	if dialTimeout <= 0 {
+		return context.DeadlineExceeded
+	}
+	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	hsDeadline := time.Now().Add(5 * time.Second)
+	if deadline.Before(hsDeadline) {
+		hsDeadline = deadline
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	hsErr := sshHandshake(conn, hsDeadline)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if hsErr == nil || handshakeMeansReady(hsErr) {
+		return nil
+	}
+	return hsErr
+}
+
 // sshHandshake runs the client side of the SSH handshake over an
-// already-established TCP connection. The connection is always closed
-// before the function returns.
-func sshHandshake(conn net.Conn) error {
+// already-established TCP connection, with an I/O deadline. The
+// connection is always closed before the function returns.
+func sshHandshake(conn net.Conn, deadline time.Time) error {
 	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(deadline)
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, conn.RemoteAddr().String(), &ssh.ClientConfig{
 		User:            "pmox",
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         5 * time.Second,
 	})
 	if err != nil {
 		return err
@@ -93,7 +124,15 @@ func handshakeMeansReady(err error) bool {
 	if err == nil {
 		return true
 	}
-	if errors.Is(err, io.EOF) {
+	// x/crypto/ssh wraps transport errors as "ssh: handshake failed:
+	// %w", so the "ssh:" prefix check below would misread an I/O
+	// timeout (host accepts TCP but never sends a banner) or our own
+	// ctx-triggered close as ready. Rule those out first.
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
 		return false
 	}
 	msg := err.Error()
