@@ -319,3 +319,26 @@ func TestNodeSSHEffectiveUser(t *testing.T) {
 		t.Errorf("EffectiveUser = %q, want admin", got)
 	}
 }
+
+func TestSaveTightensExistingDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p, _ := Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	cfg := &Config{Servers: map[string]*Server{}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fi, err := os.Stat(filepath.Dir(p))
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("dir mode = %o, want 0700 (pre-existing dir not tightened)", got)
+	}
+}
