@@ -74,7 +74,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("ssh dial %s: %w", cfg.Host, scrub(err, cfg))
 	}
 
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, cfg.Host, clientCfg)
+	sshConn, chans, reqs, err := clientHandshake(ctx, conn, cfg.Host, clientCfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("ssh handshake %s: %w", cfg.Host, scrub(err, cfg))
@@ -88,6 +88,43 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return &Client{ssh: sshClient, sftp: sftpClient, host: cfg.Host}, nil
+}
+
+// clientHandshake runs ssh.NewClientConn over an already-dialed conn.
+// ssh.ClientConfig.Timeout only bounds the TCP dial inside ssh.Dial, not
+// a handshake on a caller-supplied conn, so a host that accepts TCP but
+// never sends a banner would block forever. The conn gets an I/O
+// deadline of cfg.Timeout (or ctx's deadline, if sooner) for the
+// handshake only, and ctx cancellation closes the conn to unblock it.
+// A failure caused by ctx wraps ctx.Err().
+func clientHandshake(ctx context.Context, conn net.Conn, addr string, cfg *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	var deadline time.Time
+	if cfg.Timeout > 0 {
+		deadline = time.Now().Add(cfg.Timeout)
+	}
+	if dl, ok := ctx.Deadline(); ok && (deadline.IsZero() || dl.Before(deadline)) {
+		deadline = dl
+	}
+	if !deadline.IsZero() {
+		_ = conn.SetDeadline(deadline)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if !stop() {
+		// ctx fired mid-handshake and closed conn underneath it.
+		if sshConn != nil {
+			_ = sshConn.Close()
+		}
+		if err == nil {
+			return nil, nil, nil, ctx.Err()
+		}
+		return nil, nil, nil, fmt.Errorf("%w (%w)", ctx.Err(), err)
+	}
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return sshConn, chans, reqs, nil
 }
 
 // Close tears down the SFTP session and then the underlying SSH client.

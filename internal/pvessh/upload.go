@@ -18,8 +18,14 @@ import (
 
 // UploadSnippet writes content to <storagePath>/snippets/<filename>
 // atomically: MkdirAll, write to a dot-temp in the same directory, then
-// rename over the destination. On context cancellation, the temp file is
-// removed and the destination is untouched.
+// rename over the destination.
+//
+// SFTP calls are not context-aware, so on context cancellation
+// UploadSnippet closes the Client to unblock the in-flight transfer and
+// returns ctx.Err(); the Client is unusable afterwards. The destination
+// is either untouched or fully written (the rename is atomic), but the
+// dot-temp may be left behind on the node — the next upload of the same
+// filename truncates and reuses it.
 func (c *Client) UploadSnippet(ctx context.Context, storagePath, filename string, content []byte) error {
 	if c.sftp == nil {
 		return errors.New("pvessh: client has no sftp session")
@@ -38,6 +44,9 @@ func (c *Client) UploadSnippet(ctx context.Context, storagePath, filename string
 	dest := path.Join(destDir, filename)
 	tmp := path.Join(destDir, "."+filename+".tmp")
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := c.sftp.MkdirAll(destDir); err != nil {
 		return fmt.Errorf("sftp mkdir %s: %w", destDir, err)
 	}
@@ -49,15 +58,11 @@ func (c *Client) UploadSnippet(ctx context.Context, storagePath, filename string
 
 	select {
 	case <-ctx.Done():
-		// Best-effort cleanup — the goroutine may or may not be past
-		// the write. Remove the temp file either way. The destination
-		// is only touched by Rename after the write fully succeeds, so
-		// if we cancel before the goroutine reaches Rename, the dest
-		// is left untouched.
-		_ = c.sftp.Remove(tmp)
-		// Wait for the goroutine to finish so we don't leak it.
+		// The in-flight SFTP calls ignore ctx; closing the session
+		// makes them fail fast so a hung node can't block us forever.
+		// Wait for the goroutine so it doesn't leak.
+		_ = c.Close()
 		<-done
-		_ = c.sftp.Remove(tmp)
 		return ctx.Err()
 	case err := <-done:
 		if err != nil {
@@ -139,13 +144,19 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 	}
 	// NewClientConn will fail auth, but the host-key callback fires
 	// during the handshake before auth, so we get the key either way.
-	sshConn, _, _, _ := ssh.NewClientConn(conn, host, cfg)
+	sshConn, _, _, hsErr := clientHandshake(ctx, conn, host, cfg)
 	if sshConn != nil {
 		_ = sshConn.Close()
 	}
 	_ = conn.Close()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("host-key probe of %s: %w", host, err)
+	}
 
 	if capturedKey == nil {
+		if hsErr != nil {
+			return fmt.Errorf("host-key probe of %s did not capture a key: %w", host, hsErr)
+		}
 		return fmt.Errorf("host-key probe of %s did not capture a key", host)
 	}
 
