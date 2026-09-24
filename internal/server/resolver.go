@@ -36,6 +36,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -85,6 +86,29 @@ func (r *Resolved) HasNodeSSH() bool {
 		return r.NodeSSHKeyPath != ""
 	}
 	return false
+}
+
+// NodeSSHConfig builds the pvessh.Config for this server's PVE node: the
+// API URL's hostname on port 22, the resolved node-SSH credentials, and
+// the pmox-managed known_hosts file. insecure skips host-key checking.
+func (r *Resolved) NodeSSHConfig(insecure bool) (pvessh.Config, error) {
+	host, err := pvessh.HostFromURL(r.URL)
+	if err != nil {
+		return pvessh.Config{}, err
+	}
+	kh, err := pvessh.KnownHostsPath()
+	if err != nil {
+		return pvessh.Config{}, err
+	}
+	return pvessh.Config{
+		Host:       host,
+		User:       r.NodeSSHUser,
+		Password:   r.NodeSSHPassword,
+		KeyPath:    r.NodeSSHKeyPath,
+		KeyPass:    r.NodeSSHKeyPassphrase,
+		Insecure:   insecure,
+		KnownHosts: kh,
+	}, nil
 }
 
 // Resolve runs the precedence ladder and returns the resolved server.

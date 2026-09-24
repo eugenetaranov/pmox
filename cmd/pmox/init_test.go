@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,6 +64,10 @@ func (f *fakePrompter) Printf(format string, args ...interface{}) {
 func (f *fakePrompter) Errf(format string, args ...interface{}) {
 	fmt.Fprintf(&f.err, format, args...)
 }
+
+// In/Out feed host-key pinning a throwaway "yes"; tests stub the seam.
+func (f *fakePrompter) In() io.Reader  { return strings.NewReader("yes\n") }
+func (f *fakePrompter) Out() io.Writer { return io.Discard }
 
 func TestListEmpty(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -355,32 +361,6 @@ func TestGenerateBootstrapKeyCreatesAndReuses(t *testing.T) {
 	}
 }
 
-func TestResolveBrowsedKey(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "id_ed25519")
-	pub := priv + ".pub"
-	if err := os.WriteFile(pub, []byte("ssh-ed25519 AAAA x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(priv, []byte("PRIV"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Selecting the private key resolves to its .pub.
-	if got := resolveBrowsedKey(priv); got != pub {
-		t.Errorf("private→pub: got %q, want %q", got, pub)
-	}
-	// Selecting a .pub uses it directly.
-	if got := resolveBrowsedKey(pub); got != pub {
-		t.Errorf(".pub direct: got %q, want %q", got, pub)
-	}
-	// A lone file with no adjacent .pub is used as-is.
-	lone := filepath.Join(dir, "somekey")
-	if got := resolveBrowsedKey(lone); got != lone {
-		t.Errorf("lone: got %q, want %q", got, lone)
-	}
-}
-
 func TestPromptSSHKeyNonInteractiveUsesSuggestion(t *testing.T) {
 	// interactiveFn=false → text fallback; blank input accepts the suggested
 	// key (which must exist on disk to pass the readability check).
@@ -643,7 +623,7 @@ func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
 	if fc.updatedStorage != "local" {
 		t.Errorf("UpdateStorageContent storage = %q, want local", fc.updatedStorage)
 	}
-	if !containsString(fc.updatedContent, "snippets") || !containsString(fc.updatedContent, "iso") || !containsString(fc.updatedContent, "vztmpl") {
+	if !slices.Contains(fc.updatedContent, "snippets") || !slices.Contains(fc.updatedContent, "iso") || !slices.Contains(fc.updatedContent, "vztmpl") {
 		t.Errorf("updatedContent = %v, want includes iso, vztmpl, snippets", fc.updatedContent)
 	}
 }

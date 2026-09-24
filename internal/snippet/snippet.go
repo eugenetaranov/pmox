@@ -59,10 +59,8 @@ func ValidateStorage(ctx context.Context, client *pveclient.Client, node, storag
 		if s.Storage != storage {
 			continue
 		}
-		for _, c := range strings.Split(s.Content, ",") {
-			if strings.TrimSpace(c) == "snippets" {
-				return nil
-			}
+		if s.SupportsSnippets() {
+			return nil
 		}
 		return fmt.Errorf(`storage %q does not have 'snippets' in its content types
 

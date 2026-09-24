@@ -1,4 +1,5 @@
-// Package sshkey generates SSH keypairs for pmox's VM-bootstrap use.
+// Package sshkey generates and locates SSH keypairs for pmox's
+// VM-bootstrap use.
 package sshkey
 
 import (

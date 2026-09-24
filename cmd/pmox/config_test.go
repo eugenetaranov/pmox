@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -192,3 +193,5 @@ func (testPrompter) Prompt(string) (string, error)       { return "", nil }
 func (testPrompter) PromptSecret(string) (string, error) { return "", nil }
 func (testPrompter) Printf(string, ...interface{})       {}
 func (testPrompter) Errf(string, ...interface{})         {}
+func (testPrompter) In() io.Reader                       { return strings.NewReader("") }
+func (testPrompter) Out() io.Writer                      { return io.Discard }

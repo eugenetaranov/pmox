@@ -460,12 +460,8 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 }
 
 func firstSnippetStorage(storages []pveclient.Storage) string {
-	for _, s := range storages {
-		for _, c := range strings.Split(s.Content, ",") {
-			if strings.TrimSpace(c) == "snippets" {
-				return s.Storage
-			}
-		}
+	if m := pveclient.FilterStorage(storages, pveclient.Storage.SupportsSnippets); len(m) > 0 {
+		return m[0].Storage
 	}
 	return ""
 }
@@ -523,7 +519,7 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 	}
 	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+string(resolved.NodeSSHAuth)+" auth)")
 
-	host, err := sshHostFromURL(resolved.URL)
+	host, err := pvessh.HostFromURL(resolved.URL)
 	if err != nil {
 		cl.Warn("ssh.known_host", "ssh", "could not derive SSH host: "+err.Error(), "")
 		return
@@ -553,53 +549,18 @@ func knownHostsHasEntry(host string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	bare := strings.TrimSuffix(host, ":22")
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		tok := line
-		if i := strings.IndexAny(line, " \t"); i > 0 {
-			tok = line[:i]
-		}
-		for _, h := range strings.Split(tok, ",") {
-			if h == host || h == bare {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	return pvessh.KnownHostsHas(path, host)
 }
 
 // doctorSSHDial opens a strict (never-prompting) SSH+SFTP session to the
 // node and closes it, returning any dial error. It uses the pmox-managed
 // known_hosts and never falls back to insecure or interactive pinning.
 func doctorSSHDial(ctx context.Context, resolved *server.Resolved) error {
-	kh, err := pvessh.KnownHostsPath()
+	cfg, err := resolved.NodeSSHConfig(false)
 	if err != nil {
 		return err
 	}
-	host, err := sshHostFromURL(resolved.URL)
-	if err != nil {
-		return err
-	}
-	c, err := pvessh.Dial(ctx, pvessh.Config{
-		Host:       host,
-		User:       resolved.NodeSSHUser,
-		Password:   resolved.NodeSSHPassword,
-		KeyPath:    resolved.NodeSSHKeyPath,
-		KeyPass:    resolved.NodeSSHKeyPassphrase,
-		Insecure:   false,
-		KnownHosts: kh,
-	})
+	c, err := pvessh.Dial(ctx, cfg)
 	if err != nil {
 		return err
 	}

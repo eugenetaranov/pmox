@@ -46,6 +46,38 @@ func (s Storage) HasContent(kind string) bool {
 // (i.e. its content list includes "images").
 func (s Storage) SupportsVMDisks() bool { return s.HasContent("images") }
 
+// SupportsSnippets reports whether the storage can hold cloud-init
+// snippets (i.e. its content list includes "snippets").
+func (s Storage) SupportsSnippets() bool { return s.HasContent("snippets") }
+
+// ContentList returns the storage's content types as a slice, trimmed
+// and with empty entries dropped. An empty content string yields nil.
+func (s Storage) ContentList() []string {
+	if strings.TrimSpace(s.Content) == "" {
+		return nil
+	}
+	parts := strings.Split(s.Content, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// FilterStorage returns the pools for which keep reports true, in order.
+// Pass a method expression such as Storage.SupportsSnippets.
+func FilterStorage(pools []Storage, keep func(Storage) bool) []Storage {
+	var out []Storage
+	for _, s := range pools {
+		if keep(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Bridge represents a network bridge entry.
 type Bridge struct {
 	Iface string `json:"iface"`

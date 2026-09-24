@@ -169,6 +169,28 @@ func WriteStarterCloudInit(path, user, sshPubkey string) error {
 	return WriteCloudInit(path, user, sshPubkey)
 }
 
+// ErrCloudInitKeyDrift is returned by EnsureStarterCloudInit when the
+// existing file authorizes SSH keys, but not the selected one. It wraps
+// ErrCloudInitExists.
+var ErrCloudInitKeyDrift = fmt.Errorf("%w and authorizes a different SSH key", ErrCloudInitExists)
+
+// EnsureStarterCloudInit writes the starter template like
+// WriteStarterCloudInit. When the file already exists it is never
+// touched: the result is ErrCloudInitKeyDrift if the file authorizes
+// some SSH key but not sshPubkey (so re-running init with a new key can
+// offer to regenerate it), else ErrCloudInitExists.
+func EnsureStarterCloudInit(path, user, sshPubkey string) error {
+	err := WriteStarterCloudInit(path, user, sshPubkey)
+	if !errors.Is(err, ErrCloudInitExists) {
+		return err
+	}
+	authorized, hasAny, aerr := CloudInitAuthorizesKey(path, sshPubkey)
+	if aerr == nil && hasAny && !authorized {
+		return ErrCloudInitKeyDrift
+	}
+	return ErrCloudInitExists
+}
+
 // WriteCloudInit unconditionally renders and writes the template at
 // path. Unlike WriteStarterCloudInit it overwrites any existing file.
 // Used by `pmox init --regen-cloud-init` after the caller has

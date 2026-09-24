@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -89,24 +88,11 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 // resolved server record. The SSH host is derived from the API URL's
 // hostname on port 22.
 func dialPvessh(ctx context.Context, resolved *server.Resolved) (*pvessh.Client, error) {
-	u, err := url.Parse(resolved.URL)
-	if err != nil {
-		return nil, fmt.Errorf("parse server url: %w", err)
-	}
-	host := u.Hostname() + ":22"
-	kh, err := pvessh.KnownHostsPath()
+	cfg, err := resolved.NodeSSHConfig(SSHInsecure())
 	if err != nil {
 		return nil, err
 	}
-	return pvessh.Dial(ctx, pvessh.Config{
-		Host:       host,
-		User:       resolved.NodeSSHUser,
-		Password:   resolved.NodeSSHPassword,
-		KeyPath:    resolved.NodeSSHKeyPath,
-		KeyPass:    resolved.NodeSSHKeyPassphrase,
-		Insecure:   SSHInsecure(),
-		KnownHosts: kh,
-	})
+	return pvessh.Dial(ctx, cfg)
 }
 
 // runCreateTemplateWithClient runs everything after server resolution
