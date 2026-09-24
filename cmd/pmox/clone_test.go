@@ -161,3 +161,20 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 		t.Errorf("stdout missing ip: %q", out.String())
 	}
 }
+
+// Clone used to drop --ssh-insecure on the hook's SSH connection while
+// launch honored it; both now go through applyHookOptions.
+func TestApplyHookOptions_SetsSSHInsecure(t *testing.T) {
+	srv := &config.Server{User: "admin", SSHPubkey: "/keys/id_ed25519.pub"}
+	f := &launchFlags{strictHooks: true}
+	for _, insecure := range []bool{true, false} {
+		var opts launch.Options
+		applyHookOptions(&opts, nil, f, srv, insecure)
+		if opts.SSHInsecure != insecure {
+			t.Errorf("SSHInsecure = %v, want %v", opts.SSHInsecure, insecure)
+		}
+		if !opts.StrictHooks || opts.User != "admin" || opts.SSHKeyPath != "/keys/id_ed25519" {
+			t.Errorf("hook fields = strict:%v user:%q key:%q", opts.StrictHooks, opts.User, opts.SSHKeyPath)
+		}
+	}
+}

@@ -91,9 +91,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 
 	partial.UploadSnippet = upload
 	partial.Progress = newLaunchProgress(cmd.ErrOrStderr())
-	partial.Hook = hk
-	partial.StrictHooks = f.strictHooks
-	partial.User, partial.SSHKeyPath = hookSSHDefaults(resolved.Server)
+	applyHookOptions(&partial, hk, f, resolved.Server, SSHInsecure())
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }
 

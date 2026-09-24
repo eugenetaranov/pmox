@@ -170,6 +170,16 @@ func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 	return user, sshKey
 }
 
+// applyHookOptions sets the post-create hook fields shared by launch and
+// clone: the hook itself, --strict-hooks, SSH host-key policy, and the
+// SSH user/key hooks connect with.
+func applyHookOptions(opts *launch.Options, hk hook.Hook, f *launchFlags, srv *config.Server, sshInsecure bool) {
+	opts.Hook = hk
+	opts.StrictHooks = f.strictHooks
+	opts.SSHInsecure = sshInsecure
+	opts.User, opts.SSHKeyPath = hookSSHDefaults(srv)
+}
+
 func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	ctx := cmd.Context()
 
@@ -197,10 +207,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	if err != nil {
 		return err
 	}
-	opts.Hook = hk
-	opts.StrictHooks = f.strictHooks
-	opts.SSHInsecure = SSHInsecure()
-	opts.User, opts.SSHKeyPath = hookSSHDefaults(resolved.Server)
+	applyHookOptions(&opts, hk, f, resolved.Server, SSHInsecure())
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)
