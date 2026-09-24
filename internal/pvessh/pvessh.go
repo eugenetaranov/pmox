@@ -212,7 +212,8 @@ func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, error) {
 // scrub returns err unchanged unless it literally contains the password
 // value, in which case it replaces the password with a redaction marker.
 // Defensive — x/crypto/ssh does not leak passwords today, but makes the
-// promise in the spec explicit and survives future changes.
+// promise in the spec explicit and survives future changes. The result
+// still unwraps to err so errors.Is/As keep matching wrapped sentinels.
 func scrub(err error, cfg Config) error {
 	if err == nil || cfg.Password == "" {
 		return err
@@ -222,5 +223,16 @@ func scrub(err error, cfg Config) error {
 	if scrubbed == msg {
 		return err
 	}
-	return errors.New(scrubbed)
+	return &scrubbedError{msg: scrubbed, err: err}
 }
+
+// scrubbedError reports a redacted message while preserving the original
+// error chain for errors.Is/As. Only the redacted text is ever rendered
+// by Error(); callers must not print the unwrapped error.
+type scrubbedError struct {
+	msg string
+	err error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+func (e *scrubbedError) Unwrap() error { return e.err }
