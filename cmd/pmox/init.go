@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -881,12 +882,7 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 		return strings.TrimSpace(ans)
 	}
 	// Filter to storages that can actually hold VM disk images.
-	usable := make([]pveclient.Storage, 0, len(pools))
-	for _, s := range pools {
-		if s.SupportsVMDisks() {
-			usable = append(usable, s)
-		}
-	}
+	usable := pveclient.FilterStorage(pools, pveclient.Storage.SupportsVMDisks)
 	if len(usable) == 0 {
 		usable = pools
 	}
@@ -919,15 +915,6 @@ var selectSnippetStorageFn = func(title string, opts []huh.Option[string], fallb
 	return tui.SelectOne(title, opts, fallback)
 }
 
-func hasSnippets(s pveclient.Storage) bool {
-	for _, c := range strings.Split(s.Content, ",") {
-		if strings.TrimSpace(c) == "snippets" {
-			return true
-		}
-	}
-	return false
-}
-
 // pickSnippetStorage resolves the storage that pmox will use for
 // cloud-init snippets. Decision tree: exactly one snippet-capable
 // storage → silent; multiple → TUI picker; zero → offer to enable
@@ -944,12 +931,7 @@ func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePi
 		return ""
 	}
 
-	var matches []pveclient.Storage
-	for _, s := range pools {
-		if hasSnippets(s) {
-			matches = append(matches, s)
-		}
-	}
+	matches := pveclient.FilterStorage(pools, pveclient.Storage.SupportsSnippets)
 	switch len(matches) {
 	case 1:
 		p.Printf("Snippet storage: %s\n", matches[0].Storage)
@@ -971,12 +953,7 @@ func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePi
 // UpdateStorageContent. Decline or absence prints the manual remediation
 // and returns "" so credentials still save.
 func offerEnableSnippets(ctx context.Context, p prompter, client snippetStoragePicker, pools []pveclient.Storage) string {
-	var capable []pveclient.Storage
-	for _, s := range pools {
-		if snippetCapableTypes[s.Type] {
-			capable = append(capable, s)
-		}
-	}
+	capable := pveclient.FilterStorage(pools, func(s pveclient.Storage) bool { return snippetCapableTypes[s.Type] })
 	if len(capable) == 0 {
 		printSnippetManualRemediation(p)
 		return ""
@@ -998,8 +975,8 @@ func offerEnableSnippets(ctx context.Context, p prompter, client snippetStorageP
 		return ""
 	}
 
-	newContent := splitContent(target.Content)
-	if !containsString(newContent, "snippets") {
+	newContent := target.ContentList()
+	if !slices.Contains(newContent, "snippets") {
 		newContent = append(newContent, "snippets")
 	}
 	if err := client.UpdateStorageContent(ctx, target.Storage, newContent); err != nil {
@@ -1009,30 +986,6 @@ func offerEnableSnippets(ctx context.Context, p prompter, client snippetStorageP
 	}
 	p.Printf("enabled snippets on %s\n", target.Storage)
 	return target.Storage
-}
-
-func splitContent(s string) []string {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func containsString(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func printSnippetManualRemediation(p prompter) {

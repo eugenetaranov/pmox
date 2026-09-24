@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -643,7 +644,7 @@ func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
 	if fc.updatedStorage != "local" {
 		t.Errorf("UpdateStorageContent storage = %q, want local", fc.updatedStorage)
 	}
-	if !containsString(fc.updatedContent, "snippets") || !containsString(fc.updatedContent, "iso") || !containsString(fc.updatedContent, "vztmpl") {
+	if !slices.Contains(fc.updatedContent, "snippets") || !slices.Contains(fc.updatedContent, "iso") || !slices.Contains(fc.updatedContent, "vztmpl") {
 		t.Errorf("updatedContent = %v, want includes iso, vztmpl, snippets", fc.updatedContent)
 	}
 }

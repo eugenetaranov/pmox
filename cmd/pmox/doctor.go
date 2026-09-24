@@ -458,12 +458,8 @@ func doctorStorage(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 }
 
 func firstSnippetStorage(storages []pveclient.Storage) string {
-	for _, s := range storages {
-		for _, c := range strings.Split(s.Content, ",") {
-			if strings.TrimSpace(c) == "snippets" {
-				return s.Storage
-			}
-		}
+	if m := pveclient.FilterStorage(storages, pveclient.Storage.SupportsSnippets); len(m) > 0 {
+		return m[0].Storage
 	}
 	return ""
 }
