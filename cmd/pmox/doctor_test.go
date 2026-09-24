@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -290,5 +291,15 @@ func TestDoctorTLSPin_ComparesNormalizedPins(t *testing.T) {
 	doctorTLSMode(context.Background(), cl, resolved, false)
 	if got := cl.StatusOf("config.tls_pin"); got != doctor.Fail {
 		t.Errorf("tls_pin = %q, want fail for a different cert", got)
+	}
+}
+
+func TestDoctorNodeSSH_UnusableBlockFails(t *testing.T) {
+	resolved := doctorResolved("https://pve.lan:8006/api2/json")
+	resolved.NodeSSHErr = errors.New(`unknown node_ssh.auth "kerberos"`)
+	cl := &doctor.Checklist{}
+	doctorNodeSSH(context.Background(), cl, resolved, healthyDeps())
+	if got := cl.StatusOf("ssh.configured"); got != doctor.Fail {
+		t.Errorf("ssh.configured = %q, want fail", got)
 	}
 }

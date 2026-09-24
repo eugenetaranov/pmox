@@ -78,12 +78,18 @@ type Resolved struct {
 	NodeSSHPassword      string             // populated when NodeSSHAuth == AuthPassword
 	NodeSSHKeyPath       string             // populated when NodeSSHAuth == AuthKey
 	NodeSSHKeyPassphrase string             // only when the key is passphrase-protected
+
+	// NodeSSHErr records a node_ssh block pmox cannot act on (an unknown
+	// auth mode). It is not a resolve error: commands that never touch
+	// node SSH work regardless, and HasNodeSSH reports false. Commands
+	// that need node SSH surface it (see RequireNodeSSH).
+	NodeSSHErr error
 }
 
 // HasNodeSSH reports whether this server has SSH credentials resolved
 // and is ready for snippet upload via pvessh.
 func (r *Resolved) HasNodeSSH() bool {
-	if r == nil || r.NodeSSHAuth == "" || r.NodeSSHUser == "" {
+	if r == nil || r.NodeSSHErr != nil || r.NodeSSHAuth == "" || r.NodeSSHUser == "" {
 		return false
 	}
 	switch r.NodeSSHAuth {
@@ -93,6 +99,19 @@ func (r *Resolved) HasNodeSSH() bool {
 		return r.NodeSSHKeyPath != ""
 	}
 	return false
+}
+
+// RequireNodeSSH returns nil when node SSH is ready to use. Otherwise it
+// returns NodeSSHErr when the configured block is unusable, or an
+// ErrUserInput error saying purpose needs node SSH and how to add it.
+func (r *Resolved) RequireNodeSSH(purpose string) error {
+	if r != nil && r.NodeSSHErr != nil {
+		return r.NodeSSHErr
+	}
+	if !r.HasNodeSSH() {
+		return fmt.Errorf("%w: %s needs SSH access to the Proxmox node (for cloud-init snippet upload); run 'pmox init' to add SSH credentials", exitcode.ErrUserInput, purpose)
+	}
+	return nil
 }
 
 // NodeSSHConfig builds the pvessh.Config for this server's PVE node: the
@@ -276,10 +295,14 @@ func hydrate(url string, srv *config.Server, source string) (*Resolved, error) {
 	return r, nil
 }
 
+// getNodeSSHKeyPassphrase is overridable in tests.
+var getNodeSSHKeyPassphrase = credstore.GetNodeSSHKeyPassphrase
+
 // hydrateNodeSSH loads node_ssh fields from config and the keyring into
 // the resolved bundle. A server record without a node_ssh block leaves
-// the fields empty — create-template is the only caller that cares and
-// checks HasNodeSSH() before attempting to use them.
+// the fields empty. Only a missing/unreadable password (required for
+// password auth) is a resolve error; an unusable block is recorded in
+// NodeSSHErr for the commands that need node SSH (RequireNodeSSH).
 func hydrateNodeSSH(r *Resolved) error {
 	if r.Server == nil || r.Server.NodeSSH == nil {
 		return nil
@@ -302,15 +325,16 @@ func hydrateNodeSSH(r *Resolved) error {
 		r.NodeSSHPassword = pw
 	case config.AuthKey:
 		r.NodeSSHKeyPath = ns.KeyPath
-		// Passphrase is optional — absent keyring entry is fine.
-		pp, err := credstore.GetNodeSSHKeyPassphrase(r.URL)
-		if err == nil {
+		// The passphrase is optional and this runs for every command, so
+		// any lookup failure (absent entry, locked or unavailable
+		// keychain) means "no passphrase". An encrypted key then fails
+		// with a clear error when node SSH is actually dialed.
+		if pp, err := getNodeSSHKeyPassphrase(r.URL); err == nil {
 			r.NodeSSHKeyPassphrase = pp
-		} else if !errors.Is(err, credstore.ErrNotFound) {
-			return fmt.Errorf("load node SSH key passphrase for %s: %w", r.URL, err)
 		}
 	default:
-		return fmt.Errorf("%w: server %s has unknown node_ssh.auth %q (want %q or %q); re-run 'pmox init'",
+		// Recorded, not returned: only commands that use node SSH fail.
+		r.NodeSSHErr = fmt.Errorf("%w: server %s has unknown node_ssh.auth %q (want %q or %q); re-run 'pmox init'",
 			exitcode.ErrUserInput, r.URL, ns.Auth, config.AuthPassword, config.AuthKey)
 	}
 	return nil

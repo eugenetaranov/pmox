@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -68,8 +67,8 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	if err != nil {
 		return err
 	}
-	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
+	if err := resolved.RequireNodeSSH("clone"); err != nil {
+		return err
 	}
 	// Resolve resources before any picker prompt so a missing storage
 	// fails fast instead of reaching PVE as ide2=":cloudinit".

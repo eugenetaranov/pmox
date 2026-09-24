@@ -200,8 +200,8 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 
-	if !resolved.HasNodeSSH() {
-		return fmt.Errorf("%w: launch needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
+	if err := resolved.RequireNodeSSH("launch"); err != nil {
+		return err
 	}
 
 	opts, err := resolveLaunchOptions(ctx, client, name, f, resolved, cmd.ErrOrStderr())

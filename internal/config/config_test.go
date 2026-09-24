@@ -291,7 +291,7 @@ func TestValidateNodeSSHAuth(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnknownNodeSSHAuth(t *testing.T) {
+func TestLoadAcceptsUnknownNodeSSHAuth(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	p := filepath.Join(dir, "pmox", "config.yaml")
@@ -302,8 +302,14 @@ func TestLoadRejectsUnknownNodeSSHAuth(t *testing.T) {
 	if err := os.WriteFile(p, []byte(yml), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "node_ssh.auth") {
-		t.Fatalf("Load: want node_ssh.auth error, got %v", err)
+	// Load stays lenient so commands that never use node SSH keep
+	// working; Validate still reports the bad value.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "node_ssh.auth") {
+		t.Fatalf("Validate: want node_ssh.auth error, got %v", err)
 	}
 }
 

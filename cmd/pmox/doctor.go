@@ -89,6 +89,9 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		return finishDoctor(cmd, f, cl, "", "")
 	}
 	cl.Pass("config.file", "config", "config loaded")
+	if err := cfg.Validate(); err != nil {
+		cl.Warn("config.valid", "config", "config has values pmox cannot act on: "+err.Error(), "run 'pmox init' to reconfigure the affected server")
+	}
 
 	resolved, err := server.Resolve(ctx, server.Options{
 		Cfg:        cfg,
@@ -514,6 +517,10 @@ func agentEnabled(v string) bool {
 }
 
 func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, deps doctorDeps) {
+	if resolved.NodeSSHErr != nil {
+		cl.Fail("ssh.configured", "ssh", "node SSH misconfigured: "+resolved.NodeSSHErr.Error(), "run 'pmox init' to reconfigure node SSH", exitcode.ExitUserError)
+		return
+	}
 	if !resolved.HasNodeSSH() {
 		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
 		return

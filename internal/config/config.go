@@ -186,15 +186,16 @@ func Load() (*Config, error) {
 	if cfg.Servers == nil {
 		cfg.Servers = map[string]*Server{}
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config %s: %w", p, err)
-	}
+	// Validate is deliberately not enforced here: a bad node_ssh block
+	// must not break commands that never use node SSH. The resolver
+	// records it for node-SSH users, and doctor reports it.
 	return &cfg, nil
 }
 
 // Validate checks semantic constraints yaml decoding cannot express. It is
-// deliberately lenient: only values pmox could never act on are rejected,
-// so any config pmox itself wrote still loads.
+// deliberately lenient: only values pmox could never act on are rejected.
+// Load does not call it (so one bad block can't break unrelated
+// commands); `pmox doctor` reports its result.
 func (c *Config) Validate() error {
 	for _, u := range c.ServerURLs() {
 		srv := c.Servers[u]

@@ -456,7 +456,7 @@ func TestResolve_NodeSSH_PasswordMissingInKeyring(t *testing.T) {
 	}
 }
 
-func TestResolve_NodeSSH_UnknownAuthIsError(t *testing.T) {
+func TestResolve_NodeSSH_UnknownAuthDeferredToNodeSSHUsers(t *testing.T) {
 	keyring.MockInit()
 	cfg := &config.Config{Servers: map[string]*config.Server{
 		urlA: {
@@ -466,9 +466,49 @@ func TestResolve_NodeSSH_UnknownAuthIsError(t *testing.T) {
 	}}
 	_ = credstore.Set(urlA, "api")
 	opts := baseOpts(cfg)
-	_, err := Resolve(context.Background(), opts)
+	// Commands that don't use node SSH still resolve.
+	r, err := Resolve(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.HasNodeSSH() {
+		t.Error("HasNodeSSH = true for an unknown auth mode")
+	}
+	// Node-SSH users get the recorded problem.
+	err = r.RequireNodeSSH("launch")
 	if !errors.Is(err, exitcode.ErrUserInput) || !strings.Contains(err.Error(), "kerberos") {
-		t.Fatalf("want ErrUserInput naming the auth mode, got %v", err)
+		t.Fatalf("RequireNodeSSH: want ErrUserInput naming the auth mode, got %v", err)
+	}
+}
+
+func TestResolve_NodeSSH_PassphraseLookupErrorIsNotFatal(t *testing.T) {
+	keyring.MockInit()
+	orig := getNodeSSHKeyPassphrase
+	getNodeSSHKeyPassphrase = func(string) (string, error) { return "", errors.New("keychain is locked") }
+	t.Cleanup(func() { getNodeSSHKeyPassphrase = orig })
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		urlA: {
+			TokenID: "t@pam!a",
+			NodeSSH: &config.NodeSSH{User: "root", Auth: config.AuthKey, KeyPath: "/k"},
+		},
+	}}
+	_ = credstore.Set(urlA, "api")
+	r, err := Resolve(context.Background(), baseOpts(cfg))
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.NodeSSHKeyPassphrase != "" || !r.HasNodeSSH() {
+		t.Fatalf("want key auth without passphrase, got %+v", r)
+	}
+	if err := r.RequireNodeSSH("launch"); err != nil {
+		t.Fatalf("RequireNodeSSH: %v", err)
+	}
+}
+
+func TestRequireNodeSSH_Unconfigured(t *testing.T) {
+	err := (&Resolved{URL: urlA}).RequireNodeSSH("clone")
+	if !errors.Is(err, exitcode.ErrUserInput) || !strings.Contains(err.Error(), "clone needs SSH access") {
+		t.Fatalf("want ErrUserInput naming the command, got %v", err)
 	}
 }
 
