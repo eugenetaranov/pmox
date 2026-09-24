@@ -45,6 +45,11 @@ type fakePVE struct {
 	configHits        int32
 	snippetDeleteHits int32
 	snippetDeletePath string
+	// lastDeletePath and lastStatusPath record the path of the most
+	// recent destroy/status call, so tests can assert *which* vmid was
+	// actually targeted, not just that some delete happened.
+	lastDeletePath string
+	lastStatusPath string
 }
 
 func newFakePVE(t *testing.T) *fakePVE {
@@ -77,6 +82,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 
 		case strings.HasSuffix(p, "/status/current"):
 			atomic.AddInt32(&f.statusHits, 1)
+			f.lastStatusPath = p
 			if f.vmStatus == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -103,6 +109,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 
 		case r.Method == "DELETE" && strings.HasPrefix(p, "/nodes/") && strings.Contains(p, "/qemu/"):
 			atomic.AddInt32(&f.deleteHits, 1)
+			f.lastDeletePath = p
 			if f.deleteFails {
 				http.Error(w, `{"data":null}`, http.StatusInternalServerError)
 				return
@@ -160,6 +167,15 @@ const twoTaggedVMs = `{"data":[
 const dupeNameVMs = `{"data":[
   {"vmid":104,"name":"web1","node":"pve1","status":"running","tags":"pmox"},
   {"vmid":107,"name":"web1","node":"pve2","status":"running","tags":"pmox"}
+]}`
+
+// taggedAndUntaggedSameName has two VMs sharing a name: 105 carries the
+// pmox tag (and so is the only one `pmox list`'s default view shows),
+// 107 doesn't. Regression fixture for the "pmox list shows one VM but
+// resolving that name by hand claims it's ambiguous" bug.
+const taggedAndUntaggedSameName = `{"data":[
+  {"vmid":105,"name":"alice","node":"pve1","status":"stopped","tags":"pmox"},
+  {"vmid":107,"name":"alice","node":"pve1","status":"stopped","tags":""}
 ]}`
 
 // fakeConfirmer records the prompt it received and returns a configurable
@@ -329,6 +345,38 @@ func TestDelete_AmbiguousNameFailsEarly(t *testing.T) {
 	}
 	if f.statusHits != 0 || f.shutdownHits != 0 || f.stopHits != 0 || f.deleteHits != 0 {
 		t.Errorf("destructive calls fired on ambiguous name")
+	}
+}
+
+// TestDelete_NameTargetsTheTaggedVM guards against the exact bug
+// reported live: `pmox list` showed only the pmox-tagged VM "alice"
+// (vmid 105), but `pmox delete alice` resolved the name against every
+// VM including an untagged one (107) sharing the name, and refused
+// with "multiple VMs named ... — pass the VMID instead" even though
+// the user could not see why from `pmox list`'s output. Resolution
+// must land on the tagged VM the user actually saw, and destroy that
+// exact vmid — never the untagged one.
+func TestDelete_NameTargetsTheTaggedVM(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedAndUntaggedSameName
+	f.vmStatus = "stopped" // skip shutdown/stop; only GetStatus + Delete matter here
+
+	cmd, out, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"alice"}, &deleteFlags{}, yesConfirmer)
+	if err != nil {
+		t.Fatalf("executeDelete: %v (name resolution should have picked the tagged VM, not reported ambiguity)", err)
+	}
+	if f.deleteHits != 1 {
+		t.Fatalf("delete hits = %d, want 1", f.deleteHits)
+	}
+	if !strings.Contains(f.lastStatusPath, "/qemu/105/") {
+		t.Errorf("status checked %q, want vmid 105", f.lastStatusPath)
+	}
+	if !strings.HasSuffix(f.lastDeletePath, "/qemu/105") {
+		t.Errorf("destroyed %q, want vmid 105 (the tagged VM), not 107", f.lastDeletePath)
+	}
+	if !strings.Contains(out.String(), "vmid 105") {
+		t.Errorf("output = %q, want it to confirm vmid 105", out.String())
 	}
 }
 
