@@ -260,6 +260,26 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 		return launch.Options{}, err
 	}
 
+	opts, err := resolveVMSpec(f, resolved, stderr)
+	if err != nil {
+		return launch.Options{}, err
+	}
+	opts.Client = client
+	opts.Node = node
+	opts.Name = name
+	opts.TemplateID = templateID
+	return opts, nil
+}
+
+// resolveVMSpec resolves the per-VM resources shared by launch and
+// clone — CPU, memory, disk, storage, snippet storage, bridge, wait
+// budget and cloud-init path — layering flag > configured default >
+// built-in. The returned Options has Client/Node/Name/TemplateID unset.
+// An empty storage is rejected: it would otherwise reach PVE as
+// ide2=":cloudinit".
+func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) (launch.Options, error) {
+	srv := resolved.Server
+
 	storage := firstNonEmpty(f.storage, srv.Storage)
 	if storage == "" {
 		return launch.Options{}, fmt.Errorf("%w: no storage configured; pass --storage or run 'pmox init' (required for the cloud-init drive)", exitcode.ErrNotFound)
@@ -279,20 +299,15 @@ func resolveLaunchOptions(ctx context.Context, name string, f *launchFlags, reso
 	if mem == 0 {
 		mem = defaultMemMB
 	}
-	disk := firstNonEmpty(f.disk, defaultDiskSize)
 	wait := f.wait
 	if wait == 0 {
 		wait = defaultWait
 	}
 
 	return launch.Options{
-		Client:         client,
-		Node:           node,
-		Name:           name,
-		TemplateID:     templateID,
 		CPU:            cpu,
 		MemMB:          mem,
-		DiskSize:       disk,
+		DiskSize:       firstNonEmpty(f.disk, defaultDiskSize),
 		Storage:        storage,
 		SnippetStorage: snippetStorage,
 		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),

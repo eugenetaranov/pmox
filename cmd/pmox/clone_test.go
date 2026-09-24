@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,9 +13,59 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
+	"github.com/eugenetaranov/pmox/internal/server"
 )
+
+// Clone shares resolveVMSpec with launch, so an unset storage is
+// rejected before any PVE call instead of producing ide2=":cloudinit".
+func TestClone_ResolveVMSpecRejectsEmptyStorage(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Node: "pve"},
+		Secret: "s",
+	}
+	_, err := resolveVMSpec(&launchFlags{}, resolved, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("resolveVMSpec err=nil, want missing storage error")
+	}
+	if !errors.Is(err, exitcode.ErrNotFound) {
+		t.Errorf("err = %v, want exitcode.ErrNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "no storage configured") {
+		t.Errorf("err = %v, want 'no storage configured'", err)
+	}
+
+	// launch reports the identical error.
+	resolved.Server.Template = "9000"
+	_, lerr := resolveLaunchOptions(context.Background(), "web1", &launchFlags{}, resolved, &bytes.Buffer{})
+	if lerr == nil || lerr.Error() != err.Error() {
+		t.Errorf("launch err = %v, want %v", lerr, err)
+	}
+}
+
+func TestResolveVMSpec_FlagsAndDefaults(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	resolved := &server.Resolved{
+		URL:    "https://pve.example:8006/api2/json",
+		Server: &config.Server{TokenID: "t@pam!x", Bridge: "vmbr1", SnippetStorage: "local"},
+		Secret: "s",
+	}
+	opts, err := resolveVMSpec(&launchFlags{storage: "fast"}, resolved, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveVMSpec err: %v", err)
+	}
+	if opts.Storage != "fast" || opts.SnippetStorage != "local" || opts.Bridge != "vmbr1" {
+		t.Errorf("storage/snippet/bridge = %q/%q/%q", opts.Storage, opts.SnippetStorage, opts.Bridge)
+	}
+	if opts.CPU != defaultCPU || opts.MemMB != defaultMemMB || opts.DiskSize != defaultDiskSize || opts.Wait != defaultWait {
+		t.Errorf("defaults not applied: %+v", opts)
+	}
+}
 
 // writeCloneCI drops a valid cloud-init file in a tempdir so launch.Run
 // can read it during the clone test.

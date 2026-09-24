@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
@@ -75,6 +74,12 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	if !resolved.HasNodeSSH() {
 		return fmt.Errorf("%w: clone needs SSH access to the Proxmox node (for cloud-init snippet upload). Run 'pmox init' to add SSH credentials", exitcode.ErrUserInput)
 	}
+	// Resolve resources before any picker prompt so a missing storage
+	// fails fast instead of reaching PVE as ide2=":cloudinit".
+	partial, err := resolveVMSpec(f, resolved, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
 	// No source given → pick one interactively (like shell/delete do).
 	if srcArg == "" {
 		picked, err := vmPickFn(ctx, client)
@@ -83,51 +88,15 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 		}
 		srcArg = strconv.Itoa(picked.VMID)
 	}
-	srv := resolved.Server
-
-	cloudInitPath, err := config.CloudInitPath(resolved.URL)
-	if err != nil {
-		return fmt.Errorf("resolve cloud-init path: %w", err)
-	}
-	cpu := f.cpu
-	if cpu == 0 {
-		cpu = defaultCPU
-	}
-	mem := f.memMB
-	if mem == 0 {
-		mem = defaultMemMB
-	}
-	disk := firstNonEmpty(f.disk, defaultDiskSize)
-	wait := f.wait
-	if wait == 0 {
-		wait = defaultWait
-	}
-
-	storage := firstNonEmpty(f.storage, srv.Storage)
-	snippetStorage := resolveSnippetStorage(f.snippetStorage, srv.SnippetStorage, storage, cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)
 	defer closeUpload()
 
-	user, sshKey := hookSSHDefaults(srv)
-	partial := launch.Options{
-		CPU:            cpu,
-		MemMB:          mem,
-		DiskSize:       disk,
-		Storage:        storage,
-		SnippetStorage: snippetStorage,
-		Bridge:         firstNonEmpty(f.bridge, srv.Bridge),
-		Wait:           wait,
-		NoWaitSSH:      f.noWaitSSH,
-		CloudInitPath:  cloudInitPath,
-		UploadSnippet:  upload,
-		Stderr:         cmd.ErrOrStderr(),
-		Progress:       newLaunchProgress(cmd.ErrOrStderr()),
-		Hook:           hk,
-		StrictHooks:    f.strictHooks,
-		User:           user,
-		SSHKeyPath:     sshKey,
-	}
+	partial.UploadSnippet = upload
+	partial.Progress = newLaunchProgress(cmd.ErrOrStderr())
+	partial.Hook = hk
+	partial.StrictHooks = f.strictHooks
+	partial.User, partial.SSHKeyPath = hookSSHDefaults(resolved.Server)
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }
 
