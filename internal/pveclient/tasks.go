@@ -2,9 +2,9 @@ package pveclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 )
 
@@ -13,15 +13,19 @@ import (
 // transient error that should be retried until the deadline.
 //
 // Fatal: unauthorized (bad/expired token), TLS verification failure
-// (cert won't start verifying mid-poll), and resource-not-found (the
-// task/VM genuinely does not exist). Everything else — network blips
-// (ErrNetwork) and 5xx/gateway errors (ErrAPIError) — is transient:
-// the underlying PVE task keeps running server-side, so a dropped
-// connection must not be reported as a hard failure.
+// (cert won't start verifying mid-poll), resource-not-found (the
+// task/VM genuinely does not exist), and a failed task (ErrTaskFailed —
+// it has already stopped, so retrying can't change the outcome, even
+// though it also matches ErrAPIError for compatibility). Everything
+// else — network blips (ErrNetwork) and 5xx/gateway errors
+// (ErrAPIError) — is transient: the underlying PVE task keeps running
+// server-side, so a dropped connection must not be reported as a hard
+// failure.
 func IsFatalPollError(err error) bool {
 	return errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrTLSVerificationFailed) ||
-		errors.Is(err, ErrNotFound)
+		errors.Is(err, ErrNotFound) ||
+		errors.Is(err, ErrTaskFailed)
 }
 
 const taskPollInterval = 500 * time.Millisecond
@@ -35,24 +39,18 @@ type TaskStatus struct {
 // GetTaskStatus issues GET /nodes/{node}/tasks/{upid}/status and
 // returns the parsed TaskStatus block.
 func (c *Client) GetTaskStatus(ctx context.Context, node, upid string) (*TaskStatus, error) {
-	path := fmt.Sprintf("/nodes/%s/tasks/%s/status", node, upid)
-	body, err := c.request(ctx, "GET", path, nil)
+	path := fmt.Sprintf("/nodes/%s/tasks/%s/status", url.PathEscape(node), url.PathEscape(upid))
+	st, err := getData[TaskStatus](ctx, c, path, nil, "task status response")
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Data TaskStatus `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("parse task status response: %w", err)
-	}
-	return &payload.Data, nil
+	return &st, nil
 }
 
 // WaitTask polls GetTaskStatus until the task completes, the context
 // is cancelled, or the timeout elapses. Returns nil if the task
-// finished with exit status "OK", an error wrapping ErrAPIError if
-// the task stopped with any other exit status, an error wrapping
+// finished with exit status "OK", a *TaskError (matching ErrTaskFailed
+// and ErrAPIError) if the task stopped with any other exit status, an error wrapping
 // ErrTimeout on timeout, or ctx.Err() on cancellation.
 func (c *Client) WaitTask(ctx context.Context, node, upid string, timeout time.Duration) error {
 	if err := ctx.Err(); err != nil {
@@ -75,7 +73,7 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string, timeout time.D
 			if status.ExitStatus == "OK" {
 				return nil
 			}
-			return fmt.Errorf("%w: pve task %s: %s", ErrAPIError, upid, status.ExitStatus)
+			return &TaskError{UPID: upid, ExitStatus: status.ExitStatus}
 		}
 		if time.Now().After(deadline) {
 			if lastTransient != nil {

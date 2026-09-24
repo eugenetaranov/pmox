@@ -2,8 +2,8 @@ package pveclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
 // AgentIface is one network interface as reported by the qemu-guest-agent.
@@ -30,20 +30,14 @@ type AgentIPAddr struct {
 // deliberately left to callers because it's context-specific (how
 // long to wait depends on what the caller is trying to do).
 func (c *Client) AgentNetwork(ctx context.Context, node string, vmid int) ([]AgentIface, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", node, vmid)
-	body, err := c.request(ctx, "GET", path, nil)
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", url.PathEscape(node), vmid)
+	// The PVE API wraps everything in `data`, and the guest-agent
+	// response itself nests the list under `result`.
+	data, err := getData[struct {
+		Result []AgentIface `json:"result"`
+	}](ctx, c, path, nil, "agent network response")
 	if err != nil {
 		return nil, err
 	}
-	// The PVE API wraps everything in `data`, and the guest-agent
-	// response itself nests the list under `result`.
-	var payload struct {
-		Data struct {
-			Result []AgentIface `json:"result"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("parse agent network response: %w", err)
-	}
-	return payload.Data.Result, nil
+	return data.Result, nil
 }

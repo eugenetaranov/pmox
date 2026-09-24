@@ -2,15 +2,11 @@ package pveclient
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // ErrTokenExists is returned by CreateToken when a token of the requested
@@ -25,15 +21,10 @@ type Ticket struct {
 	CSRF   string
 }
 
-// ticketHTTPClient builds an HTTP client honoring the insecure TLS flag,
-// matching the API-token client's transport.
-func ticketHTTPClient(insecure bool) *http.Client {
-	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}, //nolint:gosec // homelab fallback per D4
-		},
-	}
+// ticketClient builds an unauthenticated Client (no API token) for the
+// ticket-based endpoints, sharing the API-token client's transport.
+func ticketClient(baseURL string, insecure bool) *Client {
+	return &Client{BaseURL: baseURL, Insecure: insecure, HTTPClient: newHTTPClient(insecure, Options{})}
 }
 
 // Login authenticates with a username (user@realm) and password against
@@ -44,43 +35,25 @@ func Login(ctx context.Context, baseURL string, insecure bool, username, passwor
 	form.Set("username", username)
 	form.Set("password", password)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/access/ticket", strings.NewReader(form.Encode()))
+	body, err := ticketClient(baseURL, insecure).do(ctx, http.MethodPost, "/access/ticket", nil, form, nil)
 	if err != nil {
-		return Ticket{}, fmt.Errorf("build ticket request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := ticketHTTPClient(insecure).Do(req)
-	if err != nil {
-		if isTLSError(err) {
-			return Ticket{}, fmt.Errorf("%w: %w", ErrTLSVerificationFailed, err)
+		if errors.Is(err, ErrUnauthorized) {
+			return Ticket{}, fmt.Errorf("%w: login failed (check username, realm, and password)", ErrUnauthorized)
 		}
-		return Ticket{}, fmt.Errorf("%w: %w", ErrNetwork, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return Ticket{}, fmt.Errorf("%w: login failed (check username, realm, and password)", ErrUnauthorized)
-	}
-	if resp.StatusCode >= 400 {
-		return Ticket{}, fmt.Errorf("%w: %s: %s", ErrAPIError, resp.Status, summarizeBody(body))
+		return Ticket{}, err
 	}
 
-	var env struct {
-		Data struct {
-			Ticket string `json:"ticket"`
-			CSRF   string `json:"CSRFPreventionToken"`
-		} `json:"data"`
+	data, err := decodeData[struct {
+		Ticket string `json:"ticket"`
+		CSRF   string `json:"CSRFPreventionToken"`
+	}](body, "ticket response")
+	if err != nil {
+		return Ticket{}, err
 	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		return Ticket{}, fmt.Errorf("parse ticket response: %w", err)
-	}
-	if env.Data.Ticket == "" {
+	if data.Ticket == "" {
 		return Ticket{}, fmt.Errorf("%w: ticket response missing ticket", ErrAPIError)
 	}
-	return Ticket{Cookie: env.Data.Ticket, CSRF: env.Data.CSRF}, nil
+	return Ticket{Cookie: data.Ticket, CSRF: data.CSRF}, nil
 }
 
 // CreateToken creates an API token named `name` for `userid` (user@realm)
@@ -92,49 +65,30 @@ func CreateToken(ctx context.Context, baseURL string, insecure bool, t Ticket, u
 	path := fmt.Sprintf("/access/users/%s/token/%s", url.PathEscape(userid), url.PathEscape(name))
 	form := url.Values{}
 	form.Set("privsep", "0")
+	headers := http.Header{}
+	headers.Set("Cookie", "PVEAuthCookie="+t.Cookie)
+	headers.Set("CSRFPreventionToken", t.CSRF)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, strings.NewReader(form.Encode()))
+	body, err := ticketClient(baseURL, insecure).do(ctx, http.MethodPost, path, nil, form, headers)
 	if err != nil {
-		return "", "", fmt.Errorf("build token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cookie", "PVEAuthCookie="+t.Cookie)
-	req.Header.Set("CSRFPreventionToken", t.CSRF)
-
-	resp, err := ticketHTTPClient(insecure).Do(req)
-	if err != nil {
-		if isTLSError(err) {
-			return "", "", fmt.Errorf("%w: %w", ErrTLSVerificationFailed, err)
-		}
-		return "", "", fmt.Errorf("%w: %w", ErrNetwork, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		if strings.Contains(strings.ToLower(string(body)), "already exists") {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && strings.Contains(strings.ToLower(string(apiErr.body)), "already exists") {
 			return "", "", fmt.Errorf("%w: %s", ErrTokenExists, name)
 		}
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return "", "", fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
-		}
-		return "", "", fmt.Errorf("%w: %s: %s", ErrAPIError, resp.Status, summarizeBody(body))
+		return "", "", err
 	}
 
-	var env struct {
-		Data struct {
-			FullTokenID string `json:"full-tokenid"`
-			Value       string `json:"value"`
-		} `json:"data"`
+	data, err := decodeData[struct {
+		FullTokenID string `json:"full-tokenid"`
+		Value       string `json:"value"`
+	}](body, "token response")
+	if err != nil {
+		return "", "", err
 	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		return "", "", fmt.Errorf("parse token response: %w", err)
-	}
-	if env.Data.Value == "" || env.Data.FullTokenID == "" {
+	if data.Value == "" || data.FullTokenID == "" {
 		return "", "", fmt.Errorf("%w: token response missing value/full-tokenid", ErrAPIError)
 	}
-	return env.Data.FullTokenID, env.Data.Value, nil
+	return data.FullTokenID, data.Value, nil
 }
 
 // APIToken is one entry from GET /access/users/{userid}/token — an API
@@ -148,17 +102,7 @@ type APIToken struct {
 // authenticating with the client's own API token.
 func (c *Client) ListTokens(ctx context.Context, userid string) ([]APIToken, error) {
 	path := fmt.Sprintf("/access/users/%s/token", url.PathEscape(userid))
-	body, err := c.request(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Data []APIToken `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse token list response: %w", err)
-	}
-	return resp.Data, nil
+	return getData[[]APIToken](ctx, c, path, nil, "token list response")
 }
 
 // DeleteToken removes the named API token from userid.
