@@ -64,6 +64,19 @@ const dupeNameFixture = `{"data":[
   {"vmid":104,"name":"web1","node":"pve1","status":"running","tags":"pmox"}
 ]}`
 
+// oneTaggedOneUntaggedFixture has two VMs sharing a name: one carries
+// the pmox tag (and so is what `pmox list`'s default view shows), the
+// other doesn't.
+const oneTaggedOneUntaggedFixture = `{"data":[
+  {"vmid":105,"name":"alice","node":"p0","status":"stopped","tags":"pmox"},
+  {"vmid":107,"name":"alice","node":"p0","status":"stopped","tags":""}
+]}`
+
+const twoUntaggedSameNameFixture = `{"data":[
+  {"vmid":105,"name":"alice","node":"p0","status":"stopped","tags":""},
+  {"vmid":107,"name":"alice","node":"p0","status":"stopped","tags":""}
+]}`
+
 func TestResolve_NumericSingleMatch(t *testing.T) {
 	c := clusterServer(t, twoVMsFixture)
 	ref, err := Resolve(context.Background(), c, "200")
@@ -102,6 +115,39 @@ func TestResolve_NameAmbiguous(t *testing.T) {
 	}
 	if !errors.Is(err, ErrAmbiguous) {
 		t.Errorf("err = %v, want errors.Is ErrAmbiguous", err)
+	}
+}
+
+// TestResolve_NamePrefersTaggedOverUntagged guards against the
+// inconsistency `pmox list` vs. name resolution used to have: `pmox
+// list`'s default view only shows pmox-tagged VMs, so an untagged VM
+// sharing a name with a tagged one was invisible there but still made
+// Resolve report the name as ambiguous. Resolve must prefer the tagged
+// VM instead, matching what the user can actually see.
+func TestResolve_NamePrefersTaggedOverUntagged(t *testing.T) {
+	c := clusterServer(t, oneTaggedOneUntaggedFixture)
+	ref, err := Resolve(context.Background(), c, "alice")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ref.VMID != 105 || !HasPMOXTag(ref.Tags) {
+		t.Errorf("ref = %+v, want the tagged VM 105", ref)
+	}
+}
+
+// TestResolve_NameAmbiguousAmongUntagged checks that a name shared by
+// two untagged VMs still reports ambiguity (there is no tagged VM to
+// prefer), and that the untagged VMID 107 is reachable by passing it
+// directly.
+func TestResolve_NameAmbiguousAmongUntagged(t *testing.T) {
+	c := clusterServer(t, twoUntaggedSameNameFixture)
+	_, err := Resolve(context.Background(), c, "alice")
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("err = %v, want errors.Is ErrAmbiguous", err)
+	}
+	ref, err := Resolve(context.Background(), c, "107")
+	if err != nil || ref.VMID != 107 {
+		t.Errorf("Resolve(107) = %+v, %v", ref, err)
 	}
 }
 

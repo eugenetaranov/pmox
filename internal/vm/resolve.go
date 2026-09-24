@@ -40,11 +40,30 @@ func Resolve(ctx context.Context, c *pveclient.Client, arg string) (*Ref, error)
 		return nil, notFound(fmt.Sprintf("VM %d not found", n))
 	}
 
-	var matches []pveclient.Resource
+	return resolveByName(resources, arg)
+}
+
+// resolveByName matches arg against VM names the same way `pmox list`
+// discovers VMs by default: pmox-tagged VMs are preferred. Otherwise an
+// untagged VM that shares a name with a tagged one — invisible in
+// `pmox list`'s default view — would make the tagged VM's own name
+// "ambiguous", which is confusing since the user cannot see why.
+// Untagged VMs are only matched when no tagged VM has that name, so a
+// name that is unique among untagged VMs still resolves.
+func resolveByName(resources []pveclient.Resource, arg string) (*Ref, error) {
+	var tagged, all []pveclient.Resource
 	for _, r := range resources {
-		if r.Name == arg {
-			matches = append(matches, r)
+		if r.Name != arg {
+			continue
 		}
+		all = append(all, r)
+		if HasPMOXTag(r.Tags) {
+			tagged = append(tagged, r)
+		}
+	}
+	matches := tagged
+	if len(matches) == 0 {
+		matches = all
 	}
 	switch len(matches) {
 	case 0:
