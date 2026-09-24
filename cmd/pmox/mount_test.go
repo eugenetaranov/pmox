@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -67,7 +69,7 @@ func spawnDetachedSleep(t *testing.T) int {
 // umountByRemote can target one exactly.
 func TestUmountByRemote_TargetsOnlyMatchingMount(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := mountStateDir()
+	dir := testMountStateDir(t)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 
 	pidA := spawnDetachedSleep(t)
@@ -236,53 +238,126 @@ func TestResolveExcludes(t *testing.T) {
 	})
 
 	t.Run("falls back to defaults when no flags and no config", func(t *testing.T) {
-		old := configLoadFn
-		configLoadFn = func() (*mountConfig, error) {
-			return &mountConfig{}, nil
-		}
-		defer func() { configLoadFn = old }()
-
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		got := resolveExcludes(nil)
 		assert.Equal(t, defaultMountExcludes, got)
 	})
 
 	t.Run("config excludes replace defaults", func(t *testing.T) {
-		old := configLoadFn
-		configLoadFn = func() (*mountConfig, error) {
-			return &mountConfig{MountExcludes: []string{".git", "vendor/"}}, nil
-		}
-		defer func() { configLoadFn = old }()
+		xdg := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", xdg)
+		require.NoError(t, os.MkdirAll(filepath.Join(xdg, "pmox"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(xdg, "pmox", "config.yaml"),
+			[]byte("mount_excludes:\n  - .git\n  - vendor/\n"), 0o600))
 
 		got := resolveExcludes(nil)
 		assert.Equal(t, []string{".git", "vendor/"}, got)
 	})
+
+	t.Run("config load error falls back to defaults", func(t *testing.T) {
+		old := mountConfigLoadFn
+		mountConfigLoadFn = func() (*config.Config, error) { return nil, errors.New("boom") }
+		defer func() { mountConfigLoadFn = old }()
+
+		got := resolveExcludes(nil)
+		assert.Equal(t, defaultMountExcludes, got)
+	})
 }
 
-func TestLogFilePath(t *testing.T) {
-	t.Run("deterministic", func(t *testing.T) {
-		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := logFilePath("web1", "/home/user/src", "/opt/app")
-		assert.Equal(t, p1, p2)
+// testMountStateDir resolves (and creates nothing under) the mount state
+// dir for the test's XDG_STATE_HOME.
+func testMountStateDir(t *testing.T) string {
+	t.Helper()
+	dir, err := mount.StateDir()
+	require.NoError(t, err)
+	return dir
+}
+
+func TestMountChildArgs(t *testing.T) {
+	const url = "https://pve.example:8006/api2/json"
+
+	t.Run("forwards resolved server and omits unset user", func(t *testing.T) {
+		f := &mountFlags{debounce: 300 * time.Millisecond}
+		args := mountChildArgs("/bin/pmox", f, url, "./src", "web1", "/opt/app", false, nil)
+		assert.Equal(t, []string{"/bin/pmox", "mount", "--foreground", "--server", url, "./src", "web1:/opt/app"}, args)
+		assert.NotContains(t, args, "--user")
 	})
 
-	t.Run("different paths produce different names", func(t *testing.T) {
-		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := logFilePath("web1", "/home/user/other", "/opt/app")
-		assert.NotEqual(t, p1, p2)
+	t.Run("forwards explicit user including pmox", func(t *testing.T) {
+		for _, u := range []string{"pmox", "ubuntu"} {
+			f := &mountFlags{sshFlags: sshFlags{user: u}, debounce: 300 * time.Millisecond}
+			args := mountChildArgs("/bin/pmox", f, url, "./src", "web1", "/opt/app", false, nil)
+			assert.Contains(t, strings.Join(args, " "), "--user "+u)
+		}
 	})
 
-	t.Run("different VMs produce different filenames", func(t *testing.T) {
-		p1 := logFilePath("web1", "/home/user/src", "/opt/app")
-		p2 := logFilePath("web2", "/home/user/src", "/opt/app")
-		assert.NotEqual(t, p1, p2)
+	t.Run("global flags precede the rsync pass-through args", func(t *testing.T) {
+		f := &mountFlags{
+			sshFlags:    sshFlags{identity: "/k", force: true},
+			debounce:    time.Second,
+			noGitignore: true,
+			noDelete:    true,
+			excludes:    []string{"*.log"},
+		}
+		args := mountChildArgs("/bin/pmox", f, url, "./src", "web1", "/opt/app", true, []string{"--bwlimit=1000"})
+		dash := -1
+		for i, a := range args {
+			if a == "--" {
+				dash = i
+			}
+		}
+		require.NotEqual(t, -1, dash)
+		assert.Equal(t, []string{"--bwlimit=1000"}, args[dash+1:])
+		head := strings.Join(args[:dash], " ")
+		for _, want := range []string{"--server " + url, "--identity /k", "--force", "--ssh-insecure", "--no-gitignore", "--no-delete", "--debounce 1s", "--exclude=*.log", "./src web1:/opt/app"} {
+			assert.Contains(t, head, want)
+		}
 	})
+}
 
-	t.Run("filename contains vm name prefix", func(t *testing.T) {
-		p := logFilePath("myvm", "/src", "/dst")
-		base := filepath.Base(p)
-		assert.True(t, strings.HasPrefix(base, "myvm-"))
-		assert.True(t, strings.HasSuffix(base, ".log"))
-	})
+func TestRunMountDaemon_SpawnsWithResolvedServer(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	const url = "https://pve.example:8006/api2/json"
+
+	var gotArgs []string
+	var gotRec mount.Record
+	orig := mountStartDaemonFn
+	mountStartDaemonFn = func(stateDir, exe string, args []string, rec mount.Record) (mount.Record, error) {
+		gotArgs, gotRec = args, rec
+		rec.PID = 4242
+		return rec, nil
+	}
+	t.Cleanup(func() { mountStartDaemonFn = orig })
+
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+	f := &mountFlags{debounce: 300 * time.Millisecond}
+	require.NoError(t, runMountDaemon(cmd, "./src", "web1", "/opt/app", url, f))
+
+	assert.Contains(t, strings.Join(gotArgs, " "), "--server "+url)
+	assert.NotContains(t, gotArgs, "--user")
+	assert.Equal(t, mount.LogPath(testMountStateDir(t), "web1", "./src", "/opt/app"), gotRec.LogPath)
+	assert.Contains(t, errbuf.String(), "mount started in background (pid 4242)")
+}
+
+func TestRunMountDaemon_RefusesLiveDuplicate(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := testMountStateDir(t)
+	pid := spawnDetachedSleep(t)
+	_, err := mount.Save(dir, mount.Record{VMName: "web1", LocalPath: "./src", RemotePath: "/opt/app", PID: pid})
+	require.NoError(t, err)
+
+	orig := mountStartDaemonFn
+	mountStartDaemonFn = func(string, string, []string, mount.Record) (mount.Record, error) {
+		t.Fatal("must not spawn a duplicate daemon")
+		return mount.Record{}, nil
+	}
+	t.Cleanup(func() { mountStartDaemonFn = orig })
+
+	err = runMountDaemon(newTestUmountCmd(), "./src", "web1", "/opt/app", "", &mountFlags{debounce: 300 * time.Millisecond})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mount already active")
 }
 
 func TestMountArgValidation(t *testing.T) {
@@ -409,7 +484,7 @@ func TestRunUmount_ZeroArgs_PickerThenUmountAll(t *testing.T) {
 	}
 	t.Cleanup(func() { umountResolveVMFn = orig })
 
-	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
 	cmd := newTestUmountCmd()
 	var errbuf bytes.Buffer
@@ -434,7 +509,7 @@ func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
 	}
 	t.Cleanup(func() { umountResolveVMFn = orig })
 
-	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
 	err := runUmount(newTestUmountCmd(), []string{"web1:/opt/app"}, false)
 	require.Error(t, err)
@@ -452,7 +527,7 @@ func TestRunUmount_AllFlag_RoutesToUmountAll(t *testing.T) {
 	}
 	t.Cleanup(func() { umountResolveVMFn = orig })
 
-	require.NoError(t, os.MkdirAll(mountStateDir(), 0o700))
+	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
 	err := runUmount(newTestUmountCmd(), []string{"web1"}, true)
 	require.Error(t, err)

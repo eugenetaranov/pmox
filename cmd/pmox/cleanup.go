@@ -534,7 +534,10 @@ func snippetStoragesFor(srv *config.Server) []string {
 // localMountItems finds dead mount records (and their logs) plus orphaned
 // log files under the mount state dir.
 func localMountItems() []cleanupItem {
-	stateDir := mountStateDir()
+	stateDir, err := mount.StateDir()
+	if err != nil {
+		return nil
+	}
 	records, _ := mount.List(stateDir)
 	// Every log that belongs to a record (live or dead) is handled via its
 	// record, so it must not also be flagged as an orphan.
@@ -544,7 +547,7 @@ func localMountItems() []cleanupItem {
 		if rec.LogPath != "" {
 			recordLogs[rec.LogPath] = true
 		}
-		if mount.Alive(rec.PID) && !mount.LooksReused(rec.PID) {
+		if rec.Live() {
 			continue
 		}
 		r := rec

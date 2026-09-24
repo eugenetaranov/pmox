@@ -58,7 +58,7 @@ func TestKnownHostToken(t *testing.T) {
 
 func TestLocalMountItems_DeadRecordAndOrphanLog(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := mountStateDir()
+	dir := testMountStateDir(t)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
