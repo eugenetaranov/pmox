@@ -421,6 +421,57 @@ func TestPromptSSHKeyNonInteractiveUsesSuggestion(t *testing.T) {
 	}
 }
 
+func TestConfiguredUser(t *testing.T) {
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		"https://pve.example:8006/api2/json":   {User: "deploy"},
+		"https://noone.example:8006/api2/json": {},
+	}}
+	cases := map[string]string{
+		"https://pve.example:8006/api2/json":     "deploy",
+		"https://noone.example:8006/api2/json":   "",
+		"https://unknown.example:8006/api2/json": "",
+	}
+	for url, want := range cases {
+		if got := configuredUser(cfg, url); got != want {
+			t.Errorf("configuredUser(%q) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+// TestPromptDefaultUser guards the reconfigure-friendly behavior: the
+// prompt's bracketed default is whatever the caller already knows about
+// (a previously-configured or in-progress value), not always "ubuntu",
+// and a blank reply keeps that default rather than resetting to ubuntu.
+func TestPromptDefaultUser(t *testing.T) {
+	t.Run("no prior value suggests ubuntu", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{""}}
+		got, err := promptDefaultUser(p, "")
+		if err != nil || got != "ubuntu" {
+			t.Fatalf("got %q, %v; want ubuntu", got, err)
+		}
+		if !strings.Contains(p.out.String(), "[ubuntu]") {
+			t.Errorf("prompt = %q, want it to show [ubuntu]", p.out.String())
+		}
+	})
+	t.Run("prior value is suggested and kept on blank reply", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{""}}
+		got, err := promptDefaultUser(p, "deploy")
+		if err != nil || got != "deploy" {
+			t.Fatalf("got %q, %v; want deploy (the prior value)", got, err)
+		}
+		if !strings.Contains(p.out.String(), "[deploy]") {
+			t.Errorf("prompt = %q, want it to show [deploy], not ubuntu", p.out.String())
+		}
+	})
+	t.Run("explicit reply overrides the suggested default", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"alice"}}
+		got, err := promptDefaultUser(p, "deploy")
+		if err != nil || got != "alice" {
+			t.Fatalf("got %q, %v; want alice", got, err)
+		}
+	})
+}
+
 func TestOverwritePromptRejected(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	stubProbe(t, true, pveclient.Reachable)

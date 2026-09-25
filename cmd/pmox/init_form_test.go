@@ -27,7 +27,7 @@ func stubFormSeams(t *testing.T, reviewActions ...string) (defaultsCalls, access
 		*defaultsCalls++
 		return defaultsAnswers{node: "pve", template: "9000", storage: "local-lvm", snippetStorage: "local", bridge: "vmbr0"}, nil
 	}
-	collectAccessFn = func(_ context.Context, _ prompter, _ string, _ accessAnswers, _ bool) (accessAnswers, error) {
+	collectAccessFn = func(_ context.Context, _ prompter, _ *config.Config, _ string, _ accessAnswers, _ bool) (accessAnswers, error) {
 		*accessCalls++
 		return accessAnswers{sshKey: "/tmp/none.pub", user: "ubuntu", nodeSSH: &config.NodeSSH{User: "root", Auth: "key", KeyPath: "/tmp/none"}}, nil
 	}

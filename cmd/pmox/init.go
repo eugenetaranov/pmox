@@ -177,14 +177,12 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 		return err
 	}
 
-	// Step 12: default user
-	user, err := p.Prompt("Default user [ubuntu]: ")
+	// Step 12: default user — pre-filled with the value already
+	// configured for this server, if any, instead of always suggesting
+	// "ubuntu" on a reconfigure.
+	user, err := promptDefaultUser(p, configuredUser(cfg, canonical))
 	if err != nil {
 		return err
-	}
-	user = strings.TrimSpace(user)
-	if user == "" {
-		user = "ubuntu"
 	}
 
 	// Step 12.5: node SSH credentials for snippet upload.

@@ -221,6 +221,38 @@ func promptSSHKey(p prompter, current string) (string, error) {
 	}
 }
 
+// configuredUser returns the user already configured for canonical, or
+// "" when the server isn't configured yet (or has none set).
+func configuredUser(cfg *config.Config, canonical string) string {
+	if srv, ok := cfg.Servers[canonical]; ok {
+		return srv.User
+	}
+	return ""
+}
+
+// promptDefaultUser asks for the Linux user cloud-init creates on every
+// VM launched against this server (and the fallback SSH login user for
+// shell/exec/cp/mount/ssh-config/apply, and PMOX_USER for hooks).
+// current pre-fills the prompt: the server's already-configured user
+// when reconfiguring, or the answer from an earlier pass through this
+// wizard stage when the user navigated back to it — falling back to
+// "ubuntu" when there's nothing to reuse. An empty reply keeps current.
+func promptDefaultUser(p prompter, current string) (string, error) {
+	def := current
+	if def == "" {
+		def = "ubuntu"
+	}
+	user, err := p.Prompt(fmt.Sprintf("Default user [%s]: ", def))
+	if err != nil {
+		return "", err
+	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		user = def
+	}
+	return user, nil
+}
+
 // chooseSSHKeyAction shows the generate/existing/browse menu and returns
 // the selected action key. The default lands on "existing" when a key is
 // already available, otherwise "generate".

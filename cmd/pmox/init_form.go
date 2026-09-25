@@ -117,7 +117,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			}
 		case "access":
 			printTabs(p, "Access")
-			a, aerr := collectAccessFn(ctx, p, conn.canonical, acc, haveAccess)
+			a, aerr := collectAccessFn(ctx, p, cfg, conn.canonical, acc, haveAccess)
 			if aerr != nil {
 				return aerr
 			}
@@ -294,18 +294,21 @@ func collectDefaults(ctx context.Context, p prompter, conn resolvedConn, _ defau
 }
 
 // collectAccess gathers the SSH key, default user, and node SSH creds.
-func collectAccess(ctx context.Context, p prompter, canonical string, prev accessAnswers, _ bool) (accessAnswers, error) {
+// The default-user prompt prefers, in order: the answer from an earlier
+// pass through this stage this session (haveAccess), the user already
+// configured for this server on disk (reconfiguring), then "ubuntu".
+func collectAccess(ctx context.Context, p prompter, cfg *config.Config, canonical string, prev accessAnswers, haveAccess bool) (accessAnswers, error) {
 	sshKey, err := promptSSHKey(p, prev.sshKey)
 	if err != nil {
 		return accessAnswers{}, err
 	}
-	user, err := p.Prompt("Default user [ubuntu]: ")
+	prevUser := prev.user
+	if !haveAccess && prevUser == "" {
+		prevUser = configuredUser(cfg, canonical)
+	}
+	user, err := promptDefaultUser(p, prevUser)
 	if err != nil {
 		return accessAnswers{}, err
-	}
-	user = strings.TrimSpace(user)
-	if user == "" {
-		user = "ubuntu"
 	}
 	nodeSSH, pw, kp, err := promptNodeSSH(ctx, p, canonical)
 	if err != nil {
