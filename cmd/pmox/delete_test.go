@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
@@ -54,6 +55,10 @@ type fakePVE struct {
 
 func newFakePVE(t *testing.T) *fakePVE {
 	t.Helper()
+	// destroyVM's forgetTackProfile call resolves the real XDG state dir
+	// otherwise, and would read/write the developer's actual
+	// ~/.local/state/pmox/tack/profiles.json during `go test`.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	f := &fakePVE{vmStatus: "running"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +329,54 @@ func TestDelete_AlreadyGoneIsSuccess(t *testing.T) {
 	if f.shutdownHits != 0 || f.stopHits != 0 || f.deleteHits != 0 {
 		t.Errorf("destructive calls fired after already-gone: shutdown=%d stop=%d delete=%d",
 			f.shutdownHits, f.stopHits, f.deleteHits)
+	}
+}
+
+// TestDelete_ForgetsTackProfile guards the VMID-reuse fix: without
+// this, a VMID Proxmox later reassigned to an unrelated new VM would
+// silently inherit the deleted VM's remembered tack playbook on the new
+// VM's first bare `pmox apply <vm>`, with no warning and no way for
+// `pmox cleanup` to catch it (the VMID exists again, so it never looks
+// stale). destroyVM must forget the profile as part of a normal delete.
+func TestDelete_ForgetsTackProfile(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	const serverURL = "https://pve.example:8006/api2/json"
+	stateDir := testTackStateDir(t)
+	if err := tackprofile.Set(stateDir, serverURL, 100, "db"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{serverURL: serverURL}, yesConfirmer)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if _, ok, err := tackprofile.Get(stateDir, serverURL, 100); err != nil || ok {
+		t.Errorf("tack profile still remembered after delete (ok=%v, err=%v)", ok, err)
+	}
+}
+
+// TestDelete_ForgetsTackProfile_AlreadyGone covers the idempotent
+// re-run path: a VM already destroyed outside this invocation must
+// still have its remembered profile pruned, not just a fresh destroy.
+func TestDelete_ForgetsTackProfile_AlreadyGone(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = "" // triggers 404 on /status/current, the "already gone" path
+	const serverURL = "https://pve.example:8006/api2/json"
+	stateDir := testTackStateDir(t)
+	if err := tackprofile.Set(stateDir, serverURL, 100, "db"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{serverURL: serverURL}, yesConfirmer)
+	if err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if _, ok, err := tackprofile.Get(stateDir, serverURL, 100); err != nil || ok {
+		t.Errorf("tack profile still remembered after already-gone delete (ok=%v, err=%v)", ok, err)
 	}
 }
 

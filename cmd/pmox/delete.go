@@ -14,6 +14,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/snippet"
+	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
@@ -26,6 +27,12 @@ type deleteFlags struct {
 	force bool
 	hard  bool
 	yes   bool
+	// serverURL is the canonical server URL, set by runDelete right
+	// after buildClient. Not a CLI flag — threaded through so destroyVM
+	// can forget the deleted VM's remembered tack profile (see
+	// forgetTackProfile) without widening executeDelete/destroyVM's
+	// signatures.
+	serverURL string
 }
 
 func newDeleteCmd() *cobra.Command {
@@ -82,10 +89,11 @@ func runDelete(cmd *cobra.Command, args []string, f *deleteFlags) error {
 		return fmt.Errorf("refusing to delete: stdin is not a TTY and --yes was not passed; re-run with --yes (or PMOX_ASSUME_YES=1) for non-interactive use")
 	}
 
-	client, _, err := buildClient(ctx, cmd)
+	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
+	f.serverURL = resolved.URL
 
 	targets, err := resolveTargetArgs(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
@@ -230,6 +238,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 	if err != nil {
 		if errors.Is(err, pveclient.ErrNotFound) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "VM %q (vmid %d) is already gone\n", ref.Name, ref.VMID)
+			forgetTackProfile(cmd, f.serverURL, ref.VMID)
 			return nil
 		}
 		return fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
@@ -276,8 +285,34 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 		return err
 	}
 
+	forgetTackProfile(cmd, f.serverURL, ref.VMID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted VM %q (vmid %d)\n", ref.Name, ref.VMID)
 	return nil
+}
+
+// forgetTackProfile removes the deleted VM's remembered tack profile, if
+// any (internal/tackprofile). Without this, a VMID Proxmox later
+// reassigns to an unrelated new VM would silently inherit the deleted
+// VM's playbook on the new VM's very first bare `pmox apply <vm>` — the
+// tackprofile cache is keyed on server URL + VMID alone, with no way to
+// tell "the same VM" apart from "a different VM that happens to reuse
+// this VMID". `pmox cleanup`'s tack-profile category is a secondary net
+// for VMs deleted outside pmox, but it can't catch this case either: by
+// the time cleanup runs, the VMID may already be back in use. Best
+// effort: a failure here only means a stale cache entry lingers (until
+// cleanup or a name/profile collision surfaces it), not a delete
+// failure, so it's a warning, not a returned error.
+func forgetTackProfile(cmd *cobra.Command, serverURL string, vmid int) {
+	if serverURL == "" {
+		return
+	}
+	stateDir, err := tackStateDir()
+	if err != nil {
+		return
+	}
+	if err := tackprofile.Delete(stateDir, serverURL, vmid); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not forget tack profile for vm %d: %v\n", vmid, err)
+	}
 }
 
 // stepProgress is the small subset of the launch spinner interface we
