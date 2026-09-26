@@ -310,7 +310,9 @@ pmox apply web1 --playbook ./p.yaml
 ```
 
 tack's own plan/apply confirmation is shown; pass `-y` (or
-`PMOX_ASSUME_YES=1`) to auto-approve. **Host keys:** tack verifies against
+`PMOX_ASSUME_YES=1`) to auto-approve — `--output json` also
+auto-approves, since there's no terminal to confirm on. **Host keys:**
+tack verifies against
 `~/.ssh/known_hosts` (independently of pmox's own `known_hosts_guests`),
 so the first apply to a brand-new VM may report an unknown host key —
 scan it (`ssh-keyscan -H <ip> >> ~/.ssh/known_hosts`) or pass

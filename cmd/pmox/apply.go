@@ -42,10 +42,13 @@ VM, then the default ~/.config/pmox/tack/playbook.yaml. The chosen
 profile is remembered per VM so a later bare 'pmox apply <vm>' reuses it.
 
 The VM is auto-started if stopped. tack's own plan/apply confirmation is
-shown; pass -y to auto-approve, or --check to plan only. tack verifies
-the host key against ~/.ssh/known_hosts; on the first apply to a brand-new
-VM you may need to scan it (ssh-keyscan -H <ip> >> ~/.ssh/known_hosts) or
-pass --ssh-insecure.
+shown; pass -y to auto-approve, or --check to plan only. --output json
+also auto-approves (there is no terminal to confirm on), so a scripted
+caller relying on -y alone for that gate should know --output json has
+the same effect on its own. tack verifies the host key against
+~/.ssh/known_hosts; on the first apply to a brand-new VM you may need
+to scan it (ssh-keyscan -H <ip> >> ~/.ssh/known_hosts) or pass
+--ssh-insecure.
 
 Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 		Args: cobra.MaximumNArgs(2),
@@ -58,7 +61,7 @@ Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 	cmd.Flags().StringSliceVarP(&f.tags, "tags", "t", nil, "only run tasks with these tags (repeatable/comma-separated)")
 	cmd.Flags().StringSliceVar(&f.skipTags, "skip-tags", nil, "skip tasks with these tags")
 	cmd.Flags().BoolVarP(&f.force, "force", "f", false, "bypass the pmox tag check")
-	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "auto-approve tack's plan (env: PMOX_ASSUME_YES)")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "auto-approve tack's plan (env: PMOX_ASSUME_YES; --output json also auto-approves)")
 	cmd.Flags().StringVarP(&f.user, "user", "u", "", "SSH login user (defaults to server config 'user', then 'pmox')")
 	cmd.Flags().StringVarP(&f.identity, "identity", "i", "", "path to SSH private key")
 	cmd.Flags().BoolVar(&f.initCfg, "init", false, "scaffold a starter ~/.config/pmox/tack/ and exit")
@@ -117,7 +120,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 		return err
 	}
 
-	playbook, recordProfile, err := resolvePlaybook(f, profileArg, resolved.URL, ref.VMID)
+	playbook, recordProfile, source, err := resolvePlaybook(f, profileArg, resolved.URL, ref.VMID)
 	if err != nil {
 		return err
 	}
@@ -130,6 +133,11 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	if err != nil {
 		return err
 	}
+
+	// Say up front which playbook is about to run and against what — the
+	// only other way to answer "what will a bare 'pmox apply <vm>' run?"
+	// is opening the tack-profile state file by hand.
+	fmt.Fprintf(cmd.ErrOrStderr(), "Applying %s (%s) to vm %d at %s\n", playbook, source, ref.VMID, ip)
 
 	opts := tack.Options{
 		Playbook:    playbook,
@@ -144,12 +152,15 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 		OutputJSON:  outputMode == "json",
 	}
 	if err := tack.Run(ctx, opts, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
-		return fmt.Errorf("tack run failed: %w", err)
+		return &tackRunError{err: err}
 	}
 
-	// Remember the profile only when one was explicitly named and the run
-	// succeeded; an explicit --playbook never updates the memory.
-	if recordProfile != "" && !f.check {
+	// Remember the profile whenever one was explicitly named, whether or
+	// not this run was --check: it reflects the last *selected* profile,
+	// not just the last applied one, so a --check-then-apply two-step
+	// doesn't silently fall back to the default on the real run. An
+	// explicit --playbook never updates the memory (it's not a profile).
+	if recordProfile != "" {
 		if err := rememberTackProfile(resolved.URL, ref.VMID, recordProfile); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remember profile: %v\n", err)
 		}
@@ -157,37 +168,57 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	return nil
 }
 
+// tackRunError marks a failed tack playbook run with the same exit code
+// (ExitHook) that a failed `pmox launch --tack` hook uses, so a script
+// can tell "the playbook failed on the guest" apart from any other apply
+// error by exit code alone, whichever command produced it.
+type tackRunError struct{ err error }
+
+func (e *tackRunError) Error() string { return fmt.Sprintf("tack run failed: %v", e.err) }
+func (e *tackRunError) Unwrap() error { return e.err }
+func (e *tackRunError) ExitCode() int { return exitcode.ExitHook }
+
 // resolvePlaybook implements the resolution ladder. It returns the
-// playbook path and the profile name to remember ("" = do not record).
-func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (playbook, recordProfile string, err error) {
-	if f.playbook != "" {
-		return sshkey.ExpandHome(f.playbook), "", nil
-	}
-	dir, err := tackDir()
-	if err != nil {
-		return "", "", err
-	}
-
+// playbook path, the profile name to remember ("" = do not record), and
+// a human-readable description of where the choice came from (for the
+// "Applying ..." status line).
+func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (playbook, recordProfile, source string, err error) {
 	switch {
-	case profileArg != "":
-		playbook = filepath.Join(dir, profileArg+".yaml")
-		recordProfile = profileArg
+	case f.playbook != "":
+		playbook = sshkey.ExpandHome(f.playbook)
+		source = "explicit --playbook"
 	default:
-		stateDir, err := tackStateDir()
-		if err != nil {
-			return "", "", err
+		dir, dirErr := tackDir()
+		if dirErr != nil {
+			return "", "", "", dirErr
 		}
-		if prof, ok, _ := tackprofile.Get(stateDir, serverURL, vmid); ok {
-			playbook = filepath.Join(dir, prof+".yaml")
-		} else {
-			playbook = filepath.Join(dir, "playbook.yaml")
+		switch {
+		case profileArg != "":
+			playbook = filepath.Join(dir, profileArg+".yaml")
+			recordProfile = profileArg
+			source = fmt.Sprintf("profile %q", profileArg)
+		default:
+			stateDir, stateErr := tackStateDir()
+			if stateErr != nil {
+				return "", "", "", stateErr
+			}
+			if prof, ok, _ := tackprofile.Get(stateDir, serverURL, vmid); ok {
+				playbook = filepath.Join(dir, prof+".yaml")
+				source = fmt.Sprintf("remembered profile %q", prof)
+			} else {
+				playbook = filepath.Join(dir, "playbook.yaml")
+				source = "default playbook"
+			}
 		}
 	}
 
+	// Checked for every branch — including an explicit --playbook typo,
+	// which used to sail through here and only fail after the VM was
+	// already started and SSH-ready, wasting a boot cycle.
 	if _, statErr := os.Stat(playbook); statErr != nil {
-		return "", "", fmt.Errorf("%w: playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, playbook)
+		return "", "", "", fmt.Errorf("%w: playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, playbook)
 	}
-	return playbook, recordProfile, nil
+	return playbook, recordProfile, source, nil
 }
 
 // rememberTackProfile records profile as the last-used tack profile for
@@ -224,12 +255,13 @@ func runApplyInit(cmd *cobra.Command) error {
 
 const starterPlaybook = `# pmox tack starter playbook — https://github.com/tackhq/tack
 # Applied by 'pmox apply <vm>'. Roles may be local (./roles/<name>) or
-# remote (https://github.com/tackhq/tack-roles.git//<name>).
+# remote (https://github.com/tackhq/tack-roles.git//roles/<name> — note
+# the roles/ path segment, since that's where tack-roles.git keeps them).
 name: pmox bootstrap
 hosts: all
 
 roles:
-  - role: https://github.com/tackhq/tack-roles.git//docker
+  - role: https://github.com/tackhq/tack-roles.git//roles/docker
     tags: [docker]
 
 tasks:
