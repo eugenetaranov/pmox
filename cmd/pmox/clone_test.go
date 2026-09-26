@@ -172,9 +172,12 @@ func TestApplyHookOptions_SetsSSHInsecure(t *testing.T) {
 	f := &launchFlags{strictHooks: true}
 	for _, insecure := range []bool{true, false} {
 		var opts launch.Options
-		applyHookOptions(&opts, nil, f, srv, insecure)
+		applyHookOptions(&opts, nil, f, srv, "https://pve.example:8006/api2/json", insecure)
 		if opts.SSHInsecure != insecure {
 			t.Errorf("SSHInsecure = %v, want %v", opts.SSHInsecure, insecure)
+		}
+		if opts.ServerURL != "https://pve.example:8006/api2/json" {
+			t.Errorf("ServerURL = %q, want it threaded through for TackHook's profile memory", opts.ServerURL)
 		}
 		if !opts.StrictHooks || opts.User != "admin" || opts.SSHKeyPath != "/keys/id_ed25519" {
 			t.Errorf("hook fields = strict:%v user:%q key:%q", opts.StrictHooks, opts.User, opts.SSHKeyPath)

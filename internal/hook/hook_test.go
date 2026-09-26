@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
 func writeTempScript(t *testing.T, body string) string {
@@ -128,6 +131,91 @@ printf '%s\n' "$@" > ` + argLogPath + `
 		if got[i] != want[i] {
 			t.Errorf("argv[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// tackStub returns a "tack" executable on a fresh PATH that exits with
+// exitCode and does nothing else — enough to drive TackHook.Run through
+// to its post-run bookkeeping without a real tack binary or SSH target.
+func tackStub(t *testing.T, exitCode int) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub not supported on windows")
+	}
+	pathDir := t.TempDir()
+	stub := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
+	if err := os.WriteFile(filepath.Join(pathDir, "tack"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+}
+
+// TestTackHook_RemembersProfileOnSuccess guards the launch/apply
+// profile-memory gap: a `pmox launch --tack web.yaml` used to never
+// record "web" anywhere, so a later bare `pmox apply <vm>` silently fell
+// back to the default playbook instead of reusing what the VM was
+// actually provisioned with.
+func TestTackHook_RemembersProfileOnSuccess(t *testing.T) {
+	tackStub(t, 0)
+	cfgHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	tackDir := filepath.Join(cfgHome, "pmox", "tack")
+	if err := os.MkdirAll(tackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := &TackHook{ConfigPath: filepath.Join(tackDir, "web.yaml")}
+	env := Env{IP: "10.0.0.5", User: "ubuntu", VMID: 104, ServerURL: "https://pve.example:8006/api2/json"}
+	if err := h.Run(context.Background(), env, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+
+	stateDir := filepath.Join(stateHome, "pmox", "tack")
+	got, ok, err := tackprofile.Get(stateDir, env.ServerURL, env.VMID)
+	if err != nil {
+		t.Fatalf("tackprofile.Get: %v", err)
+	}
+	if !ok || got != "web" {
+		t.Errorf("remembered profile = (%q, %v), want (\"web\", true)", got, ok)
+	}
+}
+
+// TestTackHook_DoesNotRememberDefaultOrFailureOrOutsidePath covers the
+// three cases that must NOT be recorded: the bare default playbook.yaml
+// (it's not a named profile — matches apply's own rule), a failed run
+// (nothing was actually applied), and a path outside ~/.config/pmox/tack
+// (an ad hoc --tack <path> is a one-off, not a reusable profile).
+func TestTackHook_DoesNotRememberDefaultOrFailureOrOutsidePath(t *testing.T) {
+	cfgHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	tackDir := filepath.Join(cfgHome, "pmox", "tack")
+	if err := os.MkdirAll(tackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(stateHome, "pmox", "tack")
+
+	cases := []struct {
+		name       string
+		configPath string
+		exitCode   int
+		vmid       int
+	}{
+		{"default playbook", filepath.Join(tackDir, "playbook.yaml"), 0, 201},
+		{"failed run", filepath.Join(tackDir, "web.yaml"), 1, 202},
+		{"outside tack dir", filepath.Join(t.TempDir(), "adhoc.yaml"), 0, 203},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tackStub(t, tc.exitCode)
+			h := &TackHook{ConfigPath: tc.configPath}
+			env := Env{IP: "10.0.0.5", User: "ubuntu", VMID: tc.vmid, ServerURL: "https://pve.example:8006/api2/json"}
+			_ = h.Run(context.Background(), env, &bytes.Buffer{}, &bytes.Buffer{})
+			if _, ok, err := tackprofile.Get(stateDir, env.ServerURL, tc.vmid); err != nil || ok {
+				t.Errorf("profile recorded for vmid %d (ok=%v, err=%v), want nothing remembered", tc.vmid, ok, err)
+			}
+		})
 	}
 }
 

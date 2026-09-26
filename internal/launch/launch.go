@@ -71,6 +71,12 @@ type Options struct {
 	SSHKeyPath string
 	// SSHInsecure skips SSH host-key verification for the hook (tack).
 	SSHInsecure bool
+	// ServerURL is the canonical Proxmox server URL, passed to the hook
+	// as hook.Env.ServerURL. A TackHook uses it to remember the playbook
+	// it ran (see internal/tackprofile) so a later bare `pmox apply <vm>`
+	// reuses it instead of silently falling back to the default
+	// playbook. Empty is safe — the hook simply won't remember.
+	ServerURL string
 	// WaitForSSHFn is a test seam. When non-nil, the launch state
 	// machine calls it instead of the real vmwait.WaitForSSH so hook
 	// tests can run without a live SSH endpoint. Production code
@@ -266,13 +272,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			}
 			hookCtx, cancel := context.WithTimeout(ctx, hookBudget)
 			env := hook.Env{
-				IP:       ip,
-				Name:     opts.Name,
-				VMID:     vmid,
-				User:     opts.User,
-				Node:     opts.Node,
-				SSHKey:   opts.SSHKeyPath,
-				Insecure: opts.SSHInsecure,
+				IP:        ip,
+				Name:      opts.Name,
+				VMID:      vmid,
+				User:      opts.User,
+				Node:      opts.Node,
+				SSHKey:    opts.SSHKeyPath,
+				Insecure:  opts.SSHInsecure,
+				ServerURL: opts.ServerURL,
 			}
 			stdout, stderr := opts.Stdout, opts.Stderr
 			if stdout == nil {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -143,13 +145,19 @@ func TestResolveHook_MutualExclusion(t *testing.T) {
 }
 
 func TestResolveHook_SingleFlag(t *testing.T) {
+	// --tack is stat-checked (see TestResolveHook_TackMissingPlaybook), so
+	// its case needs a playbook that actually exists on disk.
+	tackPlaybook := filepath.Join(t.TempDir(), "t.yaml")
+	if err := os.WriteFile(tackPlaybook, []byte("name: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name string
 		f    launchFlags
 		want string // hook name
 	}{
 		{"post-create", launchFlags{postCreate: "./p.sh"}, "post-create"},
-		{"tack", launchFlags{tack: "./t.yaml"}, "tack"},
+		{"tack", launchFlags{tack: tackPlaybook}, "tack"},
 		{"ansible", launchFlags{ansible: "./a.yaml"}, "ansible"},
 		{"none", launchFlags{}, ""},
 	}
@@ -174,6 +182,54 @@ func TestResolveHook_SingleFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResolveHook_TackMissingPlaybook guards a fix: --tack used to be
+// resolved with no existence check at all, so `pmox launch --tack` with
+// no ~/.config/pmox/tack/ scaffolded yet (or an explicit --tack <typo>)
+// would fully provision a VM — clone, resize, cloud-init, boot, wait for
+// SSH — before tack itself finally failed with a generic "playbook not
+// found". resolveHook runs first, before any config load or PVE call, so
+// this must fail immediately and mention 'pmox apply --init'.
+func TestResolveHook_TackMissingPlaybook(t *testing.T) {
+	t.Run("default sentinel, nothing scaffolded", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		f := &launchFlags{tack: tackDefaultSentinel}
+		_, err := resolveHook(f)
+		if err == nil || !strings.Contains(err.Error(), "--init") {
+			t.Fatalf("want a friendly error mentioning --init, got %v", err)
+		}
+		if !errors.Is(err, exitcode.ErrUserInput) {
+			t.Errorf("missing tack playbook should map to ErrUserInput, got %v", err)
+		}
+	})
+	t.Run("explicit path typo", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "typo.yaml")
+		f := &launchFlags{tack: missing}
+		_, err := resolveHook(f)
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("want a friendly error naming %q, got %v", missing, err)
+		}
+	})
+	t.Run("default sentinel, scaffolded", func(t *testing.T) {
+		cfg := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", cfg)
+		dir := filepath.Join(cfg, "pmox", "tack")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "playbook.yaml"), []byte("name: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f := &launchFlags{tack: tackDefaultSentinel}
+		h, err := resolveHook(f)
+		if err != nil {
+			t.Fatalf("resolveHook err: %v", err)
+		}
+		if h == nil || h.Name() != "tack" {
+			t.Fatalf("hook = %v, want a tack hook", h)
+		}
+	})
 }
 
 // TestRunLaunch_HookExclusionSkipsAPICall asserts task 11.2's goal: a

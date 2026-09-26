@@ -156,6 +156,18 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 			}
 			path = filepath.Join(dir, "playbook.yaml")
 		}
+		// Checked here, before any config load or PVE call, so a missing
+		// playbook (most commonly: --tack was never scaffolded with
+		// 'pmox apply --init') fails immediately instead of after a full
+		// VM provision and SSH wait, which is where it used to surface —
+		// as tack's own generic "playbook not found" error, well after
+		// the point apply's own onboarding guard would have caught it.
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("%w: tack playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, path)
+			}
+			return nil, fmt.Errorf("stat %s: %w", path, err)
+		}
 		return &hook.TackHook{ConfigPath: path}, nil
 	case f.ansible != "":
 		return &hook.AnsibleHook{PlaybookPath: f.ansible}, nil
@@ -176,12 +188,14 @@ func hookSSHDefaults(srv *config.Server) (user, sshKey string) {
 }
 
 // applyHookOptions sets the post-create hook fields shared by launch and
-// clone: the hook itself, --strict-hooks, SSH host-key policy, and the
-// SSH user/key hooks connect with.
-func applyHookOptions(opts *launch.Options, hk hook.Hook, f *launchFlags, srv *config.Server, sshInsecure bool) {
+// clone: the hook itself, --strict-hooks, SSH host-key policy, the SSH
+// user/key hooks connect with, and the server URL a TackHook uses to
+// remember the profile it ran.
+func applyHookOptions(opts *launch.Options, hk hook.Hook, f *launchFlags, srv *config.Server, serverURL string, sshInsecure bool) {
 	opts.Hook = hk
 	opts.StrictHooks = f.strictHooks
 	opts.SSHInsecure = sshInsecure
+	opts.ServerURL = serverURL
 	opts.User, opts.SSHKeyPath = hookSSHDefaults(srv)
 }
 
@@ -213,7 +227,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	if err != nil {
 		return err
 	}
-	applyHookOptions(&opts, hk, f, resolved.Server, SSHInsecure())
+	applyHookOptions(&opts, hk, f, resolved.Server, resolved.URL, SSHInsecure())
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)

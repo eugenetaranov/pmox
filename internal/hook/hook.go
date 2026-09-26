@@ -10,10 +10,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/paths"
 	"github.com/eugenetaranov/pmox/internal/tack"
+	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
 // waitDelay caps how long Wait blocks after the process exits (or ctx
@@ -31,6 +35,10 @@ type Env struct {
 	VMID     int
 	SSHKey   string
 	Insecure bool // skip SSH host-key verification (pmox --ssh-insecure)
+	// ServerURL is the canonical Proxmox server URL. Only TackHook uses
+	// it (to remember the playbook it ran); empty is safe for every
+	// other hook.
+	ServerURL string
 }
 
 // Hook is the interface the launch state machine calls after wait-SSH.
@@ -98,7 +106,47 @@ func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) e
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	rememberProfile(h.ConfigPath, env)
+	return nil
+}
+
+// rememberProfile records the tack profile a launch/clone --tack hook
+// just ran, mirroring `pmox apply`'s own bookkeeping (internal/tackprofile),
+// so a later bare `pmox apply <vm>` reuses it instead of silently
+// falling back to the default playbook — a divergence that used to be
+// invisible until someone noticed the wrong playbook ran. Best-effort:
+// any resolution failure is dropped (there's no writer to warn on here,
+// and losing the memory is no worse than not having this feature at all).
+// The profile is only recorded when ConfigPath resolves to a named file
+// directly under ~/.config/pmox/tack/ — not the bare default
+// playbook.yaml (matching apply's own "the default is never a named
+// profile" rule) and not a path outside that directory (an ad hoc
+// --tack <path> is a one-off, not a reusable profile).
+func rememberProfile(configPath string, env Env) {
+	if env.ServerURL == "" {
+		return
+	}
+	cfgDir, err := paths.ConfigDir()
+	if err != nil {
+		return
+	}
+	tackDir := filepath.Join(cfgDir, "tack")
+	dir, file := filepath.Split(configPath)
+	if filepath.Clean(dir) != tackDir {
+		return
+	}
+	name := strings.TrimSuffix(file, ".yaml")
+	if name == file || name == "playbook" {
+		return // not a .yaml file, or it's the bare default
+	}
+	stateDir, err := paths.StateDir()
+	if err != nil {
+		return
+	}
+	_ = tackprofile.Set(filepath.Join(stateDir, "tack"), env.ServerURL, env.VMID, name)
 }
 
 // AnsibleHook runs `ansible-playbook` against the new VM using an
