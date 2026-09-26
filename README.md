@@ -161,12 +161,14 @@ scans every configured context, in selectable categories:
 - **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates`.
 
 On a terminal, `pmox cleanup` shows a **checklist** to pick categories
-(non-destructive ones pre-checked, `template` unchecked). Non-interactively,
-scope with `--only`/`--skip`:
+(non-destructive ones pre-checked, `template` unchecked), lists what it
+found, then asks `Remove N item(s) now? [y/N]` — say `y` to delete right
+there, no need to re-run with `--apply`. Non-interactively, scope with
+`--only`/`--skip`:
 
 ```
-pmox cleanup                          # checklist (or safe categories) — report only
-pmox cleanup --apply                  # remove the selected items
+pmox cleanup                          # checklist, report, then y/N to remove now
+pmox cleanup --apply                  # skip the checklist/prompt, remove unconditionally
 pmox cleanup --only snippet,log       # just these
 pmox cleanup --skip known-host        # everything safe except this
 pmox cleanup --include-templates --apply   # also delete pmox templates

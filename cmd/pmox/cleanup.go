@@ -62,11 +62,15 @@ func newCleanupCmd() *cobra.Command {
   api-token     server-side "pmox*" API tokens not used by any config entry
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
 
-Dry-run by default; pass --apply to delete. On a terminal it shows a
-checklist to pick categories (non-destructive ones pre-checked, template
-unchecked). Non-interactively, use --only / --skip; add --include-templates
-to enable the destructive template category. VMs other than pmox templates
-are never removed (use 'pmox delete').
+Dry-run by default. On a terminal it shows a checklist to pick
+categories (non-destructive ones pre-checked, template unchecked),
+lists what it found, then asks "Remove N item(s) now? [y/N]" — say y
+to delete right there, no need to re-run with --apply. Pass --apply to
+skip that prompt and delete unconditionally (for scripts/CI; also
+skips the checklist non-interactively). Non-interactively, use --only /
+--skip; add --include-templates to enable the destructive template
+category. VMs other than pmox templates are never removed (use
+'pmox delete').
 
 Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
 are not covered here; they are cleared at removal time by
@@ -76,7 +80,7 @@ are not covered here; they are cleared at removal time by
 			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates})
 		},
 	}
-	cmd.Flags().BoolVar(&apply, "apply", false, "actually remove the items (default: dry-run report)")
+	cmd.Flags().BoolVar(&apply, "apply", false, "remove without asking (default: dry-run report; on a terminal, asks y/N instead of requiring a re-run)")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "only these categories (comma-separated)")
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
 	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
@@ -292,7 +296,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 		}
 	}
 
-	return reportCleanup(cmd, kept, o.apply)
+	return reportCleanup(cmd, kept, o.apply, interactive)
 }
 
 // presentCategories returns the distinct categories that have ≥1 item, in
@@ -640,7 +644,7 @@ func pruneKnownHosts(path string, liveIPs map[string]bool) error {
 }
 
 // reportCleanup prints (and, with apply, performs) the planned removals.
-func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
+func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive bool) error {
 	w := cmd.OutOrStdout()
 
 	if outputMode == "json" {
@@ -687,8 +691,19 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply bool) error {
 	}
 
 	if !apply {
-		fmt.Fprintf(w, "\nDry run — nothing removed. Re-run with --apply to remove %d item(s).\n", len(items))
-		return nil
+		if !interactive {
+			fmt.Fprintf(w, "\nDry run — nothing removed. Re-run with --apply to remove %d item(s).\n", len(items))
+			return nil
+		}
+		ok, err := confirmCleanup(cmd, items)
+		if err != nil {
+			return fmt.Errorf("confirmation: %w", err)
+		}
+		if !ok {
+			fmt.Fprintln(w, "\nNothing removed.")
+			return nil
+		}
+		// Confirmed: fall through to the same removal loop --apply uses.
 	}
 
 	var failed int
@@ -711,4 +726,37 @@ func removalError(total, failed int) error {
 		return nil
 	}
 	return fmt.Errorf("removed %d of %d item(s); %d failed", total-failed, total, failed)
+}
+
+// cleanupConfirmerFn builds the confirmer confirmCleanup asks through —
+// a seam so tests can drive the interactive "remove now?" prompt
+// without a real TTY/stdin, matching e.g. selectCategoriesFn above.
+var cleanupConfirmerFn = func(cmd *cobra.Command) tui.Confirmer {
+	return tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr())
+}
+
+// confirmCleanup asks whether to remove the listed items right now,
+// instead of leaving the user to notice the dry-run note and re-run
+// with --apply. Only called on a real terminal (interactive is already
+// checked by the caller) — a plain y/N, matching pmox delete's own
+// confirmation style, since cleanup can include destructive template
+// deletion.
+func confirmCleanup(cmd *cobra.Command, items []cleanupItem) (bool, error) {
+	verb := "Remove"
+	if hasDestructiveItem(items) {
+		verb = "Remove (including destructive template deletion)"
+	}
+	prompt := fmt.Sprintf("\n%s %d item(s) now? [y/N]: ", verb, len(items))
+	return cleanupConfirmerFn(cmd).Confirm(cmd.Context(), prompt)
+}
+
+// hasDestructiveItem reports whether items includes a "template" entry
+// — the one category that deletes VMs, not just leftover files/state.
+func hasDestructiveItem(items []cleanupItem) bool {
+	for _, it := range items {
+		if it.Category == "template" {
+			return true
+		}
+	}
+	return false
 }
