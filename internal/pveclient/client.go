@@ -85,7 +85,14 @@ func newTransport(insecure bool, pinSHA256 string) *http.Transport {
 	if pinSHA256 != "" {
 		cfg.VerifyConnection = VerifyPin(pinSHA256)
 	}
-	return &http.Transport{TLSClientConfig: cfg}
+	// Proxy: without this, a bare &http.Transport{} dials directly and
+	// ignores HTTP_PROXY/HTTPS_PROXY/NO_PROXY entirely — unlike a
+	// browser (which follows the OS/network proxy config) or Go's own
+	// http.DefaultTransport (which sets this same field). On a network
+	// that requires a proxy even for private-IP traffic (common on
+	// managed/VPN'd machines), that gap alone can make a PVE host the
+	// browser reaches fine look unreachable to pmox.
+	return &http.Transport{TLSClientConfig: cfg, Proxy: http.ProxyFromEnvironment}
 }
 
 // request performs an authenticated API request and returns the response body.

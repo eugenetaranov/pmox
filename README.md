@@ -510,6 +510,15 @@ Scripts that wrap pmox can branch on these reliably; see
 
 ## Troubleshooting
 
+### `pmox init` says "nothing responding at …" but the web UI loads fine
+
+pmox's HTTP client honors `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, same as
+a browser or Go's own default client. If your network routes even
+private-IP traffic through a proxy (common on managed/VPN'd machines)
+and those env vars aren't set in the shell you're running `pmox` from,
+the PVE host can be reachable in a browser yet unreachable to pmox.
+Check `env | grep -i proxy` and set them if needed.
+
 ### `pmox init` says "no VMs visible on node …"
 
 The token is missing `VM.Audit` on `/vms`. Grant it via the role or

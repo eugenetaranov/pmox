@@ -9,9 +9,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// A bare &http.Transport{} (unlike a browser, or Go's own
+// http.DefaultTransport) dials directly and ignores
+// HTTP_PROXY/HTTPS_PROXY/NO_PROXY entirely. On a network that routes
+// even private-IP traffic through a proxy (common on managed/VPN'd
+// machines), that gap alone can make a PVE host the browser reaches
+// fine look unreachable to pmox. Compared by function pointer identity
+// rather than by setting env vars and observing behavior: Go's
+// http.ProxyFromEnvironment memoizes the environment via sync.Once on
+// first call, so a t.Setenv-based behavioral test would be flaky
+// depending on test execution order within the process.
+func TestNewTransport_UsesProxyFromEnvironment(t *testing.T) {
+	tr := newTransport(false, "")
+	got := reflect.ValueOf(tr.Proxy).Pointer()
+	want := reflect.ValueOf(http.ProxyFromEnvironment).Pointer()
+	if got != want {
+		t.Error("newTransport's Proxy is not http.ProxyFromEnvironment; won't honor HTTP_PROXY/HTTPS_PROXY/NO_PROXY")
+	}
+}
 
 func newTestClient(t *testing.T, h http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
