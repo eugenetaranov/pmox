@@ -181,14 +181,21 @@ Aside from opted-in `template` removal, VMs are never touched — use
 `pmox doctor` runs read-only checks and tells you whether pmox is ready
 to launch VMs — validating config, API reachability and token
 privileges, the target node's online status, storage/template
-readiness, node SSH, and local tooling. It never prompts or changes
-anything.
+readiness, node SSH, and local tooling. By default it never prompts or
+changes anything.
 
 ```
 pmox doctor            # human report; exits non-zero if any check fails
 pmox doctor --strict   # also fail on warnings (good for CI)
 pmox doctor --output json | jq '.checks[] | select(.status=="fail")'
+pmox doctor --fix      # offer to repair what it knows how to (asks first)
 ```
+
+`--fix` currently knows how to rebuild or convert a broken/missing
+template and enable the guest agent; each fix is confirmed before it
+runs (add `-y` / `PMOX_ASSUME_YES=1` to skip that and apply them
+straight away). It requires an interactive terminal unless `-y` is
+set, and is unavailable with `--output json`.
 
 Each check reports `✓ pass`, `! warn`, or `✗ fail` with an exact
 remediation hint (e.g. the missing privilege name and the `pveum` line

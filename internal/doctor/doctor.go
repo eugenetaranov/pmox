@@ -5,7 +5,11 @@
 // the CLI layer, which appends results via Checklist.
 package doctor
 
-import "github.com/eugenetaranov/pmox/internal/exitcode"
+import (
+	"context"
+
+	"github.com/eugenetaranov/pmox/internal/exitcode"
+)
 
 // SchemaVersion is the version of the --json output contract. Bump it on
 // any breaking change to the JSON shape or check-ID semantics.
@@ -21,6 +25,17 @@ const (
 	Info Status = "info"
 )
 
+// Fix describes an action `pmox doctor --fix` can offer to run to
+// resolve a check. Attached via Checklist.WithFix, immediately after
+// the check it repairs.
+type Fix struct {
+	// Prompt is shown for the "do this now? [y/N]" confirmation.
+	Prompt string
+	// Run performs the fix. A returned error is reported but never
+	// stops the rest of the fix pass.
+	Run func(ctx context.Context) error
+}
+
 // Check is one diagnostic result. ID is a stable, scriptable identifier
 // (treat as a public contract); Group buckets related checks.
 type Check struct {
@@ -33,6 +48,32 @@ type Check struct {
 	// exit is the process exit code this check contributes when it fails.
 	// Not serialized — the report's top-level ExitCode is what callers use.
 	exit int
+
+	// fix, when set, is the interactive remediation --fix can offer for
+	// this check. Not serialized — --fix is unavailable with
+	// --output json anyway (there is no terminal to confirm on).
+	fix *Fix
+}
+
+// Fixable reports whether this check has an attached Fix.
+func (c Check) Fixable() bool { return c.fix != nil }
+
+// FixPrompt returns the attached Fix's confirmation prompt, or "" if
+// this check has no fix.
+func (c Check) FixPrompt() string {
+	if c.fix == nil {
+		return ""
+	}
+	return c.fix.Prompt
+}
+
+// RunFix executes the attached Fix. A no-op returning nil if this check
+// has no fix.
+func (c Check) RunFix(ctx context.Context) error {
+	if c.fix == nil {
+		return nil
+	}
+	return c.fix.Run(ctx)
 }
 
 // Summary counts checks by outcome.
@@ -84,6 +125,22 @@ func (l *Checklist) Warn(id, group, msg, remediation string) {
 // highest-severity code across all failures.
 func (l *Checklist) Fail(id, group, msg, remediation string, exit int) {
 	l.checks = append(l.checks, Check{ID: id, Group: group, Status: Fail, Message: msg, Remediation: remediation, exit: exit})
+}
+
+// WithFix attaches fix to the most recently recorded check, so
+// `pmox doctor --fix` can offer to run it. Call immediately after the
+// Warn/Fail it repairs. A no-op if nothing has been recorded yet, or
+// the last check was a Pass/Info — a fix only makes sense for a
+// check that found something wrong.
+func (l *Checklist) WithFix(fix Fix) {
+	if len(l.checks) == 0 {
+		return
+	}
+	last := &l.checks[len(l.checks)-1]
+	if last.Status != Warn && last.Status != Fail {
+		return
+	}
+	last.fix = &fix
 }
 
 // Has reports whether a check with the given id has already been

@@ -124,7 +124,23 @@ func storageLabels(pools []pveclient.Storage) []string {
 // tests can drive it with a fake PVE server and without touching config
 // loading.
 func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) error {
-	opts := template.Options{
+	r, err := templateRunFn(ctx, buildTemplateOptions(cmd, client, node, bridge, wait, upload))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "created template %s (vmid=%d); launch with: pmox launch <name> --template %d\n", r.Name, r.VMID, r.VMID)
+	return nil
+}
+
+// templateRunFn is a test seam over template.Run.
+var templateRunFn = template.Run
+
+// buildTemplateOptions assembles the template.Options shared by
+// 'pmox create-template' and 'pmox doctor --fix's template-rebuild fix:
+// interactive pickers for image/target storage/snippets storage, wired
+// to the given client/node/bridge/wait/upload.
+func buildTemplateOptions(cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) template.Options {
+	return template.Options{
 		Client:   client,
 		Node:     node,
 		Bridge:   bridge,
@@ -145,11 +161,4 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 		},
 		UploadSnippet: upload,
 	}
-
-	r, err := template.Run(ctx, opts)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "created template %s (vmid=%d); launch with: pmox launch <name> --template %d\n", r.Name, r.VMID, r.VMID)
-	return nil
 }

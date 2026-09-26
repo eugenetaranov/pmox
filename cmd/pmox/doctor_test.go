@@ -1,16 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/doctor"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/template"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 const allPrivsJSON = `{"data":{"/":{
@@ -55,10 +64,32 @@ func healthyDeps() doctorDeps {
 	}
 }
 
+// newTestDoctorCmd returns a cobra.Command plumbed with buffer
+// stdout/stderr, for the fixer functions that print to them.
+func newTestDoctorCmd() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
+	cmd := &cobra.Command{Use: "doctor"}
+	var out, errb bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errb)
+	cmd.SetContext(context.Background())
+	return cmd, &out, &errb
+}
+
+// testConfigFor wraps resolved.Server in a *config.Config under
+// resolved.URL — the same pointer, so a fixer's cfg.Save() (via
+// srv.Template = ...) is observable by re-reading resolved.Server, and
+// cfg.Save() itself succeeds against a sandboxed XDG_CONFIG_HOME.
+func testConfigFor(t *testing.T, resolved *server.Resolved) *config.Config {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	return &config.Config{Servers: map[string]*config.Server{resolved.URL: resolved.Server}}
+}
+
 func runChecks(t *testing.T, s *pvetest.Server, resolved *server.Resolved, deps doctorDeps, strict bool) doctor.Report {
 	t.Helper()
 	cl := &doctor.Checklist{}
-	executeDoctor(context.Background(), cl, s.Client(), resolved, deps, strict)
+	cmd, _, _ := newTestDoctorCmd()
+	executeDoctor(context.Background(), cl, s.Client(), resolved, deps, strict, cmd, testConfigFor(t, resolved))
 	return cl.Finalize(resolved.URL, resolved.Source, strict)
 }
 
@@ -302,4 +333,306 @@ func TestDoctorNodeSSH_UnusableBlockFails(t *testing.T) {
 	if got := cl.StatusOf("ssh.configured"); got != doctor.Fail {
 		t.Errorf("ssh.configured = %q, want fail", got)
 	}
+}
+
+// --- doctor --fix: template checks attach a fix, and running it works ---
+
+// hitCount counts requests matching method and a path substring.
+func hitCount(hits []pvetest.Hit, method, pathContains string) int {
+	n := 0
+	for _, h := range hits {
+		if h.Method == method && strings.Contains(h.Path, pathContains) {
+			n++
+		}
+	}
+	return n
+}
+
+// runTemplateCheck runs doctorTemplate directly (not the whole
+// executeDoctor pass) against a fresh server/config/cmd triple, so
+// these tests can inspect and run the attached fix without depending on
+// the other, unrelated checks.
+func runTemplateCheck(t *testing.T, s *pvetest.Server, resolved *server.Resolved) (doctor.Report, *cobra.Command, *config.Config) {
+	t.Helper()
+	cl := &doctor.Checklist{}
+	cmd, _, _ := newTestDoctorCmd()
+	cfg := testConfigFor(t, resolved)
+	doctorTemplate(context.Background(), cmd, cl, cfg, s.Client(), resolved)
+	return cl.Finalize(resolved.URL, resolved.Source, false), cmd, cfg
+}
+
+// TestDoctorTemplate_ConfigReadErrorOffersRebuildFix reproduces the bug
+// reported live: GetConfig on a stale template vmid returns a 500 ("...
+// does not exist"), which used to warn with NO remediation at all. It
+// must now suggest rebuilding, attach a fix, and running that fix must
+// rebuild the template and set it as the new default.
+func TestDoctorTemplate_ConfigReadErrorOffersRebuildFix(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/qemu/9000/config", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		http.Error(w, `{"data":null,"message":"Configuration file 'nodes/p0/qemu-server/9000.conf' does not exist"}`, http.StatusInternalServerError)
+	})
+
+	resolved := doctorResolved(s.URL())
+	report, cmd, cfg := runTemplateCheck(t, s, resolved)
+
+	c, ok := findCheck(report, "template.resolves")
+	if !ok || c.Status != doctor.Warn {
+		t.Fatalf("template.resolves = %+v, want a warn", c)
+	}
+	if c.Remediation == "" {
+		t.Error("remediation must not be empty (used to be, for this exact error)")
+	}
+	if !c.Fixable() {
+		t.Fatal("expected a fix to be attached")
+	}
+
+	restore := stubTemplateRunFn(t, &template.Result{VMID: 9001, Name: "ubuntu-2404-pmox-9001"}, nil)
+	defer restore()
+
+	if err := c.RunFix(context.Background()); err != nil {
+		t.Fatalf("RunFix: %v", err)
+	}
+	if resolved.Server.Template != "9001" {
+		t.Errorf("Server.Template = %q, want 9001", resolved.Server.Template)
+	}
+	if cfg.Servers[resolved.URL].Template != "9001" {
+		t.Errorf("cfg not updated: %q", cfg.Servers[resolved.URL].Template)
+	}
+	if !strings.Contains(cmd.OutOrStdout().(*bytes.Buffer).String(), "9001") {
+		t.Error("expected confirmation output naming the new vmid")
+	}
+}
+
+// TestDoctorTemplate_NotFoundByNameAlsoOffersRebuildFix covers the
+// sibling Fail branch (a named template that ListTemplates can't find)
+// — it must attach the same rebuild fix as the config-read-error case.
+func TestDoctorTemplate_NotFoundByNameAlsoOffersRebuildFix(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/qemu", pvetest.JSON(`{"data":[]}`))
+
+	resolved := doctorResolved(s.URL())
+	resolved.Server.Template = "web-base" // a name, not a numeric vmid
+	report, _, _ := runTemplateCheck(t, s, resolved)
+
+	c, ok := findCheck(report, "template.resolves")
+	if !ok || c.Status != doctor.Fail || !c.Fixable() {
+		t.Fatalf("template.resolves = %+v, want a fixable fail", c)
+	}
+}
+
+// TestDoctorTemplate_NotTemplateFixConverts checks the "exists but isn't
+// a template" warn's fix actually issues the qm-template conversion.
+func TestDoctorTemplate_NotTemplateFixConverts(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/qemu/9000/config", pvetest.JSON(`{"data":{"template":"0","agent":"1"}}`))
+	s.Handle("POST", "/qemu/9000/template", pvetest.JSON(`{"data":null}`))
+
+	resolved := doctorResolved(s.URL())
+	report, _, _ := runTemplateCheck(t, s, resolved)
+
+	c, ok := findCheck(report, "template.resolves")
+	if !ok || c.Status != doctor.Warn || !c.Fixable() {
+		t.Fatalf("template.resolves = %+v, want a fixable warn", c)
+	}
+	if err := c.RunFix(context.Background()); err != nil {
+		t.Fatalf("RunFix: %v", err)
+	}
+	if n := hitCount(s.Hits(), "POST", "/qemu/9000/template"); n != 1 {
+		t.Errorf("qm-template POST hits = %d, want 1", n)
+	}
+}
+
+// TestDoctorTemplate_NoAgentFixSetsAgent checks the missing-agent warn's
+// fix actually sets agent: 1 via SetConfig.
+func TestDoctorTemplate_NoAgentFixSetsAgent(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/qemu/9000/config", pvetest.JSON(`{"data":{"template":"1","agent":"0"}}`))
+	s.Handle("POST", "/qemu/9000/config", pvetest.JSON(`{"data":null}`))
+
+	resolved := doctorResolved(s.URL())
+	report, _, _ := runTemplateCheck(t, s, resolved)
+
+	c, ok := findCheck(report, "template.agent")
+	if !ok || c.Status != doctor.Warn || !c.Fixable() {
+		t.Fatalf("template.agent = %+v, want a fixable warn", c)
+	}
+	if err := c.RunFix(context.Background()); err != nil {
+		t.Fatalf("RunFix: %v", err)
+	}
+	hits := s.Hits()
+	if n := hitCount(hits, "POST", "/qemu/9000/config"); n != 1 {
+		t.Errorf("config POST hits = %d, want 1", n)
+	}
+	for _, h := range hits {
+		if h.Method == "POST" && strings.Contains(h.Path, "/qemu/9000/config") && !strings.Contains(h.Body, "agent=1") {
+			t.Errorf("POST body = %q, want it to set agent=1", h.Body)
+		}
+	}
+}
+
+// --- doctor --fix: orchestration (offerDoctorFixes, doctorFixConfirmer) ---
+
+// fakeDoctorConfirmer is a scripted tui.Confirmer for these tests.
+type fakeDoctorConfirmer struct {
+	result bool
+	err    error
+	calls  int
+	prompt string
+}
+
+func (f *fakeDoctorConfirmer) Confirm(_ context.Context, prompt string) (bool, error) {
+	f.calls++
+	f.prompt = prompt
+	return f.result, f.err
+}
+
+func reportWithOneFix(t *testing.T, ran *bool, fixErr error) doctor.Report {
+	t.Helper()
+	cl := &doctor.Checklist{}
+	cl.Warn("x.y", "x", "broken", "fix it")
+	cl.WithFix(doctor.Fix{Prompt: "fix x.y now?", Run: func(context.Context) error {
+		if ran != nil {
+			*ran = true
+		}
+		return fixErr
+	}})
+	return cl.Finalize("s", "src", false)
+}
+
+func TestOfferDoctorFixes_NoFixableChecksPrintsNote(t *testing.T) {
+	cl := &doctor.Checklist{}
+	cl.Pass("a", "config", "ok")
+	report := cl.Finalize("s", "src", false)
+
+	cmd, _, errb := newTestDoctorCmd()
+	fc := &fakeDoctorConfirmer{}
+	if err := offerDoctorFixes(context.Background(), cmd, report, fc); err != nil {
+		t.Fatalf("offerDoctorFixes: %v", err)
+	}
+	if fc.calls != 0 {
+		t.Error("confirmer should not be asked when nothing is fixable")
+	}
+	if !strings.Contains(errb.String(), "no fixable issues") {
+		t.Errorf("stderr = %q, want a note about nothing to fix", errb.String())
+	}
+}
+
+func TestOfferDoctorFixes_DeclinedSkipsWithoutError(t *testing.T) {
+	var ran bool
+	report := reportWithOneFix(t, &ran, nil)
+	cmd, _, errb := newTestDoctorCmd()
+	fc := &fakeDoctorConfirmer{result: false}
+	if err := offerDoctorFixes(context.Background(), cmd, report, fc); err != nil {
+		t.Fatalf("offerDoctorFixes: %v", err)
+	}
+	if ran {
+		t.Error("fix must not run when declined")
+	}
+	if !strings.Contains(errb.String(), "skipped: x.y") {
+		t.Errorf("stderr = %q, want it to note the skip", errb.String())
+	}
+}
+
+func TestOfferDoctorFixes_ApprovedRunsFix(t *testing.T) {
+	var ran bool
+	report := reportWithOneFix(t, &ran, nil)
+	cmd, _, errb := newTestDoctorCmd()
+	fc := &fakeDoctorConfirmer{result: true}
+	if err := offerDoctorFixes(context.Background(), cmd, report, fc); err != nil {
+		t.Fatalf("offerDoctorFixes: %v", err)
+	}
+	if !ran {
+		t.Error("fix should have run when approved")
+	}
+	if fc.prompt != "fix x.y now? [y/N]: " {
+		t.Errorf("prompt = %q", fc.prompt)
+	}
+	if !strings.Contains(errb.String(), "fixed: x.y") {
+		t.Errorf("stderr = %q, want it to confirm the fix", errb.String())
+	}
+}
+
+func TestOfferDoctorFixes_FixErrorIsReportedNotFatal(t *testing.T) {
+	report := reportWithOneFix(t, nil, errors.New("boom"))
+	cmd, _, errb := newTestDoctorCmd()
+	fc := &fakeDoctorConfirmer{result: true}
+	if err := offerDoctorFixes(context.Background(), cmd, report, fc); err != nil {
+		t.Fatalf("offerDoctorFixes should not fail the whole pass: %v", err)
+	}
+	if !strings.Contains(errb.String(), "fix failed (x.y): boom") {
+		t.Errorf("stderr = %q, want the fix error reported", errb.String())
+	}
+}
+
+func TestDoctorFixConfirmer(t *testing.T) {
+	cmd, _, _ := newTestDoctorCmd()
+
+	t.Run("yes always approves, no TTY needed", func(t *testing.T) {
+		origTTY := tui.StdinIsTerminal
+		tui.StdinIsTerminal = func() bool { return false }
+		defer func() { tui.StdinIsTerminal = origTTY }()
+
+		c, err := doctorFixConfirmer(cmd, true)
+		if err != nil {
+			t.Fatalf("doctorFixConfirmer: %v", err)
+		}
+		ok, err := c.Confirm(context.Background(), "x")
+		if err != nil || !ok {
+			t.Errorf("Confirm = %v, %v; want true, nil", ok, err)
+		}
+	})
+	t.Run("refuses without -y when not a TTY", func(t *testing.T) {
+		origTTY := tui.StdinIsTerminal
+		tui.StdinIsTerminal = func() bool { return false }
+		defer func() { tui.StdinIsTerminal = origTTY }()
+
+		_, err := doctorFixConfirmer(cmd, false)
+		if !errors.Is(err, exitcode.ErrUserInput) {
+			t.Errorf("err = %v, want ErrUserInput", err)
+		}
+	})
+}
+
+// TestRunDoctor_FixWithNothingFixableNeedsNoTTYOrYes guards a bug found
+// while manually smoke-testing this feature: --fix used to demand -y
+// (or a TTY) unconditionally, even when the report had nothing
+// fixable at all (e.g. no server configured yet — a config.server
+// failure, which has no attached fix). --fix must only require a way
+// to confirm when there is actually something to confirm.
+func TestRunDoctor_FixWithNothingFixableNeedsNoTTYOrYes(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no config at all
+	cmd, _, errb := newTestDoctorCmd()
+	err := runDoctor(cmd, &doctorFlags{fix: true, timeout: 5 * time.Second})
+	// Still reports doctor's own real failure (no server configured) —
+	// --fix must not mask or replace that with a confirmer error.
+	if got := exitcode.From(err); got != exitcode.ExitUserError {
+		t.Fatalf("exitcode.From(err) = %d, want ExitUserError (the underlying no-server failure), got err=%v", got, err)
+	}
+	if !strings.Contains(errb.String(), "no fixable issues") {
+		t.Errorf("stderr = %q, want a note that nothing was fixable", errb.String())
+	}
+}
+
+func TestRunDoctor_FixRejectsJSONOutput(t *testing.T) {
+	origMode := outputMode
+	outputMode = "json"
+	defer func() { outputMode = origMode }()
+
+	cmd, _, _ := newTestDoctorCmd()
+	err := runDoctor(cmd, &doctorFlags{fix: true, timeout: 5 * time.Second})
+	if !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("err = %v, want ErrUserInput", err)
+	}
+}
+
+// stubTemplateRunFn replaces templateRunFn for the duration of the
+// test (restore it via the returned func), so fixRebuildTemplate can be
+// exercised without real interactive image/storage pickers.
+func stubTemplateRunFn(t *testing.T, result *template.Result, err error) func() {
+	t.Helper()
+	orig := templateRunFn
+	templateRunFn = func(context.Context, template.Options) (*template.Result, error) {
+		return result, err
+	}
+	return func() { templateRunFn = orig }
 }

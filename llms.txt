@@ -30,7 +30,7 @@
 - `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>` (a bare `:path` picks the VM).
 - `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
 - `pmox umount [<name>:<remote>]`: stop background-mode mounts. Empty arg stops every mount for the picked VM.
-- `pmox doctor`: read-only readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH (strict, never prompts), and local tooling. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report. Never prompts or writes.
+- `pmox doctor`: read-only readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH (strict, never prompts), and local tooling. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report. By default never prompts or writes. `--fix` opts into interactively repairing checks that carry a known fix (currently: rebuild/convert a broken template, enable the guest agent) — confirms each one (or applies them all with `-y`/`PMOX_ASSUME_YES=1`), needs a TTY unless `-y`, and is refused together with `--output json`; a report with nothing fixable is a no-op regardless of TTY/`-y`.
 
 ## Flags
 

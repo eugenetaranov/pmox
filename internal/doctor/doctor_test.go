@@ -1,6 +1,8 @@
 package doctor
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -55,6 +57,66 @@ func TestFinalize_FailWithZeroExitFallsBackToGeneric(t *testing.T) {
 	if r.ExitCode != exitcode.ExitGeneric {
 		t.Fatalf("exit=%d, want ExitGeneric", r.ExitCode)
 	}
+}
+
+func TestChecklist_WithFix(t *testing.T) {
+	t.Run("attaches to the last Warn/Fail and runs", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Warn("a", "config", "meh", "fix it")
+		var ran bool
+		cl.WithFix(Fix{Prompt: "fix a?", Run: func(context.Context) error { ran = true; return nil }})
+		r := cl.Finalize("s", "src", false)
+		c, _ := findByID(r.Checks, "a")
+		if !c.Fixable() || c.FixPrompt() != "fix a?" {
+			t.Fatalf("check not fixable or wrong prompt: %+v", c)
+		}
+		if err := c.RunFix(context.Background()); err != nil || !ran {
+			t.Errorf("RunFix err=%v ran=%v, want nil/true", err, ran)
+		}
+	})
+	t.Run("no-op on a Pass", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Pass("a", "config", "ok")
+		cl.WithFix(Fix{Prompt: "should not attach", Run: func(context.Context) error { return nil }})
+		r := cl.Finalize("s", "src", false)
+		c, _ := findByID(r.Checks, "a")
+		if c.Fixable() {
+			t.Error("a Pass check must never be fixable")
+		}
+	})
+	t.Run("no-op with nothing recorded yet", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.WithFix(Fix{Prompt: "x", Run: func(context.Context) error { return nil }}) // must not panic
+	})
+	t.Run("unfixable check's RunFix is a safe no-op", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Fail("a", "config", "bad", "", 1)
+		r := cl.Finalize("s", "src", false)
+		c, _ := findByID(r.Checks, "a")
+		if err := c.RunFix(context.Background()); err != nil {
+			t.Errorf("RunFix on unfixable check = %v, want nil", err)
+		}
+	})
+	t.Run("a fix's own error is returned as-is", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Fail("a", "config", "bad", "", 1)
+		wantErr := errors.New("boom")
+		cl.WithFix(Fix{Prompt: "x", Run: func(context.Context) error { return wantErr }})
+		r := cl.Finalize("s", "src", false)
+		c, _ := findByID(r.Checks, "a")
+		if err := c.RunFix(context.Background()); !errors.Is(err, wantErr) {
+			t.Errorf("RunFix err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func findByID(checks []Check, id string) (Check, bool) {
+	for _, c := range checks {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return Check{}, false
 }
 
 func TestMissingPrivileges(t *testing.T) {

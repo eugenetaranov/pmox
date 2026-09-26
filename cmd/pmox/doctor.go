@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,13 @@ import (
 type doctorFlags struct {
 	strict  bool
 	timeout time.Duration
+	// fix and yes enable pmox doctor --fix: offering (or, with -y,
+	// silently applying) the interactive remediation some checks
+	// attach via doctor.Checklist.WithFix. Without --fix, doctor keeps
+	// its documented "never changes anything" behavior exactly as
+	// before.
+	fix bool
+	yes bool
 }
 
 // doctorError carries the exit code of the worst failing check so
@@ -46,16 +54,24 @@ func newDoctorCmd() *cobra.Command {
 API and SSH connectivity, storage and template readiness, and local
 tooling, then report whether the tool is ready to launch VMs.
 
-doctor never changes anything: it does not prompt, pin host keys, or
-modify config. Each check reports pass/warn/fail with a remediation
-hint. The process exits non-zero if any check fails (or, with --strict,
-if any warning is present), using the same exit-code taxonomy as other
-commands so CI can gate on it. Use --output json for machine-readable
-output; --verbose to also list passing checks.
+By default doctor never changes anything: it does not prompt, pin host
+keys, or modify config. Each check reports pass/warn/fail with a
+remediation hint. The process exits non-zero if any check fails (or,
+with --strict, if any warning is present), using the same exit-code
+taxonomy as other commands so CI can gate on it. Use --output json for
+machine-readable output; --verbose to also list passing checks.
+
+Pass --fix to interactively repair the checks pmox knows how to fix
+(currently: rebuilding or converting a broken/missing template, and
+enabling the guest agent) — each is confirmed before it runs. Add -y
+(or PMOX_ASSUME_YES=1) to apply them without asking; --fix otherwise
+requires an interactive terminal. --fix is unavailable with
+--output json.
 
 Examples:
   pmox doctor
   pmox doctor --strict
+  pmox doctor --fix
   pmox doctor --output json | jq '.checks[] | select(.status=="fail")'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,6 +80,8 @@ Examples:
 	}
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat warnings as failures (exit non-zero on any warning)")
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 20*time.Second, "overall time budget for all checks")
+	cmd.Flags().BoolVar(&f.fix, "fix", false, "offer to fix checks pmox knows how to repair (asks before each fix; needs a terminal unless -y)")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "with --fix, apply fixes without asking (env: PMOX_ASSUME_YES)")
 	return cmd
 }
 
@@ -76,6 +94,11 @@ type doctorDeps struct {
 }
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
+	if f.fix && outputMode == "json" {
+		return fmt.Errorf("%w: --fix is not supported with --output json", exitcode.ErrUserInput)
+	}
+	f.yes = f.yes || envBool("PMOX_ASSUME_YES")
+
 	parent := cmd.Context()
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
@@ -86,7 +109,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	cfg, err := config.Load()
 	if err != nil {
 		cl.Fail("config.file", "config", "no usable pmox config found", "run 'pmox init' to create one", exitcode.ExitUserError)
-		return finishDoctor(cmd, f, cl, "", "")
+		return finishDoctor(ctx, cmd, f, cl, "", "")
 	}
 	cl.Pass("config.file", "config", "config loaded")
 	if err := cfg.Validate(); err != nil {
@@ -103,7 +126,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
-		return finishDoctor(cmd, f, cl, "", "")
+		return finishDoctor(ctx, cmd, f, cl, "", "")
 	}
 	cl.Pass("config.server", "config", "server resolves: "+resolved.URL)
 
@@ -118,13 +141,14 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	// doctor never pins (that's a mutation), but a pin that is already
 	// stored is enforced on the API connection like every other command.
 	client := newAPIClient(resolved.URL, resolved.Server, resolved.Secret, storedPin(resolved.Server))
-	executeDoctor(ctx, cl, client, resolved, deps, f.strict)
-	return finishDoctor(cmd, f, cl, resolved.URL, resolved.Source)
+	executeDoctor(ctx, cl, client, resolved, deps, f.strict, cmd, cfg)
+	return finishDoctor(ctx, cmd, f, cl, resolved.URL, resolved.Source)
 }
 
-// finishDoctor computes the report, renders it, and returns an error
-// carrying the right exit code when not ready.
-func finishDoctor(cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serverURL, source string) error {
+// finishDoctor computes the report, renders it, offers --fix remediation
+// when requested, and returns an error carrying the right exit code
+// when not ready.
+func finishDoctor(ctx context.Context, cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serverURL, source string) error {
 	report := cl.Finalize(serverURL, source, f.strict)
 
 	if outputMode == "json" {
@@ -136,16 +160,94 @@ func finishDoctor(cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serv
 		doctor.RenderText(cmd.OutOrStdout(), report, verbose, color)
 	}
 
+	// Only require a confirmer (and so a TTY or -y) when there's
+	// actually something to confirm — --fix on an otherwise-clean or
+	// unfixable-only report must not demand -y for nothing.
+	if f.fix && reportHasFixes(report) {
+		confirmer, cerr := doctorFixConfirmer(cmd, f.yes)
+		if cerr != nil {
+			return cerr
+		}
+		if err := offerDoctorFixes(ctx, cmd, report, confirmer); err != nil {
+			return err
+		}
+	} else if f.fix {
+		fmt.Fprintln(cmd.ErrOrStderr(), "\n--fix: no fixable issues found.")
+	}
+
 	if !report.Ready {
 		return &doctorError{code: report.ExitCode}
 	}
 	return nil
 }
 
+// doctorFixConfirmer builds the confirmer --fix asks each repair
+// through, mirroring pmox delete's own yes/TTY/refuse pattern: -y (or
+// PMOX_ASSUME_YES) always approves, a TTY gets a real y/N prompt on
+// stderr, and anything else is refused outright — --fix mutates the
+// cluster/config, so it never runs non-interactively without an
+// explicit opt-in.
+func doctorFixConfirmer(cmd *cobra.Command, yes bool) (tui.Confirmer, error) {
+	if yes {
+		return tui.AlwaysConfirmer{}, nil
+	}
+	if tui.StdinIsTerminal() {
+		return tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr()), nil
+	}
+	return nil, fmt.Errorf("%w: --fix needs -y (or PMOX_ASSUME_YES=1) when stdin is not a TTY", exitcode.ErrUserInput)
+}
+
+// reportHasFixes reports whether any check in the report carries an
+// attached doctor.Fix.
+func reportHasFixes(report doctor.Report) bool {
+	for _, c := range report.Checks {
+		if c.Fixable() {
+			return true
+		}
+	}
+	return false
+}
+
+// offerDoctorFixes walks the report for checks that carry an attached
+// doctor.Fix and asks confirmer before running each one. A fix's own
+// failure is reported and does not stop the rest of the pass.
+func offerDoctorFixes(ctx context.Context, cmd *cobra.Command, report doctor.Report, confirmer tui.Confirmer) error {
+	var fixable []doctor.Check
+	for _, c := range report.Checks {
+		if c.Fixable() {
+			fixable = append(fixable, c)
+		}
+	}
+	stderr := cmd.ErrOrStderr()
+	if len(fixable) == 0 {
+		fmt.Fprintln(stderr, "\n--fix: no fixable issues found.")
+		return nil
+	}
+
+	fmt.Fprintln(stderr)
+	for _, c := range fixable {
+		ok, err := confirmer.Confirm(ctx, c.FixPrompt()+" [y/N]: ")
+		if err != nil {
+			return fmt.Errorf("confirmation: %w", err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "skipped: %s\n", c.ID)
+			continue
+		}
+		if err := c.RunFix(ctx); err != nil {
+			fmt.Fprintf(stderr, "fix failed (%s): %v\n", c.ID, err)
+			continue
+		}
+		fmt.Fprintf(stderr, "fixed: %s\n", c.ID)
+	}
+	fmt.Fprintln(stderr, "Re-run 'pmox doctor' to confirm.")
+	return nil
+}
+
 // executeDoctor runs the network/SSH/storage/template/tooling checks
 // against an already-resolved server. Extracted so tests can drive it
 // with a fake PVE client and stubbed deps.
-func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, resolved *server.Resolved, deps doctorDeps, strict bool) {
+func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, resolved *server.Resolved, deps doctorDeps, strict bool, cmd *cobra.Command, cfg *config.Config) {
 	srv := resolved.Server
 
 	// --- Config values that gate later checks ---
@@ -178,7 +280,7 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 		if nodeOK {
 			doctorBridge(ctx, cl, client, srv.Node, srv.Bridge)
 			doctorStorage(ctx, cl, client, srv.Node, srv.Storage, srv.SnippetStorage)
-			doctorTemplate(ctx, cl, client, srv.Node, srv.Template)
+			doctorTemplate(ctx, cmd, cl, cfg, client, resolved)
 		}
 	}
 
@@ -470,39 +572,95 @@ func firstSnippetStorage(storages []pveclient.Storage) string {
 	return ""
 }
 
-func doctorTemplate(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, node, template string) {
+func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklist, cfg *config.Config, client *pveclient.Client, resolved *server.Resolved) {
+	template := resolved.Server.Template
 	if template == "" {
 		return // already warned in config.default_template
 	}
+	node := resolved.Server.Node
+
+	// The configured template reference is unusable in all three
+	// branches below (not found by name/id, or gone from the node) —
+	// rebuilding a fresh one and setting it as the new default resolves
+	// any of them the same way.
+	rebuildPrompt := "Run 'pmox create-template' now to build a fresh template " +
+		"(downloads an Ubuntu image and bakes a VM — can take several " +
+		"minutes), and set it as the new default?"
+	rebuildFix := doctor.Fix{
+		Prompt: rebuildPrompt,
+		Run:    func(ctx context.Context) error { return fixRebuildTemplate(ctx, cmd, cfg, resolved, client) },
+	}
+
 	id, _, err := resolveTemplate(ctx, client, node, template)
 	if err != nil {
 		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
+		cl.WithFix(rebuildFix)
 		return
 	}
 
 	// resolveTemplate trusts a numeric id without checking it exists;
 	// GetConfig confirms existence (404 if gone) and lets us verify the
 	// template flag and guest-agent setting in one call.
-	cfg, err := client.GetConfig(ctx, node, id)
+	tcfg, err := client.GetConfig(ctx, node, id)
 	if err != nil {
 		if errors.Is(err, pveclient.ErrNotFound) {
 			cl.Fail("template.resolves", "template", "template '"+template+"' (vmid "+fmt.Sprint(id)+") not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.ExitNotFound)
+			cl.WithFix(rebuildFix)
 			return
 		}
-		cl.Warn("template.resolves", "template", "could not read template config: "+err.Error(), "")
+		cl.Warn("template.resolves", "template", "could not read template config: "+err.Error(), "run 'pmox create-template', or fix 'template' in config")
+		cl.WithFix(rebuildFix)
 		return
 	}
-	if cfg["template"] == "1" {
+	if tcfg["template"] == "1" {
 		cl.Pass("template.resolves", "template", "template resolves (vmid "+fmt.Sprint(id)+")")
 	} else {
 		cl.Warn("template.resolves", "template", "vmid "+fmt.Sprint(id)+" exists but is not marked as a template", "convert it (qm template "+fmt.Sprint(id)+") or point 'template' at a real template")
+		cl.WithFix(doctor.Fix{
+			Prompt: fmt.Sprintf("Convert vmid %d to a template now (qm template %d)?", id, id),
+			Run:    func(ctx context.Context) error { return client.ConvertToTemplate(ctx, node, id) },
+		})
 	}
 
-	if agentEnabled(cfg["agent"]) {
+	if agentEnabled(tcfg["agent"]) {
 		cl.Pass("template.agent", "template", "guest agent enabled on template (agent: 1)")
 	} else {
 		cl.Warn("template.agent", "template", "template has no 'agent: 1' — launch may never get an IP", "qm set "+fmt.Sprint(id)+" --agent 1, and ensure qemu-guest-agent is installed inside the image")
+		cl.WithFix(doctor.Fix{
+			Prompt: fmt.Sprintf("Set agent: 1 on vmid %d now?", id),
+			Run: func(ctx context.Context) error {
+				return client.SetConfig(ctx, node, id, map[string]string{"agent": "1"})
+			},
+		})
 	}
+}
+
+// fixRebuildTemplate runs the same interactive image/storage pickers as
+// 'pmox create-template', reusing the client/node/bridge doctor already
+// resolved, then records the freshly built template as the server's new
+// default (config.Server.Template) and saves it — closing the loop so
+// 'pmox doctor' and 'pmox launch' both work again without a manual edit.
+func fixRebuildTemplate(ctx context.Context, cmd *cobra.Command, cfg *config.Config, resolved *server.Resolved, client *pveclient.Client) error {
+	srv := resolved.Server
+	if srv.Node == "" {
+		return fmt.Errorf("no node configured; run 'pmox init'")
+	}
+	bridge := firstNonEmpty(srv.Bridge, "vmbr0")
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
+
+	r, err := templateRunFn(ctx, buildTemplateOptions(cmd, client, srv.Node, bridge, 10*time.Minute, upload))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "created template %s (vmid=%d)\n", r.Name, r.VMID)
+
+	srv.Template = strconv.Itoa(r.VMID)
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("template created (vmid=%d) but could not save it as the default: %w", r.VMID, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "set vmid %d as the default template for %s\n", r.VMID, resolved.URL)
+	return nil
 }
 
 // agentEnabled reports whether a PVE `agent` config value turns the
