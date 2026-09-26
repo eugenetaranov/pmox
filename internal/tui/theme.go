@@ -58,6 +58,13 @@ func Subtitle(text string) string {
 	return lipgloss.NewStyle().Foreground(subtle).Render(text)
 }
 
+// Muted dims text with the same subtle color Subtitle uses — for a
+// picker option that's present but has nothing to act on (still
+// listed, just visually deprioritized against options that do).
+func Muted(text string) string {
+	return lipgloss.NewStyle().Foreground(subtle).Render(text)
+}
+
 // Warnf renders a warning/error line (e.g. stderr output) in a color that
 // stands out from normal text, so it isn't missed among plain prompt output.
 func Warnf(text string) string {

@@ -183,11 +183,14 @@ scans every configured context, in selectable categories:
 - **context** — a configured server context, exactly what `pmox config delete-context` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
 - **tack-config** — the entire `~/.config/pmox/tack/` directory: every playbook and role, hand-edited or scaffolded. Also active configuration, not cruft; opt-in only via the checklist or `--include tack-config`.
 
-On a terminal, `pmox cleanup` shows a **checklist** to pick categories
-(non-destructive ones pre-checked, the four destructive ones above
-unchecked), lists what it found, then asks `Remove N item(s) now? [y/N]`
-— say `y` to delete right there, no need to re-run with `--apply`.
-Non-interactively, scope with `--only`/`--skip`:
+On a terminal, `pmox cleanup` shows a **checklist of every category it
+checks**, not just the ones that found something — an empty one is
+listed dimmed with "nothing to clean" instead of disappearing, so the
+list stays a complete map of what cleanup covers; one with items shows
+the count and is pre-checked (unless it's one of the four destructive
+categories above, which start unchecked regardless). Then it asks
+`Remove N item(s) now? [y/N]` — say `y` to delete right there, no need
+to re-run with `--apply`. Non-interactively, scope with `--only`/`--skip`:
 
 ```
 pmox cleanup                          # checklist, report, then y/N to remove now

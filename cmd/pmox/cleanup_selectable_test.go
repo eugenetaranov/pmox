@@ -89,7 +89,7 @@ func TestResolveSelection(t *testing.T) {
 	avail := []string{"snippet", "template", "log"}
 
 	t.Run("default excludes template", func(t *testing.T) {
-		sel, err := resolveSelection(avail, cleanupOpts{}, false)
+		sel, err := resolveSelection(avail, nil, cleanupOpts{}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,61 +98,61 @@ func TestResolveSelection(t *testing.T) {
 		}
 	})
 	t.Run("only restricts", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, cleanupOpts{only: []string{"snippet"}}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{only: []string{"snippet"}}, false)
 		if !sel["snippet"] || sel["log"] || sel["template"] {
 			t.Errorf("only sel = %v", sel)
 		}
 	})
 	t.Run("skip removes", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, cleanupOpts{skip: []string{"log"}}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{skip: []string{"log"}}, false)
 		if !sel["snippet"] || sel["log"] {
 			t.Errorf("skip sel = %v", sel)
 		}
 	})
 	t.Run("include-templates adds template", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, cleanupOpts{includeTemplates: true}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{includeTemplates: true}, false)
 		if !sel["template"] {
 			t.Errorf("include-templates sel = %v", sel)
 		}
 	})
 	t.Run("default excludes vm", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "vm"}, cleanupOpts{}, false)
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{}, false)
 		if sel["vm"] {
 			t.Errorf("default sel = %v; want vm excluded", sel)
 		}
 	})
 	t.Run("include-vms adds vm", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "vm"}, cleanupOpts{includeVMs: true}, false)
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{includeVMs: true}, false)
 		if !sel["vm"] {
 			t.Errorf("include-vms sel = %v", sel)
 		}
 	})
 	t.Run("default excludes context and tack-config", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, cleanupOpts{}, false)
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{}, false)
 		if sel["context"] || sel["tack-config"] {
 			t.Errorf("default sel = %v; want context/tack-config excluded", sel)
 		}
 	})
 	t.Run("generic --include adds any destructive category", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, cleanupOpts{include: []string{"context", "tack-config"}}, false)
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{include: []string{"context", "tack-config"}}, false)
 		if !sel["context"] || !sel["tack-config"] {
 			t.Errorf("--include sel = %v, want both context and tack-config", sel)
 		}
 	})
 	t.Run("generic --include is equivalent to include-templates/include-vms", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "template", "vm"}, cleanupOpts{include: []string{"template", "vm"}}, false)
+		sel, _ := resolveSelection([]string{"snippet", "template", "vm"}, nil, cleanupOpts{include: []string{"template", "vm"}}, false)
 		if !sel["template"] || !sel["vm"] {
 			t.Errorf("--include sel = %v, want both template and vm", sel)
 		}
 	})
 	t.Run("unknown key errors", func(t *testing.T) {
-		_, err := resolveSelection(avail, cleanupOpts{only: []string{"bogus"}}, false)
+		_, err := resolveSelection(avail, nil, cleanupOpts{only: []string{"bogus"}}, false)
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("err = %v, want ErrUserInput", err)
 		}
 	})
 	t.Run("unknown --include key errors", func(t *testing.T) {
-		_, err := resolveSelection(avail, cleanupOpts{include: []string{"bogus"}}, false)
+		_, err := resolveSelection(avail, nil, cleanupOpts{include: []string{"bogus"}}, false)
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("err = %v, want ErrUserInput", err)
 		}
@@ -164,7 +164,7 @@ func TestResolveSelection(t *testing.T) {
 			return []string{"snippet"}, nil // user unchecks log
 		}
 		t.Cleanup(func() { selectCategoriesFn = orig })
-		sel, err := resolveSelection(avail, cleanupOpts{}, true)
+		sel, err := resolveSelection(avail, nil, cleanupOpts{}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,6 +172,52 @@ func TestResolveSelection(t *testing.T) {
 			t.Errorf("interactive sel = %v; want snippet only", sel)
 		}
 	})
+	// A category with nothing to clean must still appear in the
+	// checklist — just unselected — rather than being silently absent,
+	// so the checklist stays a complete map of what cleanup checks.
+	t.Run("checklist lists every category, not just ones with items", func(t *testing.T) {
+		orig := selectCategoriesFn
+		var gotOpts []huh.Option[string]
+		selectCategoriesFn = func(_ string, opts []huh.Option[string]) ([]string, error) {
+			gotOpts = opts
+			return nil, nil
+		}
+		t.Cleanup(func() { selectCategoriesFn = orig })
+		// avail (and counts) only cover "snippet" — every other
+		// registered category has nothing to clean right now.
+		if _, err := resolveSelection([]string{"snippet"}, map[string]int{"snippet": 3}, cleanupOpts{}, true); err != nil {
+			t.Fatal(err)
+		}
+		if len(gotOpts) != len(cleanupCategories) {
+			t.Fatalf("checklist has %d options, want all %d categories", len(gotOpts), len(cleanupCategories))
+		}
+		var sawEmptyVM bool
+		for _, o := range gotOpts {
+			if o.Value == "vm" {
+				sawEmptyVM = true
+				if !strings.Contains(o.Key, "nothing to clean") {
+					t.Errorf("empty category label = %q, want it to say there's nothing to clean", o.Key)
+				}
+			}
+			if o.Value == "snippet" && !strings.Contains(o.Key, "(3)") {
+				t.Errorf("populated category label = %q, want it to show the count (3)", o.Key)
+			}
+		}
+		if !sawEmptyVM {
+			t.Error("checklist missing the empty 'vm' category entirely")
+		}
+	})
+}
+
+func TestCategoryLabel(t *testing.T) {
+	c := cleanupCategory{key: "snippet", title: "Orphaned snippets"}
+	if got := categoryLabel(c, 3); got != "Orphaned snippets (3)" {
+		t.Errorf("categoryLabel(c, 3) = %q, want %q", got, "Orphaned snippets (3)")
+	}
+	got := categoryLabel(c, 0)
+	if !strings.Contains(got, "Orphaned snippets") || !strings.Contains(got, "nothing to clean") {
+		t.Errorf("categoryLabel(c, 0) = %q, want it to name the category and say nothing to clean", got)
+	}
 }
 
 func TestCloudInitItems(t *testing.T) {

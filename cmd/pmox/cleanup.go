@@ -68,11 +68,14 @@ func newCleanupCmd() *cobra.Command {
   context       configured server contexts (DESTRUCTIVE — like 'pmox config delete-context')
   tack-config   the whole ~/.config/pmox/tack/ dir, playbooks and roles (DESTRUCTIVE)
 
-Dry-run by default. On a terminal it shows a checklist to pick
-categories (non-destructive ones pre-checked, the four destructive
-ones above unchecked), lists what it found, then asks "Remove N
-item(s) now? [y/N]" — say y to delete right there, no need to re-run
-with --apply. Pass --apply to skip that prompt and delete
+Dry-run by default. On a terminal it shows a checklist of every
+category above — not just ones with something found: an empty one is
+listed dimmed as "nothing to clean" instead of disappearing, so the
+list stays a complete map of what cleanup checks. A populated
+category shows its count and is pre-checked, except the four
+destructive ones, which start unchecked regardless. Then it asks
+"Remove N item(s) now? [y/N]" — say y to delete right there, no need
+to re-run with --apply. Pass --apply to skip that prompt and delete
 unconditionally (for scripts/CI; also skips the checklist
 non-interactively). Non-interactively, use --only / --skip; add
 --include <cats> (comma-separated) to enable specific destructive
@@ -154,6 +157,19 @@ func categoryByKey(k string) (cleanupCategory, bool) {
 	return cleanupCategory{}, false
 }
 
+// categoryLabel renders a checklist row for c: every category pmox
+// checks is always listed (not just ones with something to clean) so
+// the checklist stays a complete map of what cleanup covers. One with
+// nothing found is dimmed and says so instead of showing a count, and
+// is left out of Selected() by the caller — visible, but not something
+// there's anything to act on.
+func categoryLabel(c cleanupCategory, count int) string {
+	if count == 0 {
+		return tui.Muted(fmt.Sprintf("%s — nothing to clean", c.title))
+	}
+	return fmt.Sprintf("%s (%d)", c.title, count)
+}
+
 // selectCategoriesFn is a seam over the interactive checklist so tests can
 // drive selection without a TTY.
 var selectCategoriesFn = tui.SelectMultiChecked
@@ -162,7 +178,11 @@ var selectCategoriesFn = tui.SelectMultiChecked
 // --only (exact) wins; otherwise the default safe (non-destructive) set,
 // minus --skip, plus template when --include-templates; an interactive
 // checklist (when no selection flags and on a TTY) overrides the set.
-func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[string]bool, error) {
+// counts is the per-category item count (0 for a category runCleanup
+// checked but found nothing in) — the interactive checklist lists
+// every category regardless, so a category with nothing to clean is
+// still visible (dimmed, annotated) rather than silently absent.
+func resolveSelection(available []string, counts map[string]int, o cleanupOpts, interactive bool) (map[string]bool, error) {
 	toValidate := append(append([]string{}, o.only...), o.skip...)
 	toValidate = append(toValidate, o.include...)
 	for _, k := range toValidate {
@@ -206,12 +226,9 @@ func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[
 
 	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs || len(o.include) > 0
 	if interactive && !hasFlags {
-		opts := make([]huh.Option[string], 0, len(available))
+		opts := make([]huh.Option[string], 0, len(cleanupCategories))
 		for _, c := range cleanupCategories {
-			if !avail[c.key] {
-				continue
-			}
-			opts = append(opts, huh.NewOption(c.title, c.key).Selected(sel[c.key]))
+			opts = append(opts, huh.NewOption(categoryLabel(c, counts[c.key]), c.key).Selected(sel[c.key]))
 		}
 		chosen, err := selectCategoriesFn("Select what to clean", opts)
 		if err != nil {
@@ -329,8 +346,12 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
+	counts := make(map[string]int, len(cleanupCategories))
+	for _, it := range items {
+		counts[it.Category]++
+	}
 	interactive := tui.Interactive() && outputMode != "json"
-	selected, err := resolveSelection(available, o, interactive)
+	selected, err := resolveSelection(available, counts, o, interactive)
 	if err != nil {
 		return err
 	}
