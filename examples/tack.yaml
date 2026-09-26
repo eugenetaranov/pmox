@@ -1,20 +1,29 @@
-# Example tack config for pmox launch --tack.
+# Example tack playbook for pmox launch --tack / pmox apply.
 #
-# Invoked as `tack apply --host <ip> --user <user> ./tack.yaml` after
-# the launched VM reports an IP and pmox confirms SSH is reachable.
+# Invoked by pmox as `tack run ./tack.yaml -c ssh://<user>@<ip> --ssh-key
+# <identity> --auto-approve` after the launched VM reports an IP and
+# pmox confirms SSH is reachable (tack itself is what shows the
+# plan/apply confirmation on a standalone `pmox apply`; --auto-approve
+# skips it for the launch-time hook, which is non-interactive).
 # Requires the `tack` binary on PATH — install from
 # https://github.com/tackhq/tack.
 #
 # Usage:
 #   pmox launch --tack ./examples/tack.yaml web1
+#   pmox apply web1          # re-run the same playbook later
 #
-# This minimal config installs htop via apt. Replace or extend the
-# `steps:` list with whatever your VM needs; tack supports shell
-# commands, file templates, systemd units, and more. See tack's own
-# examples at https://github.com/tackhq/tack/tree/main/examples.
+# This minimal playbook installs htop via the built-in `apt` module.
+# Run `tack modules` to list every built-in module (apt, copy, cron,
+# file, systemd, template, user, ...), and `tack module <name>` for a
+# module's parameters and example. See tack's own docs/examples at
+# https://github.com/tackhq/tack.
 
-steps:
-  - name: install htop
-    run: |
-      sudo apt-get update
-      sudo apt-get install -y htop
+name: pmox htop example
+hosts: all
+
+tasks:
+  - name: Install htop
+    apt:
+      name: htop
+      state: present
+      update_cache: true

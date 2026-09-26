@@ -28,13 +28,17 @@ pmox launch --post-create ./examples/post-create.sh web1
 
 ## [tack.yaml](./tack.yaml)
 
-A minimal `tack` config that installs `htop` via apt. Invoked by
-pmox as `tack apply --host <ip> --user <user> ./tack.yaml` after
-the VM is reachable. Requires the `tack` binary on PATH — install
-it from [tackhq/tack](https://github.com/tackhq/tack).
+A minimal `tack` playbook that installs `htop` via the built-in `apt`
+module. Invoked by pmox as `tack run ./tack.yaml -c ssh://<user>@<ip>
+--ssh-key <identity> --auto-approve` after the VM is reachable.
+Requires the `tack` binary on PATH — install it from
+[tackhq/tack](https://github.com/tackhq/tack).
 
 ```
 pmox launch --tack ./examples/tack.yaml web1
+pmox apply web1   # re-run the same playbook later; see 'pmox apply --help'
+                   # for the profile/--check/--tags flags this example
+                   # doesn't need
 ```
 
 ## [ansible/playbook.yaml](./ansible/playbook.yaml)
