@@ -22,6 +22,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/template"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
@@ -904,7 +905,7 @@ func TestPersistServerSavesRepinnedFingerprint(t *testing.T) {
 
 	newFP := strings.Repeat("bb", 32)
 	cfg, url := repinCfg(strings.Repeat("aa", 32))
-	err := persistServer(&fakePrompter{}, cfg, persistInput{
+	err := persistServer(context.Background(), &fakePrompter{}, cfg, persistInput{
 		canonical: url, tokenID: "a@pam!x", secret: "s", insecure: true, pin: newFP,
 		sshKey: writePubKey(t, "ssh-ed25519 AAAA test@host\n"), user: "ubuntu",
 	})
@@ -917,5 +918,115 @@ func TestPersistServerSavesRepinnedFingerprint(t *testing.T) {
 	}
 	if got := loaded.Servers[url].TLSPinSHA256; got != newFP {
 		t.Errorf("saved pin = %q, want %q", got, newFP)
+	}
+}
+
+// tui.Interactive() is false in a test process (no real TTY), so this
+// pins the exact non-interactive contract: pickTemplate must behave
+// byte-for-byte as it did before the "build a new template" offer was
+// added — no sentinel option, no mention of it anywhere in output.
+func TestPickTemplate_NonInteractiveUnchanged(t *testing.T) {
+	t.Run("existing templates: picks the first silently, no build offer", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"vmid":"9000","name":"ubuntu-2404-pmox-9000","template":"1"},{"vmid":"105","name":"web1","template":"0"}]}`))
+		}))
+		defer srv.Close()
+		client := pveclient.New(srv.URL, "root@pam!x", "s", false)
+		p := &fakePrompter{}
+
+		got, err := pickTemplate(context.Background(), p, client, "pve")
+		if err != nil {
+			t.Fatalf("pickTemplate: %v", err)
+		}
+		if got != "9000" {
+			t.Errorf("got %q, want 9000", got)
+		}
+		if strings.Contains(p.out.String(), "Build a new") {
+			t.Errorf("non-interactive output must never mention the build offer: %q", p.out.String())
+		}
+	})
+
+	t.Run("zero templates: falls back to the manual VMID prompt", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"vmid":"105","name":"web1","template":"0"}]}`))
+		}))
+		defer srv.Close()
+		client := pveclient.New(srv.URL, "root@pam!x", "s", false)
+		p := &fakePrompter{inputs: []string{"9050"}}
+
+		got, err := pickTemplate(context.Background(), p, client, "pve")
+		if err != nil {
+			t.Fatalf("pickTemplate: %v", err)
+		}
+		if got != "9050" {
+			t.Errorf("got %q, want the typed 9050", got)
+		}
+	})
+}
+
+// TestPersistServer_BuildTemplateSentinel_Success guards against the
+// createTemplateSentinel value ever landing in the saved config: on a
+// successful build, persistServer's first save must write an empty
+// template (patched in below by offerBuiltTemplate), and the config on
+// disk after that ends up with the *built* template's VMID, not the
+// sentinel.
+func TestPersistServer_BuildTemplateSentinel_Success(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	defer stubTemplateRunFn(t, &template.Result{VMID: 9042, Name: "ubuntu-2404-pmox-9042"}, nil)()
+
+	url := "https://pve.home.lan:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{}}
+	p := &fakePrompter{}
+	err := persistServer(context.Background(), p, cfg, persistInput{
+		canonical: url, tokenID: "a@pam!x", secret: "s", node: "pve",
+		template: createTemplateSentinel,
+		sshKey:   writePubKey(t, "ssh-ed25519 AAAA test@host\n"), user: "ubuntu",
+		nodeSSH: &config.NodeSSH{Auth: config.AuthKey, KeyPath: "/k"},
+	})
+	if err != nil {
+		t.Fatalf("persistServer: %v", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Servers[url].Template; got != "9042" {
+		t.Errorf("saved template = %q, want the built VMID 9042", got)
+	}
+	if strings.Contains(p.out.String(), "\x00") {
+		t.Errorf("sentinel leaked into prompter output: %q", p.out.String())
+	}
+}
+
+// TestPersistServer_BuildTemplateSentinel_Failure guards the other
+// half: a build failure must leave the saved template empty (not the
+// raw sentinel, not a stale value), warn, and still let persistServer
+// return success — a failed template build must never undo an
+// otherwise fully configured server.
+func TestPersistServer_BuildTemplateSentinel_Failure(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	defer stubTemplateRunFn(t, nil, errors.New("boom"))()
+
+	url := "https://pve.home.lan:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{}}
+	p := &fakePrompter{}
+	err := persistServer(context.Background(), p, cfg, persistInput{
+		canonical: url, tokenID: "a@pam!x", secret: "s", node: "pve",
+		template: createTemplateSentinel,
+		sshKey:   writePubKey(t, "ssh-ed25519 AAAA test@host\n"), user: "ubuntu",
+		nodeSSH: &config.NodeSSH{Auth: config.AuthKey, KeyPath: "/k"},
+	})
+	if err != nil {
+		t.Fatalf("persistServer: %v, want nil (a build failure is a warning, not fatal)", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Servers[url].Template; got != "" {
+		t.Errorf("saved template = %q, want empty (never the raw sentinel) after a failed build", got)
+	}
+	if !strings.Contains(p.err.String(), "building the template failed") {
+		t.Errorf("stderr = %q, want a warning about the failed build", p.err.String())
 	}
 }

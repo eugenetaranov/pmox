@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
@@ -40,6 +43,10 @@ lets you pick one, downloads it to a storage via PVE's download-url,
 boots a throw-away VM with a cloud-init snippet that installs
 qemu-guest-agent, waits for shutdown, detaches cloud-init, and
 converts the result to a template in the 9000–9099 VMID range.
+
+'pmox init' also offers to run this build inline, at its own template
+picker step — pick "Build a new Ubuntu template now" there instead of
+running this command separately afterward.
 
 Requires PVE 8.0+ and an interactive TTY.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -159,12 +166,20 @@ var templateRunFn = template.Run
 // interactive pickers for image/target storage/snippets storage, wired
 // to the given client/node/bridge/wait/upload.
 func buildTemplateOptions(cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) template.Options {
+	return buildTemplateOptionsWithWriter(cmd.ErrOrStderr(), client, node, bridge, wait, upload)
+}
+
+// buildTemplateOptionsWithWriter is buildTemplateOptions without a
+// *cobra.Command — used by 'pmox init's offer to build a template on
+// the spot (offerBuiltTemplate), which has no command to draw one
+// from. stderr is where progress reporting goes.
+func buildTemplateOptionsWithWriter(stderr io.Writer, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) template.Options {
 	return template.Options{
 		Client:   client,
 		Node:     node,
 		Bridge:   bridge,
 		Wait:     wait,
-		Progress: newTemplateProgress(cmd.ErrOrStderr()),
+		Progress: newTemplateProgress(stderr),
 		PickImage: func(entries []template.ImageEntry) (int, error) {
 			labels := make([]string, 0, len(entries))
 			for _, e := range entries {
@@ -180,4 +195,59 @@ func buildTemplateOptions(cmd *cobra.Command, client *pveclient.Client, node, br
 		},
 		UploadSnippet: upload,
 	}
+}
+
+// createTemplateDuringInitWait is the wait budget offerBuiltTemplate
+// uses — create-template's own default (see newCreateTemplateCmd)
+// isn't available here since there's no *cobra.Command to read a
+// --wait flag from.
+const createTemplateDuringInitWait = 10 * time.Minute
+
+// offerBuiltTemplate runs the full create-template build inline, right
+// after persistServer saves the server — the earliest point in 'pmox
+// init' node SSH credentials (needed for the build's snippet upload)
+// are available, since promptNodeSSH itself runs after the template
+// picker. On success it re-loads the config and patches the just-saved
+// server's template field to the new template's VMID (persistServer's
+// own cfg may be stale by the time this runs, and reloading keeps the
+// patch atomic against whatever else touched the file meanwhile).
+func offerBuiltTemplate(ctx context.Context, p prompter, in persistInput, srv *config.Server) error {
+	if in.nodeSSH == nil {
+		return errors.New("no node SSH credentials to upload the template's cloud-init snippet with")
+	}
+	client := newAPIClient(in.canonical, srv, in.secret, in.pin)
+	resolved := &server.Resolved{
+		URL:                  in.canonical,
+		Server:               srv,
+		Secret:               in.secret,
+		Source:               "pmox init",
+		NodeSSHUser:          in.nodeSSH.EffectiveUser(),
+		NodeSSHAuth:          in.nodeSSH.Auth,
+		NodeSSHKeyPath:       in.nodeSSH.KeyPath,
+		NodeSSHPassword:      in.sshPassword,
+		NodeSSHKeyPassphrase: in.sshKeyPass,
+	}
+
+	upload, closeUpload := newSnippetUploader(resolved)
+	defer closeUpload()
+
+	bridge := firstNonEmpty(in.bridge, "vmbr0")
+	opts := buildTemplateOptionsWithWriter(os.Stderr, client, in.node, bridge, createTemplateDuringInitWait, upload)
+	r, err := templateRunFn(ctx, opts)
+	if err != nil {
+		return err
+	}
+	p.Printf("created template %s (vmid=%d); set as the default template\n", r.Name, r.VMID)
+
+	fresh, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("reload config to record the new default template: %w", err)
+	}
+	if s, ok := fresh.Servers[in.canonical]; ok {
+		s.Template = strconv.Itoa(r.VMID)
+		if err := fresh.Save(); err != nil {
+			return fmt.Errorf("save new default template: %w", err)
+		}
+	}
+	return nil
 }

@@ -191,7 +191,7 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 		return err
 	}
 
-	return persistServer(p, cfg, persistInput{
+	return persistServer(ctx, p, cfg, persistInput{
 		canonical: canonical, tokenID: tokenID, secret: secret, insecure: insecure, pin: pin,
 		node: defs.node, template: defs.template, storage: defs.storage,
 		snippetStorage: defs.snippetStorage, bridge: defs.bridge,

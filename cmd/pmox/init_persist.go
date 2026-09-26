@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -38,11 +39,22 @@ type persistInput struct {
 // persistServer writes the collected server config, stores its secrets,
 // and writes the starter cloud-init template. Shared by the linear and
 // form init flows.
-func persistServer(p prompter, cfg *config.Config, in persistInput) error {
+func persistServer(ctx context.Context, p prompter, cfg *config.Config, in persistInput) error {
+	// The picker's "build a new template now" choice isn't a real
+	// template value — leave the field unset until offerBuiltTemplate
+	// (below) either patches in the built template's real VMID or, on
+	// failure, leaves it unset with a clear warning. The sentinel must
+	// never land in the saved config: anything that later reads
+	// srv.Template as a real VMID/name (e.g. launch's resolveTemplate)
+	// would just fail confusingly instead of saying "no template set".
+	template := in.template
+	if template == createTemplateSentinel {
+		template = ""
+	}
 	srv := &config.Server{
 		TokenID:        in.tokenID,
 		Node:           in.node,
-		Template:       in.template,
+		Template:       template,
 		Storage:        in.storage,
 		SnippetStorage: in.snippetStorage,
 		Bridge:         in.bridge,
@@ -70,6 +82,13 @@ func persistServer(p prompter, cfg *config.Config, in persistInput) error {
 	// Starter cloud-init is non-fatal — creds are saved; user can rerun
 	// with --regen-cloud-init.
 	writeInitialCloudInit(p, in.canonical, in.user, in.sshKey)
+
+	if in.template == createTemplateSentinel {
+		if err := offerBuiltTemplate(ctx, p, in, srv); err != nil {
+			p.Errf("warning: building the template failed: %v\n", err)
+			p.Errf("no default template is set — run 'pmox create-template' when ready, then set one with a fresh 'pmox init' (or edit the config file's 'template:' field).\n")
+		}
+	}
 	return nil
 }
 

@@ -85,10 +85,15 @@ The URL prompt is forgiving — type a bare IP (`10.0.0.5`), a hostname
 (`https`) and port (`8006`) are filled in for you. configure probes the
 endpoint **before** asking for a token: if nothing is listening it shows
 the error and re-asks the address in place (blank line or Ctrl-C to
-quit). Discovery steps with a single option (node/template/storage/
-bridge) are chosen automatically. At the SSH-key step you can **generate
-a new dedicated bootstrap key**, pick an existing one, or browse the
-filesystem for it.
+quit). Discovery steps with a single option (node/storage/bridge) are
+chosen automatically. The template step is the exception: on a
+terminal it always offers **"Build a new Ubuntu template now"**
+alongside any existing templates, even when there's only one — picking
+it runs the full `pmox create-template` build right there (once node
+SSH is set up, a few steps later) and sets the result as the default,
+instead of always requiring you to have one ready beforehand. At the
+SSH-key step you can **generate a new dedicated bootstrap key**, pick
+an existing one, or browse the filesystem for it.
 
 For the API token you can either paste one you created in the web UI, or
 let pmox **generate it for you**: choose "generate", enter a

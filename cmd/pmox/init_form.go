@@ -132,7 +132,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 			}
 			switch action {
 			case "confirm":
-				return persistServer(p, cfg, persistInput{
+				return persistServer(ctx, p, cfg, persistInput{
 					canonical: conn.canonical, tokenID: conn.tokenID, secret: conn.secret, insecure: conn.insecure,
 					pin: conn.pin, node: defs.node, template: defs.template, storage: defs.storage,
 					snippetStorage: defs.snippetStorage, bridge: defs.bridge,

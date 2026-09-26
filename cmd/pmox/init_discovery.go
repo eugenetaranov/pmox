@@ -86,6 +86,15 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client) (string
 	return pickOneAuto(p, "Default node", opts, nodes[0].Node)
 }
 
+// createTemplateSentinel is pickTemplate's value for "build a new
+// template now" instead of picking an existing one — mirrors
+// tackDefaultSentinel's convention of an internal value real user
+// input can never collide with. persistServer checks for it after
+// saving the server (the earliest point node SSH credentials, needed
+// for the build's snippet upload, are available) and runs the full
+// create-template build in its place.
+const createTemplateSentinel = "\x00pmox-create-template"
+
 func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, node string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -98,6 +107,14 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 		ans, _ := p.Prompt("Default template (VMID): ")
 		return strings.TrimSpace(ans), nil
 	}
+
+	// Offering to build one on the spot needs a real terminal — the
+	// build has its own pickers (image, target/snippets storage) and
+	// runs for several minutes. Non-interactively this must stay byte-
+	// for-byte the old behavior: pick among existing templates, or the
+	// manual-VMID prompt when none exist.
+	offerBuild := tui.Interactive()
+
 	if len(tmpls) == 0 {
 		if total == 0 {
 			p.Errf("no VMs visible on node %s — the API token cannot see any VMs.\n", node)
@@ -109,15 +126,26 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 			p.Errf("node %s has %d VMs but none are marked as templates\n", node, total)
 			p.Errf("  Fix: in the PVE web UI, right-click a VM → Convert to template.\n")
 		}
-		ans, _ := p.Prompt("Default template (VMID): ")
-		return strings.TrimSpace(ans), nil
+		if !offerBuild {
+			ans, _ := p.Prompt("Default template (VMID): ")
+			return strings.TrimSpace(ans), nil
+		}
 	}
-	opts := make([]huh.Option[string], 0, len(tmpls))
+
+	opts := make([]huh.Option[string], 0, len(tmpls)+1)
+	fallback := ""
+	if offerBuild {
+		opts = append(opts, huh.NewOption("+ Build a new Ubuntu template now (pmox create-template)", createTemplateSentinel))
+		fallback = createTemplateSentinel
+	}
 	for _, t := range tmpls {
 		label := fmt.Sprintf("%d  %s", t.VMID, t.Name)
 		opts = append(opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
 	}
-	return pickOneAuto(p, "Default template", opts, strconv.Itoa(tmpls[0].VMID))
+	if len(tmpls) > 0 {
+		fallback = strconv.Itoa(tmpls[0].VMID)
+	}
+	return pickOneAuto(p, "Default template", opts, fallback)
 }
 
 func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node string) (string, error) {
