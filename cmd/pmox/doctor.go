@@ -115,6 +115,15 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: --fix is deprecated and has no effect — pmox doctor now offers fixes automatically (see --no-fix)")
 	}
 
+	// parent is unbounded except by the process's own signal handling
+	// (Ctrl-C) — used for fix execution and for each fresh diagnostic
+	// pass's own deadline below. It must never itself carry f.timeout:
+	// a fix like rebuilding a template can legitimately take much
+	// longer than the 20s default meant for a read-only check pass (the
+	// bug this comment is here to prevent: reusing one fixed-deadline
+	// ctx across the whole flow made the fix — and then the re-verify
+	// pass after it — fail with "context deadline exceeded" no matter
+	// how long the fix actually needed).
 	parent := cmd.Context()
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
@@ -127,7 +136,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		cl.Fail("config.file", "config", "no usable pmox config found", "run 'pmox init' to create one", exitcode.ExitUserError)
 		// Nothing resolved yet, so nothing could ever be fixable here —
 		// rerun is nil, renderAndFinish skips straight to the verdict.
-		return renderAndFinish(ctx, cmd, f, cl.Finalize("", "", f.strict), nil)
+		return renderAndFinish(parent, cmd, f, cl.Finalize("", "", f.strict), nil)
 	}
 	cl.Pass("config.file", "config", "config loaded")
 	if err := cfg.Validate(); err != nil {
@@ -144,7 +153,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
-		return renderAndFinish(ctx, cmd, f, cl.Finalize("", "", f.strict), nil)
+		return renderAndFinish(parent, cmd, f, cl.Finalize("", "", f.strict), nil)
 	}
 	cl.Pass("config.server", "config", "server resolves: "+resolved.URL)
 
@@ -161,22 +170,30 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	// other command.
 	client := newAPIClient(resolved.URL, resolved.Server, resolved.Secret, storedPin(resolved.Server))
 	rerun := func() doctor.Report {
+		// A fresh deadline relative to now, not the original (long
+		// since expired after a slow fix) one above.
+		rctx, rcancel := context.WithTimeout(parent, f.timeout)
+		defer rcancel()
 		cl2 := &doctor.Checklist{}
-		executeDoctor(ctx, cl2, client, resolved, deps, f.strict, cmd, cfg)
+		executeDoctor(rctx, cl2, client, resolved, deps, f.strict, cmd, cfg)
 		return cl2.Finalize(resolved.URL, resolved.Source, f.strict)
 	}
 	executeDoctor(ctx, cl, client, resolved, deps, f.strict, cmd, cfg)
-	return renderAndFinish(ctx, cmd, f, cl.Finalize(resolved.URL, resolved.Source, f.strict), rerun)
+	return renderAndFinish(parent, cmd, f, cl.Finalize(resolved.URL, resolved.Source, f.strict), rerun)
 }
 
 // renderAndFinish renders report, then — unless suppressed, running as
 // --output json, or nothing resolved far enough to retry (rerun == nil)
-// — offers to fix anything it can. When at least one fix actually runs,
-// it re-runs the entire check pass via rerun and renders that report
-// too, so "is it fixed?" is answered by doctor itself rather than by
-// asking the user to run it again. The returned error carries the exit
-// code of whichever report is final.
-func renderAndFinish(ctx context.Context, cmd *cobra.Command, f *doctorFlags, report doctor.Report, rerun func() doctor.Report) error {
+// — offers to fix anything it can. fixCtx (not bounded by --timeout,
+// which is meant for a read-only check pass, not a fix that can
+// legitimately run for minutes) is what a fix actually runs under; each
+// call to rerun creates its own fresh, --timeout-bounded context for
+// that diagnostic pass. When at least one fix actually runs, it re-runs
+// the entire check pass via rerun and renders that report too, so "is
+// it fixed?" is answered by doctor itself rather than by asking the
+// user to run it again. The returned error carries the exit code of
+// whichever report is final.
+func renderAndFinish(fixCtx context.Context, cmd *cobra.Command, f *doctorFlags, report doctor.Report, rerun func() doctor.Report) error {
 	if err := renderDoctorReport(cmd, report); err != nil {
 		return err
 	}
@@ -194,7 +211,7 @@ func renderAndFinish(ctx context.Context, cmd *cobra.Command, f *doctorFlags, re
 		return doctorVerdict(report)
 	}
 
-	ranAny, err := offerDoctorFixes(ctx, cmd, report, confirmer)
+	ranAny, err := offerDoctorFixes(fixCtx, cmd, report, confirmer)
 	if err != nil {
 		return err
 	}

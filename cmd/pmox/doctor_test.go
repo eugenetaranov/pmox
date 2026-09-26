@@ -18,6 +18,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/template"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
@@ -880,6 +881,102 @@ func TestRunDoctor_NoFixSuppressesOffering(t *testing.T) {
 	}
 	if errb.Len() != 0 {
 		t.Errorf("stderr = %q, want a plain report with --no-fix", errb.String())
+	}
+}
+
+// TestRunDoctor_FixNotBoundedByCheckTimeout reproduces the exact bug
+// reported live: 'pmox doctor -y' correctly prompted, ran the rebuild
+// fix, and then failed with "context deadline exceeded" during template
+// creation. runDoctor built one context with --timeout (20s by
+// default, meant for the read-only check pass) and reused that same,
+// already-ticking, fixed-deadline context for the fix itself and for
+// the re-verify pass afterward — so a fix taking anywhere close to
+// --timeout, let alone the "several minutes" its own prompt warns
+// about, was doomed regardless of how long it actually needed. This
+// drives runDoctor for real (not just renderAndFinish, which doesn't
+// see runDoctor's context construction at all) with a --timeout far
+// shorter than the fix's own runtime, and confirms both the fix and
+// the re-verify pass still complete successfully.
+func TestRunDoctor_FixNotBoundedByCheckTimeout(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("PMOX_SECRET_STORE", "file")
+
+	s := pvetest.New(t)
+	s.Handle("GET", "/version", pvetest.JSON(`{"data":{"version":"8.2.4"}}`))
+	s.Handle("GET", "/access/permissions", pvetest.JSON(allPrivsJSON))
+	s.Handle("GET", "/cluster/resources", pvetest.JSON(`{"data":[{"node":"pve1","status":"online"}]}`))
+	s.Handle("GET", "/network", pvetest.JSON(`{"data":[{"iface":"vmbr0","type":"bridge"}]}`))
+	s.Handle("GET", "/storage", pvetest.JSON(`{"data":[{"storage":"local","type":"dir","content":"images,snippets","active":1,"enabled":1}]}`))
+	// The reported 500: the configured template's config is gone.
+	s.Handle("GET", "/qemu/9000/config", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		http.Error(w, `{"data":null,"message":"Configuration file does not exist"}`, http.StatusInternalServerError)
+	})
+	// Once the fix "rebuilds" (via the stubbed templateRunFn below) and
+	// doctor re-verifies against the new vmid.
+	s.Handle("GET", "/qemu/9001/config", pvetest.JSON(`{"data":{"template":"1","agent":"1"}}`))
+
+	cfg := &config.Config{}
+	srv := &config.Server{TokenID: "t@pam!x", Node: "pve1", Template: "9000", Storage: "local"}
+	if err := setup.SaveServer(cfg, s.URL(), srv, setup.Secrets{Token: "secret"}); err != nil {
+		t.Fatalf("SaveServer: %v", err)
+	}
+	writeHealthyCloudInit(t, s.URL())
+
+	origTTY := tui.StdinIsTerminal
+	tui.StdinIsTerminal = func() bool { return true } // the rebuild fix requires one
+	defer func() { tui.StdinIsTerminal = origTTY }()
+
+	origRun := templateRunFn
+	templateRunFn = func(context.Context, template.Options) (*template.Result, error) {
+		// Comfortably longer than f.timeout below — the real bug's
+		// download+bake phase takes far longer than this, but the
+		// mechanism under test (a fixed-deadline ctx reused across the
+		// whole flow) doesn't care about the actual duration, only
+		// that it exceeds --timeout.
+		time.Sleep(300 * time.Millisecond)
+		return &template.Result{VMID: 9001, Name: "ubuntu-2404-pmox-9001"}, nil
+	}
+	defer func() { templateRunFn = origRun }()
+
+	cmd, out, _ := newTestDoctorCmd()
+	// Short enough to have already elapsed by the time the fix (which
+	// sleeps well past it) finishes and the re-verify pass starts, but
+	// not so short that a real localhost HTTP round-trip could flake —
+	// this is the diagnostic pass's own budget, not the fix's.
+	err := runDoctor(cmd, &doctorFlags{yes: true, timeout: 100 * time.Millisecond})
+	// Node SSH is deliberately left unconfigured in this fixture (it's
+	// unrelated to the fix under test), so the overall report is
+	// expected to still report NOT READY on that separate, unfixed
+	// check — the bug under test is specifically about the fix/re-verify
+	// mechanism failing with a context error, not about overall
+	// readiness. Confirm that specific failure mode is gone instead.
+	if err != nil && strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("runDoctor: %v — the fix and re-verify pass must not be bounded by --timeout", err)
+	}
+	if strings.Contains(out.String(), "deadline exceeded") {
+		t.Errorf("stdout = %q, must not show a context-deadline failure", out.String())
+	}
+	if !strings.Contains(out.String(), "✗") {
+		t.Error("the first (broken) report should still have shown the failing check before the fix ran")
+	}
+	// RenderText collapses an all-pass group to a one-line summary in
+	// non-verbose mode (individual check messages, like "template
+	// resolves (vmid 9001)", aren't printed) — the Template group
+	// going from the shown "✗ ..." failure to "✓ Template (2/2 ok)" is
+	// what proves the re-verify pass actually saw the fix take effect.
+	if !strings.Contains(out.String(), "✓ Template (2/2 ok)") {
+		t.Errorf("stdout = %q, want the re-verified report to show the fixed template group passing", out.String())
+	}
+	// runDoctor loads its own *config.Config internally (not the local
+	// cfg above, which was only used to seed the on-disk file) — check
+	// what the fix actually persisted by reloading it.
+	reloaded, rerr := config.Load()
+	if rerr != nil {
+		t.Fatalf("config.Load after fix: %v", rerr)
+	}
+	if got := reloaded.Servers[s.URL()].Template; got != "9001" {
+		t.Errorf("Server.Template = %q, want 9001 (the fix should have saved it)", got)
 	}
 }
 
