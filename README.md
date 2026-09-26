@@ -330,9 +330,15 @@ Playbooks and roles live under `~/.config/pmox/tack/`:
 ```
 
 Run `pmox apply --init` to scaffold that layout with a starter playbook.
-The playbook is resolved in order: `--playbook <path>` → a profile
-argument (`<profile>.yaml`) → the profile last used for that VM
-(remembered per VM) → `playbook.yaml`.
+On a terminal it fetches the role list from
+[tackhq/tack-roles](https://github.com/tackhq/tack-roles) and shows a
+checklist (space to toggle, enter to confirm) so you pick what to
+bootstrap with instead of getting a single hardcoded example role;
+picking none scaffolds a bare starter with a commented example.
+Non-interactively, or if the list can't be fetched, it scaffolds the
+same fixed default as always. The playbook is resolved in order:
+`--playbook <path>` → a profile argument (`<profile>.yaml`) → the
+profile last used for that VM (remembered per VM) → `playbook.yaml`.
 
 ```
 pmox apply web1                 # default or remembered profile

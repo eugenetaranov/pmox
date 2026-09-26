@@ -10,6 +10,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
+	"github.com/eugenetaranov/pmox/internal/tackroles"
 )
 
 // testTackStateDir resolves the tack state dir for the test's
@@ -202,6 +203,76 @@ func TestApplyInitScaffoldsAndDoesNotClobber(t *testing.T) {
 	if string(got) != "MINE" {
 		t.Errorf("init clobbered existing playbook: %q", got)
 	}
+}
+
+// tui.Interactive() is false in a test process (no real TTY), so this
+// pins the exact non-interactive contract scripts/CI depend on:
+// runApplyInit never reaches the tack-roles.git picker or network, and
+// scaffolds the fixed, hardcoded-docker-role starterPlaybook verbatim.
+func TestApplyInitNonInteractiveScaffoldsFixedDefault(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	cmd := newApplyCmd()
+	cmd.SetContext(context.Background())
+
+	if err := runApplyInit(cmd); err != nil {
+		t.Fatalf("runApplyInit: %v", err)
+	}
+	pb := filepath.Join(cfg, "pmox", "tack", "playbook.yaml")
+	got, err := os.ReadFile(pb)
+	if err != nil {
+		t.Fatalf("read scaffolded playbook: %v", err)
+	}
+	if string(got) != starterPlaybook {
+		t.Errorf("scaffolded playbook = %q, want the fixed starterPlaybook verbatim", got)
+	}
+}
+
+func TestPickTackRoles_FetchErrorPropagatesWithoutReachingThePicker(t *testing.T) {
+	orig := fetchTackRolesFn
+	boom := errors.New("network unreachable")
+	fetchTackRolesFn = func(context.Context) ([]tackroles.Role, error) { return nil, boom }
+	t.Cleanup(func() { fetchTackRolesFn = orig })
+
+	_, err := pickTackRoles(context.Background())
+	if !errors.Is(err, boom) {
+		t.Fatalf("pickTackRoles err = %v, want it to wrap/equal the fetch error", err)
+	}
+}
+
+func TestRenderStarterPlaybook(t *testing.T) {
+	t.Run("no roles selected leaves a commented example", func(t *testing.T) {
+		got := renderStarterPlaybook(nil)
+		if !strings.Contains(got, "sudo: true") {
+			t.Error("missing sudo: true")
+		}
+		if !strings.Contains(got, "# No roles selected") {
+			t.Error("missing the no-roles-selected note")
+		}
+		if strings.Contains(got, "\nroles:\n") {
+			t.Errorf("must not emit an active roles: block when none were selected:\n%s", got)
+		}
+		if !strings.Contains(got, "Show host facts") {
+			t.Error("missing the trailing facts task")
+		}
+	})
+
+	t.Run("selected roles become role entries", func(t *testing.T) {
+		got := renderStarterPlaybook([]string{"docker", "tailscale"})
+		for _, want := range []string{
+			"sudo: true",
+			"roles:\n",
+			"  - role: https://github.com/tackhq/tack-roles.git//roles/docker\n",
+			"    tags: [docker]\n",
+			"  - role: https://github.com/tackhq/tack-roles.git//roles/tailscale\n",
+			"    tags: [tailscale]\n",
+			"Show host facts",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("playbook missing %q:\n%s", want, got)
+			}
+		}
+	})
 }
 
 // TestStarterPlaybookRoleHasRolesPrefix guards a regression: the

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -12,6 +16,8 @@ import (
 	"github.com/eugenetaranov/pmox/internal/sshkey"
 	"github.com/eugenetaranov/pmox/internal/tack"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
+	"github.com/eugenetaranov/pmox/internal/tackroles"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -57,7 +63,12 @@ grants it) and key-based SSH, so tack is told (via TACK_SUDO_NO_PROMPT /
 TACK_SSH_NO_PROMPT — env, not a flag, so nothing sensitive ever lands in
 argv) to never block waiting on a password it doesn't need.
 
-Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
+Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/. On
+a terminal it offers a checklist of the roles published in
+github.com/tackhq/tack-roles (space to toggle, enter to confirm; none
+= a bare starter) and writes the scaffolded playbook with those roles
+already wired in; non-interactively (or if the list can't be fetched)
+it scaffolds the same fixed default as before.`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runApply(cmd, args, f)
@@ -266,12 +277,85 @@ func runApplyInit(cmd *cobra.Command) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s already exists; left unchanged\n", playbook)
 		return nil
 	}
-	if err := os.WriteFile(playbook, []byte(starterPlaybook), 0o644); err != nil {
+
+	content := starterPlaybook
+	if tui.Interactive() && outputMode != "json" {
+		names, err := pickTackRoles(cmd.Context())
+		switch {
+		case errors.Is(err, tui.ErrAborted):
+			return err
+		case err != nil:
+			// Best-effort: a network hiccup or an upstream README
+			// reshuffle must not block scaffolding a working playbook.
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not list tack-roles.git roles (%v); scaffolding the default playbook\n", err)
+		default:
+			content = renderStarterPlaybook(names)
+		}
+	}
+
+	if err := os.WriteFile(playbook, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", playbook, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "scaffolded %s\n", playbook)
 	fmt.Fprintf(cmd.OutOrStdout(), "edit it, then run: pmox apply <vm>\n")
 	return nil
+}
+
+// fetchTackRolesFn is tackroles.Fetch against the real tack-roles
+// README. Overridden in tests.
+var fetchTackRolesFn = func(ctx context.Context) ([]tackroles.Role, error) {
+	return tackroles.Fetch(ctx, tackroles.DefaultReadmeURL)
+}
+
+// pickTackRoles fetches the available github.com/tackhq/tack-roles
+// roles and lets the user check zero or more to bootstrap with. An
+// empty selection is a deliberate, valid choice (a bare starter with
+// no example role) — only Ctrl-C (tui.ErrAborted) or a fetch/parse
+// failure is treated as "didn't get an answer" by the caller.
+func pickTackRoles(ctx context.Context) ([]string, error) {
+	roles, err := fetchTackRolesFn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts := make([]huh.Option[string], 0, len(roles))
+	for _, r := range roles {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%s — %s", r.Name, r.Description), r.Name))
+	}
+	return tui.SelectMultiChecked("Select tack-roles.git roles to bootstrap (space to toggle, enter to confirm; none = a bare starter)", opts)
+}
+
+// renderStarterPlaybook builds a starter playbook.yaml referencing the
+// given tack-roles.git role names (see pickTackRoles), or a bare
+// starter with a commented example when roleNames is empty.
+func renderStarterPlaybook(roleNames []string) string {
+	var b strings.Builder
+	b.WriteString("# pmox tack starter playbook — https://github.com/tackhq/tack\n")
+	b.WriteString("# Applied by 'pmox apply <vm>'. Roles may be local (./roles/<name>) or\n")
+	b.WriteString("# remote (https://github.com/tackhq/tack-roles.git//roles/<name> — note\n")
+	b.WriteString("# the roles/ path segment, since that's where tack-roles.git keeps them).\n")
+	b.WriteString("# Browse the full list: https://github.com/tackhq/tack-roles\n")
+	b.WriteString("name: pmox bootstrap\n")
+	b.WriteString("hosts: all\n")
+	b.WriteString("# Most roles need root (package installs, services, ...) — sudo: true is\n")
+	b.WriteString("# inherited by every task below.\n")
+	b.WriteString("sudo: true\n\n")
+	if len(roleNames) == 0 {
+		b.WriteString("# No roles selected. Add one, e.g.:\n")
+		b.WriteString("# roles:\n")
+		b.WriteString("#   - role: https://github.com/tackhq/tack-roles.git//roles/docker\n")
+		b.WriteString("#     tags: [docker]\n")
+	} else {
+		b.WriteString("roles:\n")
+		for _, name := range roleNames {
+			fmt.Fprintf(&b, "  - role: https://github.com/tackhq/tack-roles.git//roles/%s\n", name)
+			fmt.Fprintf(&b, "    tags: [%s]\n", name)
+		}
+	}
+	b.WriteString("\ntasks:\n")
+	b.WriteString("  - name: Show host facts\n")
+	b.WriteString("    debug:\n")
+	b.WriteString(`      msg: "configured {{ facts.hostname }} ({{ facts.os_family }})"` + "\n")
+	return b.String()
 }
 
 const starterPlaybook = `# pmox tack starter playbook — https://github.com/tackhq/tack
