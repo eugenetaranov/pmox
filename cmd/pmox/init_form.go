@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/setup"
@@ -54,11 +55,32 @@ type accessAnswers struct {
 
 // Seams so the orchestration can be tested without a TTY.
 var (
-	establishConnectionFn = establishConnection
-	collectDefaultsFn     = collectDefaults
-	collectAccessFn       = collectAccess
-	reviewFn              = runReviewForm
+	establishConnectionFn     = establishConnection
+	establishEditConnectionFn = establishEditConnection
+	collectDefaultsFn         = collectDefaults
+	collectAccessFn           = collectAccess
+	reviewFn                  = runReviewForm
 )
+
+// formState is the mutable state threaded through the connection →
+// defaults → access → review stage loop (runFormLoop) — shared by a
+// fresh 'pmox init' run (runInteractiveForm) and 'pmox config edit's
+// pre-seeded one (runEditForm).
+type formState struct {
+	conn       resolvedConn
+	defs       defaultsAnswers
+	acc        accessAnswers
+	prevConn   connInputs
+	haveDefs   bool
+	haveAccess bool
+	confirmed  map[string]bool // canonical URLs whose overwrite was OK'd
+
+	// Once the wizard has reached Review once, editing a single stage from
+	// there returns straight back to Review instead of cascading forward
+	// through the remaining stages (which would force re-entering data the
+	// user already provided).
+	reachedReview bool
+}
 
 // runInteractiveForm is the TTY init experience: phased form pages with a
 // final review that can jump back and edit before anything is written.
@@ -67,29 +89,62 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 	if err != nil {
 		return err
 	}
+	return runFormLoop(ctx, p, cfg, "connection", &formState{confirmed: map[string]bool{}})
+}
 
-	var (
-		conn       resolvedConn
-		defs       defaultsAnswers
-		acc        accessAnswers
-		prevConn   connInputs
-		haveDefs   bool
-		haveAccess bool
-		confirmed  = map[string]bool{} // canonical URLs whose overwrite was OK'd
-	)
+// runEditForm reopens the wizard for an already-configured context,
+// landing straight on Review instead of the Connection stage —
+// 'pmox config edit's whole point is never re-typing a URL/token that
+// already works. establishEditConnectionFn re-verifies the stored
+// credentials (reachability + a live token check) without asking for
+// anything; defaults/access are pre-seeded from the server's current
+// config (and, for node SSH, the keychain) so Review shows exactly
+// what's configured today, and jumping back to Defaults/Access starts
+// every field from its current value rather than a blank
+// re-discovery.
+func runEditForm(ctx context.Context, p prompter, cfg *config.Config, canonical string) error {
+	srv, ok := cfg.Servers[canonical]
+	if !ok {
+		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, canonical)
+	}
+	conn, err := establishEditConnectionFn(ctx, p, cfg, canonical)
+	if err != nil {
+		return err
+	}
 
-	// Once the wizard has reached Review once, editing a single stage from
-	// there returns straight back to Review instead of cascading forward
-	// through the remaining stages (which would force re-entering data the
-	// user already provided).
-	reachedReview := false
+	defs := defaultsAnswers{
+		node: srv.Node, template: srv.Template, storage: srv.Storage,
+		snippetStorage: srv.SnippetStorage, bridge: srv.Bridge,
+	}
+	acc := accessAnswers{sshKey: srv.SSHPubkey, user: srv.User, nodeSSH: srv.NodeSSH}
+	if srv.NodeSSH != nil {
+		switch srv.NodeSSH.Auth {
+		case config.AuthPassword:
+			if pw, perr := credstore.GetNodeSSHPassword(canonical); perr == nil {
+				acc.sshPassword = pw
+			}
+		case config.AuthKey:
+			if pp, perr := credstore.GetNodeSSHKeyPassphrase(canonical); perr == nil {
+				acc.sshKeyPass = pp
+			}
+		}
+	}
 
-	stage := "connection"
+	return runFormLoop(ctx, p, cfg, "review", &formState{
+		conn: conn, defs: defs, haveDefs: true, acc: acc, haveAccess: true,
+		reachedReview: true, confirmed: map[string]bool{canonical: true},
+	})
+}
+
+// runFormLoop drives the shared connection → defaults → access → review
+// stage machine from whichever stage the caller starts it at, mutating
+// st in place.
+func runFormLoop(ctx context.Context, p prompter, cfg *config.Config, stage string, st *formState) error {
 	for {
 		switch stage {
 		case "connection":
 			printTabs(p, "Connection")
-			rc, in, cerr := establishConnectionFn(ctx, p, cfg, prevConn, confirmed)
+			rc, in, cerr := establishConnectionFn(ctx, p, cfg, st.prevConn, st.confirmed)
 			if cerr != nil {
 				if errors.Is(cerr, errOverwriteDeclined) {
 					p.Printf("aborted; no changes\n")
@@ -97,47 +152,47 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 				}
 				return cerr
 			}
-			prevConn, conn = in, rc
-			if reachedReview {
+			st.prevConn, st.conn = in, rc
+			if st.reachedReview {
 				stage = "review"
 			} else {
 				stage = "defaults"
 			}
 		case "defaults":
 			printTabs(p, "Defaults")
-			d, derr := collectDefaultsFn(ctx, p, conn, defs, haveDefs)
+			d, derr := collectDefaultsFn(ctx, p, st.conn, st.defs, st.haveDefs)
 			if derr != nil {
 				return derr
 			}
-			defs, haveDefs = d, true
-			if reachedReview {
+			st.defs, st.haveDefs = d, true
+			if st.reachedReview {
 				stage = "review"
 			} else {
 				stage = "access"
 			}
 		case "access":
 			printTabs(p, "Access")
-			a, aerr := collectAccessFn(ctx, p, cfg, conn.canonical, acc, haveAccess)
+			a, aerr := collectAccessFn(ctx, p, cfg, st.conn.canonical, st.acc, st.haveAccess)
 			if aerr != nil {
 				return aerr
 			}
-			acc, haveAccess = a, true
+			st.acc, st.haveAccess = a, true
 			stage = "review"
 		case "review":
-			reachedReview = true
+			st.reachedReview = true
 			printTabs(p, "Review")
-			action, rerr := reviewFn(p, reviewRows(conn, defs, acc))
+			action, rerr := reviewFn(p, reviewRows(st.conn, st.defs, st.acc))
 			if rerr != nil {
 				return rerr
 			}
 			switch action {
 			case "confirm":
 				return persistServer(ctx, p, cfg, persistInput{
-					canonical: conn.canonical, tokenID: conn.tokenID, secret: conn.secret, insecure: conn.insecure,
-					pin: conn.pin, node: defs.node, template: defs.template, storage: defs.storage,
-					snippetStorage: defs.snippetStorage, bridge: defs.bridge,
-					sshKey: acc.sshKey, user: acc.user, nodeSSH: acc.nodeSSH,
-					sshPassword: acc.sshPassword, sshKeyPass: acc.sshKeyPass,
+					canonical: st.conn.canonical, tokenID: st.conn.tokenID, secret: st.conn.secret, insecure: st.conn.insecure,
+					pin: st.conn.pin, node: st.defs.node, template: st.defs.template, storage: st.defs.storage,
+					snippetStorage: st.defs.snippetStorage, bridge: st.defs.bridge,
+					sshKey: st.acc.sshKey, user: st.acc.user, nodeSSH: st.acc.nodeSSH,
+					sshPassword: st.acc.sshPassword, sshKeyPass: st.acc.sshKeyPass,
 				})
 			case "connection", "defaults", "access":
 				stage = action
@@ -152,6 +207,41 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 // already-configured server, before anything (including a server-side API
 // token) was created for it.
 var errOverwriteDeclined = errors.New("overwrite declined")
+
+// establishEditConnection re-verifies an already-configured context's
+// stored credentials — reachability, then a live token check — without
+// asking for anything. This is 'pmox config edit's answer to "always
+// re-probe + re-auth, but never re-ask for credentials that already
+// work": any failure names the specific problem and points at
+// 'pmox init' to fix it, since repairing a broken connection isn't
+// what edit mode is for.
+func establishEditConnection(ctx context.Context, p prompter, cfg *config.Config, canonical string) (resolvedConn, error) {
+	srv, ok := cfg.Servers[canonical]
+	if !ok {
+		return resolvedConn{}, fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, canonical)
+	}
+	secret, err := credstore.Get(canonical)
+	if err != nil {
+		return resolvedConn{}, fmt.Errorf("load stored token for %s: %w — run 'pmox init' to reconnect", canonical, err)
+	}
+
+	insecure, ok := probeURL(ctx, p, canonical)
+	if !ok {
+		return resolvedConn{}, fmt.Errorf("%w: %s is not reachable — run 'pmox init' to fix the connection", exitcode.ErrUserInput, canonical)
+	}
+	pin, err := resolveInitPin(ctx, p, cfg, canonical, insecure, "")
+	if err != nil {
+		return resolvedConn{}, err
+	}
+	insecure, err = validateCredentials(ctx, p, canonical, srv.TokenID, secret, insecure, pin)
+	if err != nil {
+		return resolvedConn{}, fmt.Errorf("stored token for %s no longer works: %w — run 'pmox init' to reconnect", canonical, err)
+	}
+	return resolvedConn{
+		canonical: canonical, tokenID: srv.TokenID, secret: secret, insecure: insecure, pin: pin,
+		client: newInitClient(canonical, srv.TokenID, secret, insecure, pin),
+	}, nil
+}
 
 // establishConnection runs the Connection form, confirms overwrite of an
 // already-configured server, then probes + authenticates — looping back to
@@ -288,9 +378,13 @@ func runConnectionForm(p prompter, prev connInputs) (connInputs, error) {
 }
 
 // collectDefaults discovers and selects node/template/storage/snippet/bridge
-// (reusing the auto-selecting pickers).
-func collectDefaults(ctx context.Context, p prompter, conn resolvedConn, _ defaultsAnswers, _ bool) (defaultsAnswers, error) {
-	return discoverDefaults(ctx, p, conn.client)
+// (reusing the auto-selecting pickers). prev seeds each picker with the
+// answer from a previous pass through this stage — earlier in this
+// same wizard run, or (for 'pmox config edit') the value already
+// configured on disk — so revisiting a choice starts from what's
+// already set rather than a blank re-discovery.
+func collectDefaults(ctx context.Context, p prompter, conn resolvedConn, prev defaultsAnswers, _ bool) (defaultsAnswers, error) {
+	return discoverDefaults(ctx, p, conn.client, prev)
 }
 
 // collectAccess gathers the SSH key, default user, and node SSH creds.

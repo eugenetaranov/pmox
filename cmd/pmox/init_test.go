@@ -21,6 +21,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/template"
 	"github.com/eugenetaranov/pmox/internal/tui"
@@ -308,6 +309,77 @@ func TestValidateCredentialsUnauthorizedReturnsError(t *testing.T) {
 	_, err := validateCredentials(context.Background(), p, srv.URL, "pmox@pve!t", "sekret", false, "")
 	if !errors.Is(err, pveclient.ErrUnauthorized) {
 		t.Errorf("want ErrUnauthorized, got %v", err)
+	}
+}
+
+// establishEditConnection is 'pmox config edit's answer to "always
+// re-probe + re-auth, but never re-ask for credentials that already
+// work" — these guard that it reuses the stored token as-is (no
+// prompting) and names the specific problem (pointing at 'pmox init')
+// on any failure, since repairing a broken connection isn't edit's job.
+func TestEstablishEditConnection_HappyPathReusesStoredToken(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PMOX_SECRET_STORE", "file")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"version": "8.2"}})
+	}))
+	t.Cleanup(srv.Close)
+	stubProbe(t, true, pveclient.Reachable)
+
+	cfg := &config.Config{Servers: map[string]*config.Server{srv.URL: {TokenID: "a@pam!x"}}}
+	if err := credstore.Set(srv.URL, "sekret"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := establishEditConnection(context.Background(), &fakePrompter{}, cfg, srv.URL)
+	if err != nil {
+		t.Fatalf("establishEditConnection: %v", err)
+	}
+	if conn.canonical != srv.URL || conn.tokenID != "a@pam!x" || conn.secret != "sekret" {
+		t.Errorf("conn = %+v, want the stored token/secret reused as-is", conn)
+	}
+}
+
+func TestEstablishEditConnection_UnknownContext(t *testing.T) {
+	cfg := &config.Config{Servers: map[string]*config.Server{}}
+	_, err := establishEditConnection(context.Background(), &fakePrompter{}, cfg, "https://nope.example:8006/api2/json")
+	if !errors.Is(err, exitcode.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestEstablishEditConnection_UnreachablePointsAtInit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PMOX_SECRET_STORE", "file")
+	stubProbe(t, true, pveclient.ReachUnreachable)
+	url := "https://pve.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{url: {TokenID: "a@pam!x"}}}
+	if err := credstore.Set(url, "sekret"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := establishEditConnection(context.Background(), &fakePrompter{}, cfg, url)
+	if err == nil || !strings.Contains(err.Error(), "not reachable") || !strings.Contains(err.Error(), "pmox init") {
+		t.Errorf("err = %v, want a not-reachable message pointing at 'pmox init'", err)
+	}
+}
+
+func TestEstablishEditConnection_StaleTokenPointsAtInit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PMOX_SECRET_STORE", "file")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	stubProbe(t, true, pveclient.Reachable)
+	cfg := &config.Config{Servers: map[string]*config.Server{srv.URL: {TokenID: "a@pam!x"}}}
+	if err := credstore.Set(srv.URL, "sekret"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := establishEditConnection(context.Background(), &fakePrompter{}, cfg, srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "no longer works") || !strings.Contains(err.Error(), "pmox init") {
+		t.Errorf("err = %v, want a no-longer-works message pointing at 'pmox init'", err)
 	}
 }
 
@@ -673,7 +745,7 @@ func TestPickSnippetStorage_SingleMatch(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl,snippets"},
 	}}
 	p := &fakePrompter{}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -698,7 +770,7 @@ func TestPickSnippetStorage_MultiMatchUsesPicker(t *testing.T) {
 		{Storage: "nfs-shared", Type: "nfs", Content: "snippets,backup"},
 	}}
 	p := &fakePrompter{}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -716,7 +788,7 @@ func TestPickSnippetStorage_ZeroMatchEnableYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso,vztmpl"},
 	}}
 	p := &fakePrompter{inputs: []string{"y"}}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -736,7 +808,7 @@ func TestPickSnippetStorage_ZeroMatchEnableEnterDefaultsYes(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{""}}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -753,7 +825,7 @@ func TestPickSnippetStorage_ZeroMatchEnableNo(t *testing.T) {
 		{Storage: "local", Type: "dir", Content: "iso"},
 	}}
 	p := &fakePrompter{inputs: []string{"n"}}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -773,7 +845,7 @@ func TestPickSnippetStorage_ZeroMatchNoCapableStorage(t *testing.T) {
 		{Storage: "vm-data", Type: "lvmthin", Content: "images,rootdir"},
 	}}
 	p := &fakePrompter{}
-	got, err := pickSnippetStorage(context.Background(), p, fc, "pve")
+	got, err := pickSnippetStorage(context.Background(), p, fc, "pve", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -934,7 +1006,7 @@ func TestPickTemplate_NonInteractiveUnchanged(t *testing.T) {
 		client := pveclient.New(srv.URL, "root@pam!x", "s", false)
 		p := &fakePrompter{}
 
-		got, err := pickTemplate(context.Background(), p, client, "pve")
+		got, err := pickTemplate(context.Background(), p, client, "pve", "")
 		if err != nil {
 			t.Fatalf("pickTemplate: %v", err)
 		}
@@ -954,7 +1026,7 @@ func TestPickTemplate_NonInteractiveUnchanged(t *testing.T) {
 		client := pveclient.New(srv.URL, "root@pam!x", "s", false)
 		p := &fakePrompter{inputs: []string{"9050"}}
 
-		got, err := pickTemplate(context.Background(), p, client, "pve")
+		got, err := pickTemplate(context.Background(), p, client, "pve", "")
 		if err != nil {
 			t.Fatalf("pickTemplate: %v", err)
 		}
@@ -962,6 +1034,63 @@ func TestPickTemplate_NonInteractiveUnchanged(t *testing.T) {
 			t.Errorf("got %q, want the typed 9050", got)
 		}
 	})
+
+	// tui.Interactive() is false in a test process, so a multi-option
+	// picker always takes SelectOne's broken-terminal fallback path —
+	// exactly where the "prefer the already-configured value" fix
+	// (for 'pmox config edit' revisiting a stage) lives.
+	t.Run("current preferred over the first listed template", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"vmid":"9000","name":"ubuntu-a-pmox-9000","template":"1"},{"vmid":"9001","name":"ubuntu-b-pmox-9001","template":"1"}]}`))
+		}))
+		defer srv.Close()
+		client := pveclient.New(srv.URL, "root@pam!x", "s", false)
+		p := &fakePrompter{}
+
+		got, err := pickTemplate(context.Background(), p, client, "pve", "9001")
+		if err != nil {
+			t.Fatalf("pickTemplate: %v", err)
+		}
+		if got != "9001" {
+			t.Errorf("got %q, want the current value 9001, not the first-listed 9000", got)
+		}
+	})
+}
+
+// tui.Interactive() is false in a test process, so these all exercise
+// SelectOne's broken-terminal fallback path — where "prefer the
+// already-configured value over the first listed option" (needed for
+// 'pmox config edit' revisiting a stage) actually lives.
+func TestPickNode_PrefersCurrentOverFirstListed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"node":"a-node","status":"online"},{"node":"z-node","status":"online"}]}`))
+	}))
+	defer srv.Close()
+	client := pveclient.New(srv.URL, "root@pam!x", "s", false)
+
+	got, err := pickNode(context.Background(), &fakePrompter{}, client, "z-node")
+	if err != nil {
+		t.Fatalf("pickNode: %v", err)
+	}
+	if got != "z-node" {
+		t.Errorf("got %q, want the current value z-node, not the alphabetically-first a-node", got)
+	}
+}
+
+func TestPickStorage_PrefersCurrentOverFirstListed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"storage":"a-pool","type":"dir","content":"images"},{"storage":"z-pool","type":"dir","content":"images"}]}`))
+	}))
+	defer srv.Close()
+	client := pveclient.New(srv.URL, "root@pam!x", "s", false)
+
+	got, err := pickStorage(context.Background(), &fakePrompter{}, client, "pve", "z-pool")
+	if err != nil {
+		t.Fatalf("pickStorage: %v", err)
+	}
+	if got != "z-pool" {
+		t.Errorf("got %q, want the current value z-pool, not the alphabetically-first a-pool", got)
+	}
 }
 
 // TestPersistServer_BuildTemplateSentinel_Success guards against the

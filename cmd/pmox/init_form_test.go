@@ -126,3 +126,81 @@ func TestRunInteractiveFormCancelWritesNothing(t *testing.T) {
 		t.Errorf("cancel should write nothing, got %+v", cfg.Servers)
 	}
 }
+
+// stubEditFormSeams is stubFormSeams plus establishEditConnectionFn,
+// seeded to reuse formURL's already-configured token as-is (no
+// re-typing) — matching what establishEditConnection actually does.
+func stubEditFormSeams(t *testing.T, reviewActions ...string) (defaultsCalls, accessCalls *int) {
+	t.Helper()
+	defaultsCalls, accessCalls = stubFormSeams(t, reviewActions...)
+	origEdit := establishEditConnectionFn
+	establishEditConnectionFn = func(_ context.Context, _ prompter, _ *config.Config, canonical string) (resolvedConn, error) {
+		return resolvedConn{canonical: canonical, tokenID: "root@pam!pmox", secret: "sek", insecure: false}, nil
+	}
+	t.Cleanup(func() { establishEditConnectionFn = origEdit })
+	return defaultsCalls, accessCalls
+}
+
+func seedEditableServer(t *testing.T) {
+	t.Helper()
+	cfg := &config.Config{Servers: map[string]*config.Server{
+		formURL: {
+			TokenID: "root@pam!pmox", Node: "pve", Template: "9000",
+			Storage: "local-lvm", SnippetStorage: "local", Bridge: "vmbr0",
+		},
+	}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+}
+
+// runEditForm must land directly on Review — never Connection, Defaults,
+// or Access — since its whole point is skipping the parts that haven't
+// changed. Confirming immediately persists the pre-seeded (current)
+// values unchanged.
+func TestRunEditForm_StartsAtReviewAndConfirmWrites(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedEditableServer(t)
+	defaultsCalls, accessCalls := stubEditFormSeams(t, "confirm")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runEditForm(context.Background(), &fakePrompter{}, cfg, formURL); err != nil {
+		t.Fatalf("runEditForm: %v", err)
+	}
+	if *defaultsCalls != 0 || *accessCalls != 0 {
+		t.Errorf("collectDefaults/collectAccess called %d/%d times, want 0/0 (edit landed straight on review)", *defaultsCalls, *accessCalls)
+	}
+	reloaded, _ := config.Load()
+	srv := reloaded.Servers[formURL]
+	if srv == nil || srv.Template != "9000" || srv.Storage != "local-lvm" {
+		t.Errorf("server after confirm-without-editing = %+v, want the original values unchanged", srv)
+	}
+}
+
+// Revisiting Defaults from Review's pre-seeded state must offer the
+// server's current values (not a blank re-discovery) — collectDefaults
+// receives them as its prev/haveDefs args, which the stub in
+// stubFormSeams doesn't itself inspect, but the seeding here proves
+// runEditForm actually populated formState.defs before the loop starts.
+func TestRunEditForm_CanRevisitDefaultsFromPrefilledReview(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedEditableServer(t)
+	defaultsCalls, accessCalls := stubEditFormSeams(t, "defaults", "confirm")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runEditForm(context.Background(), &fakePrompter{}, cfg, formURL); err != nil {
+		t.Fatalf("runEditForm: %v", err)
+	}
+	if *defaultsCalls != 1 {
+		t.Errorf("collectDefaults called %d times, want 1", *defaultsCalls)
+	}
+	if *accessCalls != 0 {
+		t.Errorf("collectAccess called %d times, want 0 (editing defaults shouldn't re-run access)", *accessCalls)
+	}
+}

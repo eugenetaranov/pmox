@@ -14,9 +14,11 @@ import (
 )
 
 // newConfigCmd is the `pmox config` group: kubectl-style management of
-// contexts (configured servers) and the current context. Interactive
-// setup stays under `pmox init`; this group is the scriptable
-// surface for listing, switching, renaming, and removing contexts.
+// contexts (configured servers) and the current context. First-time
+// interactive setup stays under `pmox init`; this group is mostly the
+// scriptable surface for listing, switching, renaming, and removing
+// contexts, plus one interactive exception — `edit`, for changing an
+// already-configured context without redoing connection/token setup.
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -25,15 +27,16 @@ func newConfigCmd() *cobra.Command {
 kubectl-style. A context is a configured server (URL + token + defaults +
 node SSH), addressed by a short name.
 
-Interactive setup lives in 'pmox init'. Use this group to list,
-switch, rename, and remove contexts. Set a current context so multi-server
-setups don't need --context (or --server) every time.
+First-time interactive setup lives in 'pmox init'. Use this group to
+list, switch, rename, remove, or edit contexts. Set a current context
+so multi-server setups don't need --context (or --server) every time.
 
 Examples:
   pmox config get-contexts
   pmox config use-context prod
   pmox config current-context
   pmox config rename-context 192.168.0.185 prod
+  pmox config edit prod
   pmox config delete-context lab`,
 	}
 	cmd.AddCommand(
@@ -41,6 +44,7 @@ Examples:
 		newUseContextCmd(),
 		newCurrentContextCmd(),
 		newRenameContextCmd(),
+		newEditContextCmd(),
 		newDeleteContextCmd(),
 		newConfigPathCmd(),
 	)
@@ -237,6 +241,56 @@ func newDeleteContextCmd() *cobra.Command {
 			return runRemove(newStdPrompter(ctx), c.URL)
 		},
 	}
+}
+
+func newEditContextCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit [context]",
+		Short: "Interactively edit an already-configured context",
+		Long: `Reopens the 'pmox init' wizard for an already-configured context,
+landing straight on the Review screen instead of redoing the whole
+connection/token setup. The stored token is reused as-is; reachability
+and the token are re-verified first, with nothing re-typed — if either
+is broken, this points you at 'pmox init' to fix the connection
+instead, since that isn't what edit is for.
+
+From Review you can jump back to Defaults (node/template/storage/
+snippet-storage/bridge) or Access (SSH key/user/node SSH) and change
+anything; every field starts pre-filled with its current value instead
+of a blank re-discovery. Nothing is written until you confirm.
+
+With no argument, picks the context interactively when more than one
+is configured. Requires an interactive terminal.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConfigEdit(cmd, args)
+		},
+	}
+}
+
+func runConfigEdit(cmd *cobra.Command, args []string) error {
+	if !interactiveFn() {
+		return fmt.Errorf("%w: 'pmox config edit' requires an interactive terminal", exitcode.ErrUserInput)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	name := ""
+	if len(args) == 1 {
+		name = args[0]
+	} else {
+		name, err = pickContext(cfg)
+		if err != nil {
+			return err
+		}
+	}
+	c, ok := cfg.ContextByName(name)
+	if !ok {
+		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, name)
+	}
+	ctx := cmd.Context()
+	return runEditForm(ctx, newStdPrompter(ctx), cfg, c.URL)
 }
 
 // pickContext resolves a context name interactively, honoring the

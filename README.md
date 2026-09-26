@@ -139,7 +139,7 @@ just for readability.
 | Command | Summary | Example |
 | --- | --- | --- |
 | `init` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox init` |
-| `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`delete-context`) | `pmox config use-context prod` |
+| `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`edit`/`delete-context`) | `pmox config use-context prod` |
 | `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 | `cleanup` | Report/remove pmox leftovers: orphaned snippets + stale local state | `pmox cleanup --apply` |
@@ -445,6 +445,7 @@ pmox config get-contexts             # table of contexts; current marked *
 pmox config use-context prod         # switch the current context
 pmox config current-context          # print the current context
 pmox config rename-context 192.168.0.185 prod
+pmox config edit prod                # change its defaults/access, no re-auth
 pmox config delete-context lab       # forget a context + its secrets
 pmox config path                     # print the config file location
 ```
@@ -452,6 +453,19 @@ pmox config path                     # print the config file location
 A new context's name defaults to its host; `rename-context` gives it a
 friendly name. Target a specific context for one command with `--context
 <name>` (or `--server <name|url>`).
+
+`pmox config edit [context]` is the one interactive command in this
+group — it reopens the `pmox init` wizard for an already-configured
+context, landing straight on the **Review** screen instead of redoing
+the whole connection/token dance. The stored token is reused as-is;
+reachability and the token are re-verified first (nothing re-typed) —
+either failing points you at `pmox init` to fix the connection, since
+repairing it isn't what `edit` is for. From Review you can jump back to
+Defaults (node/template/storage/snippet-storage/bridge) or Access (SSH
+key/user/node SSH) and change anything; every field starts pre-filled
+with its current value instead of a blank re-discovery, and nothing is
+written until you confirm. Omit `[context]` to pick one interactively
+when more than one is configured.
 
 Each command resolves its target in this order: `--server` (name or URL)
 → `--context` (name) → `PMOX_SERVER` → `PMOX_CONTEXT` → the current

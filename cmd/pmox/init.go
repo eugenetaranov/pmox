@@ -166,7 +166,7 @@ func runInteractiveLinear(ctx context.Context, p prompter) error {
 
 	// Steps 7–10: auto-discovery pickers
 	client := newInitClient(canonical, tokenID, secret, insecure, pin)
-	defs, err := discoverDefaults(ctx, p, client)
+	defs, err := discoverDefaults(ctx, p, client, defaultsAnswers{})
 	if err != nil {
 		return err
 	}

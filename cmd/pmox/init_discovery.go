@@ -20,20 +20,28 @@ func discoveryCtx(parent context.Context) (context.Context, context.CancelFunc) 
 }
 
 // discoverDefaults runs the node/template/storage/snippet/bridge pickers
-// in order. A picker abort (tui.ErrAborted) or a context cancellation
-// (e.g. Ctrl-C at a fallback text prompt) stops the sequence and is
-// reported as a user-input error.
-func discoverDefaults(ctx context.Context, p prompter, client *pveclient.Client) (defaultsAnswers, error) {
+// in order. current seeds each picker's highlighted option with the
+// value from a previous pass through this stage — either earlier in
+// this same wizard run, or (for 'pmox config edit') what's already
+// configured on disk — so revisiting a choice starts from what's
+// already set instead of always the first listed option. A zero-value
+// current picks exactly as before: no option pre-highlighted beyond
+// the picker's own listed order.
+//
+// A picker abort (tui.ErrAborted) or a context cancellation (e.g.
+// Ctrl-C at a fallback text prompt) stops the sequence and is reported
+// as a user-input error.
+func discoverDefaults(ctx context.Context, p prompter, client *pveclient.Client, current defaultsAnswers) (defaultsAnswers, error) {
 	var d defaultsAnswers
 	steps := []struct {
 		dst  *string
 		pick func() (string, error)
 	}{
-		{&d.node, func() (string, error) { return pickNode(ctx, p, client) }},
-		{&d.template, func() (string, error) { return pickTemplate(ctx, p, client, d.node) }},
-		{&d.storage, func() (string, error) { return pickStorage(ctx, p, client, d.node) }},
-		{&d.snippetStorage, func() (string, error) { return pickSnippetStorage(ctx, p, client, d.node) }},
-		{&d.bridge, func() (string, error) { return pickBridge(ctx, p, client, d.node) }},
+		{&d.node, func() (string, error) { return pickNode(ctx, p, client, current.node) }},
+		{&d.template, func() (string, error) { return pickTemplate(ctx, p, client, d.node, current.template) }},
+		{&d.storage, func() (string, error) { return pickStorage(ctx, p, client, d.node, current.storage) }},
+		{&d.snippetStorage, func() (string, error) { return pickSnippetStorage(ctx, p, client, d.node, current.snippetStorage) }},
+		{&d.bridge, func() (string, error) { return pickBridge(ctx, p, client, d.node, current.bridge) }},
 	}
 	for _, s := range steps {
 		v, err := s.pick()
@@ -59,7 +67,7 @@ func pickOneAuto(p prompter, title string, opts []huh.Option[string], fallback s
 	return tui.SelectOne(title, opts, fallback)
 }
 
-func pickNode(ctx context.Context, p prompter, client *pveclient.Client) (string, error) {
+func pickNode(ctx context.Context, p prompter, client *pveclient.Client, current string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -83,7 +91,7 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client) (string
 		}
 		opts = append(opts, huh.NewOption(label, n.Node))
 	}
-	return pickOneAuto(p, "Default node", opts, nodes[0].Node)
+	return pickOneAuto(p, "Default node", opts, firstNonEmpty(current, nodes[0].Node))
 }
 
 // createTemplateSentinel is pickTemplate's value for "build a new
@@ -95,7 +103,7 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client) (string
 // create-template build in its place.
 const createTemplateSentinel = "\x00pmox-create-template"
 
-func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, node string) (string, error) {
+func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, node, current string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -138,17 +146,24 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 		opts = append(opts, huh.NewOption("+ Build a new Ubuntu template now (pmox create-template)", createTemplateSentinel))
 		fallback = createTemplateSentinel
 	}
+	haveCurrent := false
 	for _, t := range tmpls {
 		label := fmt.Sprintf("%d  %s", t.VMID, t.Name)
 		opts = append(opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
+		if current != "" && strconv.Itoa(t.VMID) == current {
+			haveCurrent = true
+		}
 	}
 	if len(tmpls) > 0 {
 		fallback = strconv.Itoa(tmpls[0].VMID)
 	}
+	if haveCurrent {
+		fallback = current
+	}
 	return pickOneAuto(p, "Default template", opts, fallback)
 }
 
-func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node string) (string, error) {
+func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node, current string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -176,7 +191,7 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 		label := storageLabel(s)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
-	return pickOneAuto(p, "Default storage", opts, usable[0].Storage)
+	return pickOneAuto(p, "Default storage", opts, firstNonEmpty(current, usable[0].Storage))
 }
 
 // snippetCapableTypes lists the PVE storage backends that can host the
@@ -202,7 +217,7 @@ var selectSnippetStorageFn = tui.SelectOne
 // cloud-init snippets. Decision tree: exactly one snippet-capable
 // storage → silent; multiple → TUI picker; zero → offer to enable
 // snippets on an existing dir-backed storage.
-func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePicker, node string) (string, error) {
+func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePicker, node, current string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -227,7 +242,7 @@ func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePi
 		label := storageLabel(s)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
-	return selectSnippetStorageFn("Snippet storage", opts, matches[0].Storage)
+	return selectSnippetStorageFn("Snippet storage", opts, firstNonEmpty(current, matches[0].Storage))
 }
 
 // offerEnableSnippets is the zero-match branch of pickSnippetStorage.
@@ -278,7 +293,7 @@ func printSnippetManualRemediation(p prompter) {
 	p.Errf("       'pmox init' to record it.\n")
 }
 
-func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node string) (string, error) {
+func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node, current string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -300,5 +315,5 @@ func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node 
 	for _, b := range bridges {
 		opts = append(opts, huh.NewOption(b.Iface, b.Iface))
 	}
-	return pickOneAuto(p, "Default bridge", opts, bridges[0].Iface)
+	return pickOneAuto(p, "Default bridge", opts, firstNonEmpty(current, bridges[0].Iface))
 }

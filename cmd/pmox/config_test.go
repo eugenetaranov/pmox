@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 )
 
 func seedTwoServers(t *testing.T) {
@@ -183,6 +186,32 @@ func TestDeleteContext_ClearsCurrent(t *testing.T) {
 	}
 	if _, ok := reloaded.Servers["https://b.lan:8006/api2/json"]; ok {
 		t.Error("server b should have been removed")
+	}
+}
+
+func TestRunConfigEdit_NonInteractiveRejected(t *testing.T) {
+	orig := interactiveFn
+	interactiveFn = func() bool { return false }
+	t.Cleanup(func() { interactiveFn = orig })
+
+	cmd, _ := newCapturedCmd()
+	err := runConfigEdit(cmd, []string{"anything"})
+	if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Fatalf("err = %v, want an interactive-terminal-required message", err)
+	}
+}
+
+func TestRunConfigEdit_UnknownContext(t *testing.T) {
+	orig := interactiveFn
+	interactiveFn = func() bool { return true }
+	t.Cleanup(func() { interactiveFn = orig })
+	seedTwoServers(t)
+
+	cmd, _ := newCapturedCmd()
+	cmd.SetContext(context.Background())
+	err := runConfigEdit(cmd, []string{"no-such-context"})
+	if !errors.Is(err, exitcode.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 

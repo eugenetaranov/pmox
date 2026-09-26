@@ -55,6 +55,11 @@ func Interactive() bool {
 // other picker failure (or an empty option list) yields the fallback.
 // Kept for the init/create-template wizards, where a broken terminal
 // accepts the default; standalone target pickers should use Select.
+//
+// When fallback matches one of opts' values, the picker opens with that
+// option already highlighted — e.g. 'pmox config edit' seeding it with
+// the currently configured value, so revisiting a choice starts from
+// what's already set instead of always the first listed option.
 func SelectOne(title string, opts []huh.Option[string], fallback string) (string, error) {
 	if len(opts) == 0 {
 		return fallback, nil
@@ -62,7 +67,14 @@ func SelectOne(title string, opts []huh.Option[string], fallback string) (string
 	if len(opts) == 1 {
 		return opts[0].Value, nil
 	}
-	selected, err := runPicker(opts[0].Value, func(v *string) huh.Field {
+	initial := opts[0].Value
+	for _, o := range opts {
+		if o.Value == fallback {
+			initial = fallback
+			break
+		}
+	}
+	selected, err := runPicker(initial, func(v *string) huh.Field {
 		return selectField(title, opts, v)
 	})
 	if errors.Is(err, ErrAborted) {
