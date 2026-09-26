@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -182,6 +183,34 @@ func stubProbe(t *testing.T, interactive bool, statuses ...pveclient.ReachStatus
 	}
 	interactiveFn = func() bool { return interactive }
 	t.Cleanup(func() { probeEndpoint, interactiveFn = origProbe, origInteractive })
+}
+
+// The "nothing responding" message used to swallow the actual transport
+// error entirely, making a real connection failure (refused, timeout,
+// no route to host, ...) indistinguishable from any other — this pins
+// it being surfaced, exercising the real pveclient.Probe (not a stub)
+// against a closed local port for a genuine error to surface.
+func TestProbeURL_UnreachableSurfacesUnderlyingError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	} // nothing listening now — the next dial is refused
+
+	p := &fakePrompter{}
+	_, ok := probeURL(context.Background(), p, "https://"+addr+"/api2/json")
+	if ok {
+		t.Fatal("probeURL ok=true against a closed port")
+	}
+	if !strings.Contains(p.err.String(), "nothing responding") {
+		t.Errorf("stderr = %q, want the nothing-responding message", p.err.String())
+	}
+	if !strings.Contains(p.err.String(), "connection refused") {
+		t.Errorf("stderr = %q, want the underlying error (connection refused) surfaced, not swallowed", p.err.String())
+	}
 }
 
 func TestPromptReachableURLRetriesThenSucceeds(t *testing.T) {

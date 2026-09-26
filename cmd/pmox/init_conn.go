@@ -83,7 +83,7 @@ func probeURL(ctx context.Context, p prompter, canonical string) (insecure bool,
 		p.Errf("%s responded but does not look like a Proxmox VE API — check the address\n", canonical)
 		return false, false
 	default: // ReachUnreachable / ReachUnknown
-		p.Errf("nothing responding at %s — check the address and that Proxmox is running\n", hostPort(canonical))
+		p.Errf("nothing responding at %s — check the address and that Proxmox is running (%v)\n", hostPort(canonical), r.Err)
 		return false, false
 	}
 }
