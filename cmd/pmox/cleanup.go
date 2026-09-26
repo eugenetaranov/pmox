@@ -20,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -46,6 +47,7 @@ func newCleanupCmd() *cobra.Command {
 		skip             []string
 		includeTemplates bool
 		includeVMs       bool
+		include          []string
 	)
 	cmd := &cobra.Command{
 		Use:   "cleanup",
@@ -63,16 +65,20 @@ func newCleanupCmd() *cobra.Command {
   api-token     server-side "pmox*" API tokens not used by any config entry
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
   vm            pmox-tagged VMs abandoned mid-launch (DESTRUCTIVE — deletes VMs)
+  context       configured server contexts (DESTRUCTIVE — like 'pmox config delete-context')
+  tack-config   the whole ~/.config/pmox/tack/ dir, playbooks and roles (DESTRUCTIVE)
 
 Dry-run by default. On a terminal it shows a checklist to pick
-categories (non-destructive ones pre-checked, template/vm unchecked),
-lists what it found, then asks "Remove N item(s) now? [y/N]" — say y
-to delete right there, no need to re-run with --apply. Pass --apply to
-skip that prompt and delete unconditionally (for scripts/CI; also
-skips the checklist non-interactively). Non-interactively, use --only /
---skip; add --include-templates / --include-vms to enable those two
-destructive categories. Every other VM is never touched by cleanup
-(use 'pmox delete').
+categories (non-destructive ones pre-checked, the four destructive
+ones above unchecked), lists what it found, then asks "Remove N
+item(s) now? [y/N]" — say y to delete right there, no need to re-run
+with --apply. Pass --apply to skip that prompt and delete
+unconditionally (for scripts/CI; also skips the checklist
+non-interactively). Non-interactively, use --only / --skip; add
+--include <cats> (comma-separated) to enable specific destructive
+categories — --include-templates / --include-vms remain as shorthand
+for --include template / --include vm. Every VM outside the template
+and vm categories is never touched by cleanup (use 'pmox delete').
 
 The vm category flags pmox-tagged VMs missing the "pmox-ready" tag
 (set once a launch/clone completes, right before any post-create
@@ -80,12 +86,21 @@ hook) — either abandoned mid-launch by an earlier failure, or (rarely)
 a launch/clone still running right now. Review the listed VMs before
 removing.
 
+context and tack-config are not leftover cruft — they remove active
+configuration (a configured server, or your hand-edited tack
+playbooks/roles) rather than orphaned artifacts. They exist here so a
+full teardown doesn't need a separate command per piece, but they get
+the same opt-in, review-before-removing treatment as template/vm.
+
 Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
 are not covered here; they are cleared at removal time by
 'pmox init --remove' / 'pmox config delete-context'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates, includeVMs: includeVMs})
+			return runCleanup(cmd, cleanupOpts{
+				apply: apply, only: only, skip: skip,
+				includeTemplates: includeTemplates, includeVMs: includeVMs, include: include,
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "remove without asking (default: dry-run report; on a terminal, asks y/N instead of requiring a re-run)")
@@ -93,6 +108,7 @@ are not covered here; they are cleared at removal time by
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
 	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
 	cmd.Flags().BoolVar(&includeVMs, "include-vms", false, "include the destructive 'vm' category (deletes VMs abandoned mid-launch)")
+	cmd.Flags().StringSliceVar(&include, "include", nil, "include these opt-in destructive categories (comma-separated: template, vm, context, tack-config)")
 	return cmd
 }
 
@@ -102,6 +118,7 @@ type cleanupOpts struct {
 	skip             []string
 	includeTemplates bool
 	includeVMs       bool
+	include          []string
 }
 
 // cleanupCategory describes a removable-leftover category.
@@ -124,6 +141,8 @@ var cleanupCategories = []cleanupCategory{
 	{"known-host", "Stale known_hosts pins", false},
 	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
 	{"api-token", "Orphaned pmox API tokens", false},
+	{"context", "Configured server contexts (DESTRUCTIVE)", true},
+	{"tack-config", "~/.config/pmox/tack (playbooks + roles) (DESTRUCTIVE)", true},
 }
 
 func categoryByKey(k string) (cleanupCategory, bool) {
@@ -144,7 +163,9 @@ var selectCategoriesFn = tui.SelectMultiChecked
 // minus --skip, plus template when --include-templates; an interactive
 // checklist (when no selection flags and on a TTY) overrides the set.
 func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[string]bool, error) {
-	for _, k := range append(append([]string{}, o.only...), o.skip...) {
+	toValidate := append(append([]string{}, o.only...), o.skip...)
+	toValidate = append(toValidate, o.include...)
+	for _, k := range toValidate {
 		if _, ok := categoryByKey(k); !ok {
 			return nil, fmt.Errorf("%w: unknown cleanup category %q", exitcode.ErrUserInput, k)
 		}
@@ -177,8 +198,13 @@ func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[
 	if o.includeVMs && avail["vm"] {
 		sel["vm"] = true
 	}
+	for _, k := range o.include {
+		if avail[k] {
+			sel[k] = true
+		}
+	}
 
-	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs
+	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs || len(o.include) > 0
 	if interactive && !hasFlags {
 		opts := make([]huh.Option[string], 0, len(available))
 		for _, c := range cleanupCategories {
@@ -298,6 +324,8 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	items = append(items, tackProfileItems(cfg, vmidsByURL, reachableURLs)...)
 	items = append(items, secretItems(cfg)...)
 	items = append(items, sshKeyItems(cfg)...)
+	items = append(items, contextItems(cfg)...)
+	items = append(items, tackConfigItems()...)
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
@@ -538,6 +566,49 @@ func sshKeyItems(cfg *config.Config) []cleanupItem {
 			}
 			return os.Remove(pub)
 		},
+	}}
+}
+
+// contextItems lists every configured server context as a candidate
+// for deliberate removal. Unlike every other category, these aren't
+// orphaned leftovers — they're pmox's active configuration — so this
+// exists purely so a full teardown has one place to do it; removal
+// (setup.RemoveServer) is exactly what 'pmox config delete-context'
+// already does: drop the config entry and clear its keychain secret.
+func contextItems(cfg *config.Config) []cleanupItem {
+	items := make([]cleanupItem, 0, len(cfg.Servers))
+	for _, url := range cfg.ServerURLs() {
+		label := contextLabelFor(cfg, url)
+		u := url
+		items = append(items, cleanupItem{
+			Category: "context",
+			Detail:   fmt.Sprintf("%s (%s)", label, u),
+			apply: func() error {
+				_, err := setup.RemoveServer(u)
+				return err
+			},
+		})
+	}
+	return items
+}
+
+// tackConfigItems returns a single item that removes the entire
+// ~/.config/pmox/tack/ directory — every playbook and role, hand-edited
+// or scaffolded by 'pmox apply --init'. Unlike every other category,
+// this isn't orphaned leftovers either; it exists for the same
+// full-teardown reason as contextItems.
+func tackConfigItems() []cleanupItem {
+	dir, err := tackDir()
+	if err != nil {
+		return nil
+	}
+	if _, statErr := os.Stat(dir); statErr != nil {
+		return nil // nothing scaffolded yet
+	}
+	return []cleanupItem{{
+		Category: "tack-config",
+		Detail:   dir + " (every playbook and role)",
+		apply:    func() error { return os.RemoveAll(dir) },
 	}}
 }
 

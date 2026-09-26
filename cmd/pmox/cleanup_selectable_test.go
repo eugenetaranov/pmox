@@ -127,8 +127,32 @@ func TestResolveSelection(t *testing.T) {
 			t.Errorf("include-vms sel = %v", sel)
 		}
 	})
+	t.Run("default excludes context and tack-config", func(t *testing.T) {
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, cleanupOpts{}, false)
+		if sel["context"] || sel["tack-config"] {
+			t.Errorf("default sel = %v; want context/tack-config excluded", sel)
+		}
+	})
+	t.Run("generic --include adds any destructive category", func(t *testing.T) {
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, cleanupOpts{include: []string{"context", "tack-config"}}, false)
+		if !sel["context"] || !sel["tack-config"] {
+			t.Errorf("--include sel = %v, want both context and tack-config", sel)
+		}
+	})
+	t.Run("generic --include is equivalent to include-templates/include-vms", func(t *testing.T) {
+		sel, _ := resolveSelection([]string{"snippet", "template", "vm"}, cleanupOpts{include: []string{"template", "vm"}}, false)
+		if !sel["template"] || !sel["vm"] {
+			t.Errorf("--include sel = %v, want both template and vm", sel)
+		}
+	})
 	t.Run("unknown key errors", func(t *testing.T) {
 		_, err := resolveSelection(avail, cleanupOpts{only: []string{"bogus"}}, false)
+		if !errors.Is(err, exitcode.ErrUserInput) {
+			t.Errorf("err = %v, want ErrUserInput", err)
+		}
+	})
+	t.Run("unknown --include key errors", func(t *testing.T) {
+		_, err := resolveSelection(avail, cleanupOpts{include: []string{"bogus"}}, false)
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("err = %v, want ErrUserInput", err)
 		}
@@ -334,4 +358,82 @@ func TestSSHKeyItems(t *testing.T) {
 	if _, err := os.Stat(pub); !os.IsNotExist(err) {
 		t.Error("public key not removed")
 	}
+}
+
+func TestContextItems(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("PMOX_SECRET_STORE", "file")
+	url := "https://a.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{url: {TokenID: "x@y!z"}}}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := credstore.Set(url, "secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	items := contextItems(cfg)
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1: %+v", len(items), items)
+	}
+	if items[0].Category != "context" {
+		t.Errorf("category = %q", items[0].Category)
+	}
+	if !strings.Contains(items[0].Detail, url) {
+		t.Errorf("detail = %q, want it to name the url", items[0].Detail)
+	}
+
+	if err := items[0].apply(); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.Servers[url]; ok {
+		t.Error("context still present in saved config after apply")
+	}
+	if _, err := credstore.Get(url); err == nil {
+		t.Error("secret still present after apply")
+	}
+}
+
+func TestTackConfigItems(t *testing.T) {
+	t.Run("nothing scaffolded yet yields no items", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		if items := tackConfigItems(); items != nil {
+			t.Errorf("items = %+v, want nil when nothing is scaffolded", items)
+		}
+	})
+	t.Run("removes the whole tack dir", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		dir, err := tackDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "roles", "docker"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "playbook.yaml"), []byte("name: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		items := tackConfigItems()
+		if len(items) != 1 {
+			t.Fatalf("got %d items, want 1: %+v", len(items), items)
+		}
+		if items[0].Category != "tack-config" {
+			t.Errorf("category = %q", items[0].Category)
+		}
+		if !strings.Contains(items[0].Detail, dir) {
+			t.Errorf("detail = %q, want it to name %q", items[0].Detail, dir)
+		}
+		if err := items[0].apply(); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Error("tack dir not removed")
+		}
+	})
 }

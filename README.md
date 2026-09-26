@@ -173,14 +173,16 @@ scans every configured context, in selectable categories:
 - **tack-profile** — remembered tack profiles for servers/VMs that no longer exist;
 - **secret** — file-backend `secrets.yaml` entries for removed servers (OS-keychain secrets can't be enumerated, so they're cleared at removal time by `configure --remove` instead);
 - **known-host** — stale guest `known_hosts` pins (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped);
-- **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates`.
-- **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include-vms`; review the listed VMs before removing.
+- **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates` (or `--include template`).
+- **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include-vms` (or `--include vm`); review the listed VMs before removing.
+- **context** — a configured server context, exactly what `pmox config delete-context` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
+- **tack-config** — the entire `~/.config/pmox/tack/` directory: every playbook and role, hand-edited or scaffolded. Also active configuration, not cruft; opt-in only via the checklist or `--include tack-config`.
 
 On a terminal, `pmox cleanup` shows a **checklist** to pick categories
-(non-destructive ones pre-checked, `template`/`vm` unchecked), lists what
-it found, then asks `Remove N item(s) now? [y/N]` — say `y` to delete
-right there, no need to re-run with `--apply`. Non-interactively, scope
-with `--only`/`--skip`:
+(non-destructive ones pre-checked, the four destructive ones above
+unchecked), lists what it found, then asks `Remove N item(s) now? [y/N]`
+— say `y` to delete right there, no need to re-run with `--apply`.
+Non-interactively, scope with `--only`/`--skip`:
 
 ```
 pmox cleanup                          # checklist, report, then y/N to remove now
@@ -189,11 +191,14 @@ pmox cleanup --only snippet,log       # just these
 pmox cleanup --skip known-host        # everything safe except this
 pmox cleanup --include-templates --apply   # also delete pmox templates
 pmox cleanup --include-vms --apply         # also delete VMs abandoned mid-launch
+pmox cleanup --include context,tack-config --apply   # full teardown of config + tack
 pmox cleanup --output json
 ```
 
 Aside from opted-in `template`/`vm` removal, VMs are never touched — use
-`pmox delete`.
+`pmox delete`. `context` and `tack-config` are for a deliberate full
+teardown, not routine cleanup — they remove active configuration, not
+orphaned artifacts.
 
 ## Checking readiness
 
