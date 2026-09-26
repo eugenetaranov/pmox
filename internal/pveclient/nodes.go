@@ -22,13 +22,18 @@ type Template struct {
 }
 
 // Storage represents a storage pool entry. Active/Enabled are decoded
-// leniently (numbers, quoted numbers or bools).
+// leniently (numbers, quoted numbers or bools). Avail/Total (bytes) are
+// PVE's live capacity for this storage — 0 when PVE didn't report it
+// (e.g. the storage is inactive), never a value to treat as real free
+// space.
 type Storage struct {
 	Storage string `json:"storage"`
 	Type    string `json:"type"`
 	Content string `json:"content"`
 	Active  int    `json:"active"`
 	Enabled int    `json:"enabled"`
+	Avail   int64  `json:"avail"`
+	Total   int64  `json:"total"`
 }
 
 // HasContent reports whether the storage's comma-separated content list

@@ -70,18 +70,25 @@ func (r *Resource) UnmarshalJSON(b []byte) error {
 }
 
 // UnmarshalJSON decodes a Storage, accepting numbers, quoted numbers and
-// bools for the active/enabled flags.
+// bools for the active/enabled flags, and the same leniency for
+// avail/total (PVE omits or blanks these for inactive storage).
 func (s *Storage) UnmarshalJSON(b []byte) error {
 	type plain Storage
 	aux := struct {
 		*plain
 		Active  flexInt `json:"active"`
 		Enabled flexInt `json:"enabled"`
-	}{plain: (*plain)(s), Active: flexInt(s.Active), Enabled: flexInt(s.Enabled)}
+		Avail   flexInt `json:"avail"`
+		Total   flexInt `json:"total"`
+	}{
+		plain: (*plain)(s), Active: flexInt(s.Active), Enabled: flexInt(s.Enabled),
+		Avail: flexInt(s.Avail), Total: flexInt(s.Total),
+	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
 	s.Active, s.Enabled = int(aux.Active), int(aux.Enabled)
+	s.Avail, s.Total = int64(aux.Avail), int64(aux.Total)
 	return nil
 }
 

@@ -145,7 +145,7 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 	}
 	opts := make([]huh.Option[string], 0, len(usable))
 	for _, s := range usable {
-		label := fmt.Sprintf("%s (%s)", s.Storage, s.Type)
+		label := storageLabel(s)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
 	return pickOneAuto(p, "Default storage", opts, usable[0].Storage)
@@ -196,7 +196,7 @@ func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePi
 	}
 	opts := make([]huh.Option[string], 0, len(matches))
 	for _, s := range matches {
-		label := fmt.Sprintf("%s (%s)", s.Storage, s.Type)
+		label := storageLabel(s)
 		opts = append(opts, huh.NewOption(label, s.Storage))
 	}
 	return selectSnippetStorageFn("Snippet storage", opts, matches[0].Storage)

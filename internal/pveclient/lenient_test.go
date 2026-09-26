@@ -47,11 +47,22 @@ func TestResourceLenientDecoding(t *testing.T) {
 
 func TestStorageAndStatusLenientDecoding(t *testing.T) {
 	var s Storage
-	if err := json.Unmarshal([]byte(`{"storage":"local","content":"iso,images","active":true,"enabled":"1"}`), &s); err != nil {
+	if err := json.Unmarshal([]byte(`{"storage":"local","content":"iso,images","active":true,"enabled":"1","avail":"107374182400","total":536870912000}`), &s); err != nil {
 		t.Fatalf("storage: %v", err)
 	}
 	if s.Active != 1 || s.Enabled != 1 || s.Storage != "local" {
 		t.Errorf("storage = %+v", s)
+	}
+	if s.Avail != 107374182400 || s.Total != 536870912000 {
+		t.Errorf("storage capacity = avail:%d total:%d, want avail:107374182400 total:536870912000", s.Avail, s.Total)
+	}
+
+	var inactive Storage
+	if err := json.Unmarshal([]byte(`{"storage":"nfs-share","active":false,"enabled":1}`), &inactive); err != nil {
+		t.Fatalf("inactive storage: %v", err)
+	}
+	if inactive.Avail != 0 || inactive.Total != 0 {
+		t.Errorf("inactive storage capacity = avail:%d total:%d, want both 0 (PVE omits them)", inactive.Avail, inactive.Total)
 	}
 	var st VMStatus
 	if err := json.Unmarshal([]byte(`{"status":"running","vmid":"104","cpus":2,"mem":"1024","maxmem":2048,"uptime":"7"}`), &st); err != nil {

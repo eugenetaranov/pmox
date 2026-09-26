@@ -19,6 +19,58 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
 
+func TestFormatGiB(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+	cases := []struct {
+		bytes int64
+		want  string
+	}{
+		{0, "0 GiB"},
+		{gib, "1 GiB"},
+		{120 * gib, "120 GiB"},
+		{gib + gib/2, "2 GiB"}, // 1.5 GiB rounds to the nearest whole GiB
+	}
+	for _, c := range cases {
+		if got := formatGiB(c.bytes); got != c.want {
+			t.Errorf("formatGiB(%d) = %q, want %q", c.bytes, got, c.want)
+		}
+	}
+}
+
+func TestStorageLabel(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+	t.Run("no capacity reported (inactive storage) omits free/total", func(t *testing.T) {
+		got := storageLabel(pveclient.Storage{Storage: "local-lvm", Type: "lvmthin"})
+		if want := "local-lvm (lvmthin)"; got != want {
+			t.Errorf("storageLabel = %q, want %q", got, want)
+		}
+	})
+	t.Run("capacity reported includes free/total", func(t *testing.T) {
+		got := storageLabel(pveclient.Storage{Storage: "local-lvm", Type: "lvmthin", Avail: 420 * gib, Total: 500 * gib})
+		if want := "local-lvm (lvmthin, 420 GiB free / 500 GiB total)"; got != want {
+			t.Errorf("storageLabel = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestStorageLabels(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+	pools := []pveclient.Storage{
+		{Storage: "local", Type: "dir"},
+		{Storage: "vm-data", Type: "lvmthin", Avail: 10 * gib, Total: 100 * gib},
+	}
+	got := storageLabels(pools)
+	want := []string{"local (dir)", "vm-data (lvmthin, 10 GiB free / 100 GiB total)"}
+	if len(got) != len(want) {
+		t.Fatalf("storageLabels = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("storageLabels[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestCreateTemplate_NonTTYRejected(t *testing.T) {
 	orig := isTTYFunc
 	isTTYFunc = func(uintptr) bool { return false }

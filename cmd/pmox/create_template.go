@@ -110,13 +110,32 @@ func pickIndex(title string, labels []string) (int, error) {
 	return idx, nil
 }
 
-// storageLabels renders "name (type)" picker labels for pools.
+// storageLabels renders storageLabel picker labels for pools.
 func storageLabels(pools []pveclient.Storage) []string {
 	labels := make([]string, 0, len(pools))
 	for _, s := range pools {
-		labels = append(labels, fmt.Sprintf("%s (%s)", s.Storage, s.Type))
+		labels = append(labels, storageLabel(s))
 	}
 	return labels
+}
+
+// storageLabel renders a picker label for a single storage pool: name,
+// type, and — when PVE reported live capacity for it (Total > 0; 0 for
+// inactive storage) — free/total space, so a storage pick doesn't need
+// a separate look at the PVE UI to know what's actually available.
+func storageLabel(s pveclient.Storage) string {
+	if s.Total <= 0 {
+		return fmt.Sprintf("%s (%s)", s.Storage, s.Type)
+	}
+	return fmt.Sprintf("%s (%s, %s free / %s total)", s.Storage, s.Type, formatGiB(s.Avail), formatGiB(s.Total))
+}
+
+// formatGiB renders a byte count as whole GiB (PVE reports storage
+// capacity in bytes; GiB is what --disk/--storage sizing already uses
+// throughout pmox's own flags and prompts).
+func formatGiB(bytes int64) string {
+	const gib = 1024 * 1024 * 1024
+	return fmt.Sprintf("%.0f GiB", float64(bytes)/gib)
 }
 
 // runCreateTemplateWithClient runs everything after server resolution
