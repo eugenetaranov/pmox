@@ -28,13 +28,20 @@ import (
 type doctorFlags struct {
 	strict  bool
 	timeout time.Duration
-	// fix and yes enable pmox doctor --fix: offering (or, with -y,
-	// silently applying) the interactive remediation some checks
-	// attach via doctor.Checklist.WithFix. Without --fix, doctor keeps
-	// its documented "never changes anything" behavior exactly as
-	// before.
-	fix bool
+	// yes applies any offered fix without asking (env: PMOX_ASSUME_YES).
+	// Works without a terminal too — the one thing that still requires
+	// a real TTY regardless of yes is a fix marked RequiresTTY (it
+	// shells into its own picker flow).
 	yes bool
+	// noFix suppresses the fix-offer step entirely: report only, the
+	// pre-v0.17 default behavior. The escape hatch for a human who
+	// wants to look before deciding.
+	noFix bool
+	// fix is accepted for compatibility with v0.16 scripts
+	// ('pmox doctor --fix -y') but is now a no-op — doctor offers a fix
+	// whenever one exists, unconditionally. Passing it prints a
+	// one-line deprecation note; it does not change behavior.
+	fix bool
 }
 
 // doctorError carries the exit code of the worst failing check so
@@ -50,28 +57,35 @@ func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Validate configuration and Proxmox connectivity",
-		Long: `Run read-only checks that validate your pmox configuration, Proxmox
-API and SSH connectivity, storage and template readiness, and local
-tooling, then report whether the tool is ready to launch VMs.
+		Long: `Run checks that validate your pmox configuration, Proxmox API and
+SSH connectivity, storage and template readiness, and local tooling,
+then report whether the tool is ready to launch VMs.
 
-By default doctor never changes anything: it does not prompt, pin host
-keys, or modify config. Each check reports pass/warn/fail with a
-remediation hint. The process exits non-zero if any check fails (or,
-with --strict, if any warning is present), using the same exit-code
-taxonomy as other commands so CI can gate on it. Use --output json for
-machine-readable output; --verbose to also list passing checks.
+When a check fails or warns and pmox knows how to repair it, doctor
+offers to fix it right there — confirmed one at a time — then
+automatically re-runs every check afterward so you see confirmation
+the problem is actually gone, instead of being told to re-run
+'pmox doctor' yourself. Pass -y (or PMOX_ASSUME_YES=1) to apply fixes
+without asking; that works without a terminal too (e.g. in CI), except
+for a fix that itself needs one (like rebuilding a template, which
+reuses 'pmox create-template's own image/storage pickers) — that one
+is only ever offered on a real terminal. Pass --no-fix to see only the
+report. Without a terminal and without -y, nothing is ever offered or
+changed — same as a plain report.
 
-Pass --fix to interactively repair the checks pmox knows how to fix
-(currently: rebuilding or converting a broken/missing template, and
-enabling the guest agent) — each is confirmed before it runs. Add -y
-(or PMOX_ASSUME_YES=1) to apply them without asking; --fix otherwise
-requires an interactive terminal. --fix is unavailable with
---output json.
+Aside from an explicitly accepted fix, doctor never changes anything
+on its own: no prompts, no pinned host keys, no modified config. Each
+check reports pass/warn/fail with a remediation hint. The process
+exits non-zero if any check fails (or, with --strict, if any warning
+is present), using the same exit-code taxonomy as other commands so CI
+can gate on it. Use --output json for machine-readable output (never
+offers a fix); --verbose to also list passing checks.
 
 Examples:
   pmox doctor
   pmox doctor --strict
-  pmox doctor --fix
+  pmox doctor -y
+  pmox doctor --no-fix
   pmox doctor --output json | jq '.checks[] | select(.status=="fail")'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -80,8 +94,10 @@ Examples:
 	}
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat warnings as failures (exit non-zero on any warning)")
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 20*time.Second, "overall time budget for all checks")
-	cmd.Flags().BoolVar(&f.fix, "fix", false, "offer to fix checks pmox knows how to repair (asks before each fix; needs a terminal unless -y)")
-	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "with --fix, apply fixes without asking (env: PMOX_ASSUME_YES)")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "apply an offered fix without asking (env: PMOX_ASSUME_YES); works without a terminal")
+	cmd.Flags().BoolVar(&f.noFix, "no-fix", false, "never offer to fix anything; report only")
+	cmd.Flags().BoolVar(&f.fix, "fix", false, "deprecated: fixes are now offered by default; kept for compatibility")
+	_ = cmd.Flags().MarkHidden("fix")
 	return cmd
 }
 
@@ -94,10 +110,10 @@ type doctorDeps struct {
 }
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
-	if f.fix && outputMode == "json" {
-		return fmt.Errorf("%w: --fix is not supported with --output json", exitcode.ErrUserInput)
-	}
 	f.yes = f.yes || envBool("PMOX_ASSUME_YES")
+	if cmd.Flags().Changed("fix") {
+		fmt.Fprintln(cmd.ErrOrStderr(), "note: --fix is deprecated and has no effect — pmox doctor now offers fixes automatically (see --no-fix)")
+	}
 
 	parent := cmd.Context()
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
@@ -109,7 +125,9 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 	cfg, err := config.Load()
 	if err != nil {
 		cl.Fail("config.file", "config", "no usable pmox config found", "run 'pmox init' to create one", exitcode.ExitUserError)
-		return finishDoctor(ctx, cmd, f, cl, "", "")
+		// Nothing resolved yet, so nothing could ever be fixable here —
+		// rerun is nil, renderAndFinish skips straight to the verdict.
+		return renderAndFinish(ctx, cmd, f, cl.Finalize("", "", f.strict), nil)
 	}
 	cl.Pass("config.file", "config", "config loaded")
 	if err := cfg.Validate(); err != nil {
@@ -122,11 +140,11 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Context:    contextFlag,
 		Env:        os.Getenv("PMOX_SERVER"),
 		ContextEnv: os.Getenv("PMOX_CONTEXT"),
-		Pick:       nil, // doctor never prompts: no interactive picker
+		Pick:       nil, // doctor never prompts for a context: no interactive picker
 	})
 	if err != nil {
 		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
-		return finishDoctor(ctx, cmd, f, cl, "", "")
+		return renderAndFinish(ctx, cmd, f, cl.Finalize("", "", f.strict), nil)
 	}
 	cl.Pass("config.server", "config", "server resolves: "+resolved.URL)
 
@@ -138,53 +156,83 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		sshDial: func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
 	}
 
-	// doctor never pins (that's a mutation), but a pin that is already
-	// stored is enforced on the API connection like every other command.
+	// doctor never pins on its own (that's a mutation), but a pin that
+	// is already stored is enforced on the API connection like every
+	// other command.
 	client := newAPIClient(resolved.URL, resolved.Server, resolved.Secret, storedPin(resolved.Server))
+	rerun := func() doctor.Report {
+		cl2 := &doctor.Checklist{}
+		executeDoctor(ctx, cl2, client, resolved, deps, f.strict, cmd, cfg)
+		return cl2.Finalize(resolved.URL, resolved.Source, f.strict)
+	}
 	executeDoctor(ctx, cl, client, resolved, deps, f.strict, cmd, cfg)
-	return finishDoctor(ctx, cmd, f, cl, resolved.URL, resolved.Source)
+	return renderAndFinish(ctx, cmd, f, cl.Finalize(resolved.URL, resolved.Source, f.strict), rerun)
 }
 
-// finishDoctor computes the report, renders it, offers --fix remediation
-// when requested, and returns an error carrying the right exit code
-// when not ready.
-func finishDoctor(ctx context.Context, cmd *cobra.Command, f *doctorFlags, cl *doctor.Checklist, serverURL, source string) error {
-	report := cl.Finalize(serverURL, source, f.strict)
+// renderAndFinish renders report, then — unless suppressed, running as
+// --output json, or nothing resolved far enough to retry (rerun == nil)
+// — offers to fix anything it can. When at least one fix actually runs,
+// it re-runs the entire check pass via rerun and renders that report
+// too, so "is it fixed?" is answered by doctor itself rather than by
+// asking the user to run it again. The returned error carries the exit
+// code of whichever report is final.
+func renderAndFinish(ctx context.Context, cmd *cobra.Command, f *doctorFlags, report doctor.Report, rerun func() doctor.Report) error {
+	if err := renderDoctorReport(cmd, report); err != nil {
+		return err
+	}
 
+	if outputMode == "json" || f.noFix || rerun == nil || !reportHasFixes(report) {
+		return doctorVerdict(report)
+	}
+
+	confirmer, cerr := doctorFixConfirmer(cmd, f.yes)
+	if cerr != nil {
+		// No terminal and no -y: still just a report. Offering by
+		// default must never turn a plain, non-interactive
+		// 'pmox doctor' into a new hard failure it didn't have before.
+		fmt.Fprintf(cmd.ErrOrStderr(), "\n%d fixable issue(s) above — run on a terminal, or with -y, to fix them.\n", countFixable(report))
+		return doctorVerdict(report)
+	}
+
+	ranAny, err := offerDoctorFixes(ctx, cmd, report, confirmer)
+	if err != nil {
+		return err
+	}
+	if !ranAny {
+		return doctorVerdict(report)
+	}
+
+	fmt.Fprintln(cmd.ErrOrStderr(), "\nRe-running doctor to confirm...")
+	report2 := rerun()
+	if err := renderDoctorReport(cmd, report2); err != nil {
+		return err
+	}
+	return doctorVerdict(report2)
+}
+
+// renderDoctorReport prints report in the current --output mode.
+func renderDoctorReport(cmd *cobra.Command, report doctor.Report) error {
 	if outputMode == "json" {
-		if err := printJSON(cmd.OutOrStdout(), report); err != nil {
-			return err
-		}
-	} else {
-		color := !noColor && tui.StderrIsTerminal() && os.Getenv("NO_COLOR") == ""
-		doctor.RenderText(cmd.OutOrStdout(), report, verbose, color)
+		return printJSON(cmd.OutOrStdout(), report)
 	}
+	color := !noColor && tui.StderrIsTerminal() && os.Getenv("NO_COLOR") == ""
+	doctor.RenderText(cmd.OutOrStdout(), report, verbose, color)
+	return nil
+}
 
-	// Only require a confirmer (and so a TTY or -y) when there's
-	// actually something to confirm — --fix on an otherwise-clean or
-	// unfixable-only report must not demand -y for nothing.
-	if f.fix && reportHasFixes(report) {
-		confirmer, cerr := doctorFixConfirmer(cmd, f.yes)
-		if cerr != nil {
-			return cerr
-		}
-		if err := offerDoctorFixes(ctx, cmd, report, confirmer); err != nil {
-			return err
-		}
-	} else if f.fix {
-		fmt.Fprintln(cmd.ErrOrStderr(), "\n--fix: no fixable issues found.")
-	}
-
+// doctorVerdict turns a finalized report into the command's return
+// value: nil when ready, else an error carrying its exit code.
+func doctorVerdict(report doctor.Report) error {
 	if !report.Ready {
 		return &doctorError{code: report.ExitCode}
 	}
 	return nil
 }
 
-// doctorFixConfirmer builds the confirmer --fix asks each repair
-// through, mirroring pmox delete's own yes/TTY/refuse pattern: -y (or
+// doctorFixConfirmer builds the confirmer a fix is asked through,
+// mirroring pmox delete's own yes/TTY/refuse pattern: -y (or
 // PMOX_ASSUME_YES) always approves, a TTY gets a real y/N prompt on
-// stderr, and anything else is refused outright — --fix mutates the
+// stderr, and anything else is refused — a fix mutates the
 // cluster/config, so it never runs non-interactively without an
 // explicit opt-in.
 func doctorFixConfirmer(cmd *cobra.Command, yes bool) (tui.Confirmer, error) {
@@ -194,54 +242,69 @@ func doctorFixConfirmer(cmd *cobra.Command, yes bool) (tui.Confirmer, error) {
 	if tui.StdinIsTerminal() {
 		return tui.NewTTYConfirmer(os.Stdin, cmd.ErrOrStderr()), nil
 	}
-	return nil, fmt.Errorf("%w: --fix needs -y (or PMOX_ASSUME_YES=1) when stdin is not a TTY", exitcode.ErrUserInput)
+	return nil, fmt.Errorf("%w: needs -y (or PMOX_ASSUME_YES=1) when stdin is not a TTY", exitcode.ErrUserInput)
 }
 
 // reportHasFixes reports whether any check in the report carries an
 // attached doctor.Fix.
 func reportHasFixes(report doctor.Report) bool {
+	return countFixable(report) > 0
+}
+
+// countFixable counts checks in the report that carry an attached fix.
+func countFixable(report doctor.Report) int {
+	n := 0
 	for _, c := range report.Checks {
 		if c.Fixable() {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 // offerDoctorFixes walks the report for checks that carry an attached
-// doctor.Fix and asks confirmer before running each one. A fix's own
-// failure is reported and does not stop the rest of the pass.
-func offerDoctorFixes(ctx context.Context, cmd *cobra.Command, report doctor.Report, confirmer tui.Confirmer) error {
+// doctor.Fix and asks confirmer before running each one — except a fix
+// marked FixRequiresTTY, which is skipped without asking when stdin
+// isn't a real terminal (confirmer may be an unconditional
+// AlwaysConfirmer from -y, which such a fix must never trust alone). It
+// returns whether at least one fix actually ran, so the caller knows a
+// re-verify pass is worth it. A fix's own failure is reported and does
+// not stop the rest of the pass.
+func offerDoctorFixes(ctx context.Context, cmd *cobra.Command, report doctor.Report, confirmer tui.Confirmer) (ranAny bool, err error) {
 	var fixable []doctor.Check
 	for _, c := range report.Checks {
 		if c.Fixable() {
 			fixable = append(fixable, c)
 		}
 	}
-	stderr := cmd.ErrOrStderr()
 	if len(fixable) == 0 {
-		fmt.Fprintln(stderr, "\n--fix: no fixable issues found.")
-		return nil
+		return false, nil
 	}
 
+	stderr := cmd.ErrOrStderr()
 	fmt.Fprintln(stderr)
 	for _, c := range fixable {
-		ok, err := confirmer.Confirm(ctx, c.FixPrompt()+" [y/N]: ")
-		if err != nil {
-			return fmt.Errorf("confirmation: %w", err)
+		if c.FixRequiresTTY() && !tui.StdinIsTerminal() {
+			fmt.Fprintf(stderr, "skipped: %s (needs an interactive terminal)\n", c.ID)
+			continue
+		}
+		ok, cerr := confirmer.Confirm(ctx, c.FixPrompt()+" [y/N]: ")
+		if cerr != nil {
+			return ranAny, fmt.Errorf("confirmation: %w", cerr)
 		}
 		if !ok {
 			fmt.Fprintf(stderr, "skipped: %s\n", c.ID)
 			continue
 		}
+		fmt.Fprintf(stderr, "--- running fix: %s ---\n", c.ID)
 		if err := c.RunFix(ctx); err != nil {
 			fmt.Fprintf(stderr, "fix failed (%s): %v\n", c.ID, err)
 			continue
 		}
 		fmt.Fprintf(stderr, "fixed: %s\n", c.ID)
+		ranAny = true
 	}
-	fmt.Fprintln(stderr, "Re-run 'pmox doctor' to confirm.")
-	return nil
+	return ranAny, nil
 }
 
 // executeDoctor runs the network/SSH/storage/template/tooling checks
@@ -288,32 +351,42 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	doctorNodeSSH(ctx, cl, resolved, deps)
 }
 
+// doctorConfigDefaults checks the launch defaults. All three are hard
+// requirements of resolveLaunchOptions/resolveVMSpec (empty node,
+// template, or storage returns a wrapped ErrNotFound before any PVE
+// call) — a bare 'pmox launch <name>' cannot succeed without them, so
+// each is a Fail, not a Warn: "pmox is ready" must mean launch actually
+// works, not "mostly configured."
 func doctorConfigDefaults(cl *doctor.Checklist, srv *config.Server) {
 	if srv.Node != "" {
 		cl.Pass("config.default_node", "config", "default node: "+srv.Node)
 	} else {
-		cl.Warn("config.default_node", "config", "no default node configured", "run 'pmox init' (launch needs a node)")
+		cl.Fail("config.default_node", "config", "no default node configured", "run 'pmox init' (launch needs a node)", exitcode.ExitNotFound)
 	}
 	if srv.Template != "" {
 		cl.Pass("config.default_template", "config", "default template: "+srv.Template)
 	} else {
-		cl.Warn("config.default_template", "config", "no default template configured", "run 'pmox create-template', then set it via 'pmox init'")
+		cl.Fail("config.default_template", "config", "no default template configured", "run 'pmox create-template', then set it via 'pmox init'", exitcode.ExitNotFound)
 	}
 	if srv.Storage != "" {
 		cl.Pass("config.default_storage", "config", "default storage: "+srv.Storage)
 	} else {
-		cl.Warn("config.default_storage", "config", "no default storage configured", "run 'pmox init' (launch needs a disk storage)")
+		cl.Fail("config.default_storage", "config", "no default storage configured", "run 'pmox init' (launch needs a disk storage)", exitcode.ExitNotFound)
 	}
 }
 
+// doctorCloudInit checks the per-server cloud-init file. resolveVMSpec
+// resolves the identical config.CloudInitPath, and launch.Run's phase 0
+// reads it before any PVE call, aborting launch on either error — so
+// both branches block launch and are Fails.
 func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 	path, err := config.CloudInitPath(serverURL)
 	if err != nil {
-		cl.Warn("config.cloud_init", "config", "could not resolve cloud-init path: "+err.Error(), "")
+		cl.Fail("config.cloud_init", "config", "could not resolve cloud-init path: "+err.Error(), "run 'pmox init --regen-cloud-init'", exitcode.ExitUserError)
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
-		cl.Warn("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox init --regen-cloud-init'")
+		cl.Fail("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox init --regen-cloud-init'", exitcode.ExitUserError)
 		return
 	}
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
@@ -589,6 +662,11 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 	rebuildFix := doctor.Fix{
 		Prompt: rebuildPrompt,
 		Run:    func(ctx context.Context) error { return fixRebuildTemplate(ctx, cmd, cfg, resolved, client) },
+		// Shells into 'pmox create-template's own image/storage
+		// pickers, exactly like create-template itself requires a real
+		// TTY for — must never run via -y alone non-interactively, or
+		// it would hang or misbehave.
+		RequiresTTY: true,
 	}
 
 	id, _, err := resolveTemplate(ctx, client, node, template)
@@ -608,7 +686,7 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 			cl.WithFix(rebuildFix)
 			return
 		}
-		cl.Warn("template.resolves", "template", "could not read template config: "+err.Error(), "run 'pmox create-template', or fix 'template' in config")
+		cl.Fail("template.resolves", "template", "could not read template config: "+err.Error(), "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
 		cl.WithFix(rebuildFix)
 		return
 	}
@@ -625,7 +703,12 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 	if agentEnabled(tcfg["agent"]) {
 		cl.Pass("template.agent", "template", "guest agent enabled on template (agent: 1)")
 	} else {
-		cl.Warn("template.agent", "template", "template has no 'agent: 1' — launch may never get an IP", "qm set "+fmt.Sprint(id)+" --agent 1, and ensure qemu-guest-agent is installed inside the image")
+		// Without agent: 1, PVE never creates the virtio-serial channel,
+		// so the guest-agent IP query fails forever: launch blocks for
+		// the full --wait budget (default 3m) and then fails, leaving
+		// an orphaned running VM behind. Blocking, so Fail — matches
+		// the exit code vmwait.WaitForIP's real timeout wraps.
+		cl.Fail("template.agent", "template", "template has no 'agent: 1' — launch will time out waiting for an IP", "qm set "+fmt.Sprint(id)+" --agent 1, and ensure qemu-guest-agent is installed inside the image", exitcode.ExitTimeout)
 		cl.WithFix(doctor.Fix{
 			Prompt: fmt.Sprintf("Set agent: 1 on vmid %d now?", id),
 			Run: func(ctx context.Context) error {
@@ -680,19 +763,28 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		return
 	}
 	if !resolved.HasNodeSSH() {
-		cl.Warn("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)")
+		// runLaunch calls resolved.RequireNodeSSH("launch") right after
+		// buildClient and hard-fails when node SSH isn't configured —
+		// this blocks a bare 'pmox launch' before any PVE call, so it's
+		// a Fail with the same ErrUserInput RequireNodeSSH itself wraps.
+		cl.Fail("ssh.configured", "ssh", "node SSH not configured", "run 'pmox init' to add it — launch/clone/create-template upload cloud-init over SSH (shell/exec/list/info/delete don't need it)", exitcode.ExitUserError)
 		return
 	}
 	cl.Pass("ssh.configured", "ssh", "node SSH configured (user "+resolved.NodeSSHUser+", "+string(resolved.NodeSSHAuth)+" auth)")
 
 	host, err := pvessh.HostFromURL(resolved.URL)
 	if err != nil {
-		cl.Warn("ssh.known_host", "ssh", "could not derive SSH host: "+err.Error(), "")
+		// The identical call resolved.NodeSSHConfig makes at launch's
+		// snippet-upload phase (dialPvessh) would fail the same way,
+		// after the VM is already cloned/tagged/resized.
+		cl.Fail("ssh.known_host", "ssh", "could not derive SSH host: "+err.Error(), "", exitcode.From(err))
 		return
 	}
 	pinned, err := deps.knownHostHasEntry(host)
 	if err != nil {
-		cl.Warn("ssh.known_host", "ssh", "could not read pmox known_hosts: "+err.Error(), "")
+		// Same file the runtime hostKeyCallback reads at that same
+		// launch phase — a read/parse error there fails identically.
+		cl.Fail("ssh.known_host", "ssh", "could not read pmox known_hosts: "+err.Error(), "", exitcode.From(err))
 		return
 	}
 	if !pinned {

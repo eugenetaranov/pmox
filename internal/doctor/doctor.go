@@ -34,6 +34,13 @@ type Fix struct {
 	// Run performs the fix. A returned error is reported but never
 	// stops the rest of the fix pass.
 	Run func(ctx context.Context) error
+	// RequiresTTY marks a fix that itself needs an interactive terminal
+	// — e.g. it shells into its own picker flow (like
+	// 'pmox create-template's image/storage prompts). Such a fix must
+	// never run via -y/PMOX_ASSUME_YES alone without a real TTY,
+	// regardless of how the outer "run this? [y/N]" was satisfied, or
+	// it would hang or misbehave non-interactively.
+	RequiresTTY bool
 }
 
 // Check is one diagnostic result. ID is a stable, scriptable identifier
@@ -74,6 +81,13 @@ func (c Check) RunFix(ctx context.Context) error {
 		return nil
 	}
 	return c.fix.Run(ctx)
+}
+
+// FixRequiresTTY reports whether this check's fix must not be run
+// without a real interactive terminal, even when otherwise approved
+// (e.g. via -y). False (safe to auto-apply) when there is no fix at all.
+func (c Check) FixRequiresTTY() bool {
+	return c.fix != nil && c.fix.RequiresTTY
 }
 
 // Summary counts checks by outcome.

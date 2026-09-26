@@ -30,7 +30,7 @@
 - `pmox sync <src> <dst>`: rsync-based sync; exactly one side uses `<name>:<path>` (a bare `:path` picks the VM).
 - `pmox mount <local> [<name>:]<remote>`: watch a local dir and continuously rsync it. Background by default (`--foreground` / `-F` to attach).
 - `pmox umount [<name>:<remote>]`: stop background-mode mounts. Empty arg stops every mount for the picked VM.
-- `pmox doctor`: read-only readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH (strict, never prompts), and local tooling. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report. By default never prompts or writes. `--fix` opts into interactively repairing checks that carry a known fix (currently: rebuild/convert a broken template, enable the guest agent) — confirms each one (or applies them all with `-y`/`PMOX_ASSUME_YES=1`), needs a TTY unless `-y`, and is refused together with `--output json`; a report with nothing fixable is a no-op regardless of TTY/`-y`.
+- `pmox doctor`: readiness check — validates config, API reachability + token privileges (`/access/permissions` diff, names the missing privilege), node online status, storage/template readiness, node SSH, and local tooling. "Ready" means a bare `pmox launch <name>` will actually work: every check that would block it (default node/template/storage/cloud-init, a broken/missing/unmarked template, no guest agent, node SSH unusable) is `fail`, not `warn`. Exits non-zero on any failure using the standard exit-code taxonomy; `--strict` fails on warnings too; `--output json` emits a versioned, per-check-`id` report and never offers a fix. Otherwise, whenever a check carries a known fix (currently: rebuild/convert a broken template, enable the guest agent), doctor offers to run it — confirmed one at a time, or applied without asking via `-y`/`PMOX_ASSUME_YES=1` (works without a TTY) — then automatically re-runs every check and reports the fresh result. `--no-fix` reports only. Without a TTY and without `-y`, nothing is ever offered — a plain, non-interactive run just adds a one-line "N fixable issue(s)" note when relevant. Rebuilding a template reuses `pmox create-template`'s own image/storage pickers, so it's only ever offered on a real TTY even under `-y`. `--fix` is accepted but deprecated (a no-op printing a note) — fixes are offered by default now.
 
 ## Flags
 
@@ -68,7 +68,7 @@ Resolution order: `--server` → `--context` → `PMOX_SERVER` → `PMOX_CONTEXT
 `--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable), `--no-delete`, plus `-- <rsync-extras>`.
 
 `pmox doctor`:
-`--strict` (warnings become failures), `--timeout <duration>` (overall budget, default 20s), `--output json` (versioned per-check report), `--verbose` (list passing checks too).
+`--strict` (warnings become failures), `--timeout <duration>` (overall budget, default 20s), `--output json` (versioned per-check report, never offers a fix), `--verbose` (list passing checks too), `-y`/`--yes` (apply an offered fix without asking; env `PMOX_ASSUME_YES`), `--no-fix` (report only, never offer a fix), `--fix` (deprecated no-op, kept for compatibility — fixes are offered by default now).
 
 ## Exit codes
 

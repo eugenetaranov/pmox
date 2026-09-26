@@ -178,24 +178,31 @@ Aside from opted-in `template` removal, VMs are never touched — use
 
 ## Checking readiness
 
-`pmox doctor` runs read-only checks and tells you whether pmox is ready
-to launch VMs — validating config, API reachability and token
-privileges, the target node's online status, storage/template
-readiness, node SSH, and local tooling. By default it never prompts or
-changes anything.
+`pmox doctor` runs checks and tells you whether pmox is ready to launch
+VMs — validating config, API reachability and token privileges, the
+target node's online status, storage/template readiness, node SSH, and
+local tooling. "Ready" means a bare `pmox launch <name>` will actually
+work: every check that would block it is a hard failure, not a warning.
+
+When a check fails or warns and pmox knows how to repair it, doctor
+offers to fix it right there — confirmed one at a time — then
+automatically re-runs every check afterward, so you see the problem is
+actually gone instead of being told to re-run `pmox doctor` yourself:
 
 ```
-pmox doctor            # human report; exits non-zero if any check fails
+pmox doctor            # offers fixes on a terminal; exits non-zero if any check fails
 pmox doctor --strict   # also fail on warnings (good for CI)
+pmox doctor -y         # apply offered fixes without asking (works without a terminal too)
+pmox doctor --no-fix   # report only, don't offer anything
 pmox doctor --output json | jq '.checks[] | select(.status=="fail")'
-pmox doctor --fix      # offer to repair what it knows how to (asks first)
 ```
 
-`--fix` currently knows how to rebuild or convert a broken/missing
-template and enable the guest agent; each fix is confirmed before it
-runs (add `-y` / `PMOX_ASSUME_YES=1` to skip that and apply them
-straight away). It requires an interactive terminal unless `-y` is
-set, and is unavailable with `--output json`.
+Currently fixable: rebuilding or converting a broken/missing template,
+and enabling the guest agent. Rebuilding reuses `pmox create-template`'s
+own image/storage pickers, so it's only ever offered on a real
+terminal, even with `-y`. Without a terminal and without `-y`, nothing
+is ever offered or changed — doctor just reports, plus a one-line note
+when something fixable exists. `--output json` never offers a fix.
 
 Each check reports `✓ pass`, `! warn`, or `✗ fail` with an exact
 remediation hint (e.g. the missing privilege name and the `pveum` line

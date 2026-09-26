@@ -108,6 +108,31 @@ func TestChecklist_WithFix(t *testing.T) {
 			t.Errorf("RunFix err = %v, want %v", err, wantErr)
 		}
 	})
+	t.Run("RequiresTTY defaults false and is carried through", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Fail("a", "config", "bad", "", 1)
+		cl.WithFix(Fix{Prompt: "x", Run: func(context.Context) error { return nil }})
+		cl.Fail("b", "config", "bad", "", 1)
+		cl.WithFix(Fix{Prompt: "y", Run: func(context.Context) error { return nil }, RequiresTTY: true})
+		r := cl.Finalize("s", "src", false)
+		a, _ := findByID(r.Checks, "a")
+		b, _ := findByID(r.Checks, "b")
+		if a.FixRequiresTTY() {
+			t.Error("a: FixRequiresTTY = true, want false (default)")
+		}
+		if !b.FixRequiresTTY() {
+			t.Error("b: FixRequiresTTY = false, want true")
+		}
+	})
+	t.Run("FixRequiresTTY on an unfixable check is false", func(t *testing.T) {
+		cl := &Checklist{}
+		cl.Fail("a", "config", "bad", "", 1)
+		r := cl.Finalize("s", "src", false)
+		c, _ := findByID(r.Checks, "a")
+		if c.FixRequiresTTY() {
+			t.Error("unfixable check must report FixRequiresTTY = false")
+		}
+	})
 }
 
 func findByID(checks []Check, id string) (Check, bool) {
