@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -111,6 +114,133 @@ func TestResolveSnippetStorage(t *testing.T) {
 				t.Errorf("warn = %v, want %v (stderr=%q)", hasWarn, tc.wantWarn, buf.String())
 			}
 		})
+	}
+}
+
+// --- interactive name/sizing prompts (pmox launch [name] with sane defaults) ---
+
+// newTestLaunchFlagsCmd returns a minimal cobra.Command with just the
+// sizing flags registered — matching newLaunchCmd's own registration —
+// so cmd.Flags().Changed("cpu"/"mem"/"disk") behaves exactly like it
+// would on the real command, decoupled from the rest of its wiring.
+func newTestLaunchFlagsCmd() (*cobra.Command, *launchFlags) {
+	f := &launchFlags{}
+	cmd := &cobra.Command{Use: "launch"}
+	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "")
+	cmd.Flags().IntVar(&f.memGB, "mem", 0, "")
+	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "")
+	return cmd, f
+}
+
+func TestPromptLaunchName(t *testing.T) {
+	t.Run("returns the typed name", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"web1"}}
+		got, err := promptLaunchName(p)
+		if err != nil || got != "web1" {
+			t.Fatalf("got %q, %v; want web1", got, err)
+		}
+	})
+	t.Run("blank reply re-prompts instead of accepting an empty name", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"  ", "web1"}}
+		got, err := promptLaunchName(p)
+		if err != nil || got != "web1" {
+			t.Fatalf("got %q, %v; want web1 after the blank retry", got, err)
+		}
+		if !strings.Contains(p.err.String(), "a VM name is required") {
+			t.Errorf("stderr = %q, want the retry reason", p.err.String())
+		}
+	})
+}
+
+func TestPromptLaunchSizing(t *testing.T) {
+	t.Run("no flags set: prompts all three with built-in defaults", func(t *testing.T) {
+		cmd, f := newTestLaunchFlagsCmd()
+		p := &fakePrompter{inputs: []string{"", "", ""}} // blank = keep the shown default
+		if err := promptLaunchSizing(cmd, p, f); err != nil {
+			t.Fatalf("promptLaunchSizing: %v", err)
+		}
+		if f.cpu != defaultCPU || f.memGB != defaultMemGB || f.diskGB != defaultDiskGB {
+			t.Errorf("cpu/mem/disk = %d/%d/%d, want the built-in defaults %d/%d/%d",
+				f.cpu, f.memGB, f.diskGB, defaultCPU, defaultMemGB, defaultDiskGB)
+		}
+		wantPrompts := []string{
+			fmt.Sprintf("CPU cores [%d]: ", defaultCPU),
+			fmt.Sprintf("Memory in GiB [%d]: ", defaultMemGB),
+			fmt.Sprintf("Disk in GiB [%d]: ", defaultDiskGB),
+		}
+		for _, w := range wantPrompts {
+			if !strings.Contains(p.out.String(), w) {
+				t.Errorf("prompts = %q, missing %q", p.out.String(), w)
+			}
+		}
+	})
+	t.Run("a value already given as a flag is never re-asked", func(t *testing.T) {
+		cmd, f := newTestLaunchFlagsCmd()
+		if err := cmd.Flags().Set("cpu", "8"); err != nil {
+			t.Fatal(err)
+		}
+		p := &fakePrompter{inputs: []string{"", ""}} // only mem and disk get asked
+		if err := promptLaunchSizing(cmd, p, f); err != nil {
+			t.Fatalf("promptLaunchSizing: %v", err)
+		}
+		if f.cpu != 8 {
+			t.Errorf("cpu = %d, want 8 (from the flag, unprompted)", f.cpu)
+		}
+		if strings.Contains(p.out.String(), "CPU cores") {
+			t.Error("must not prompt for --cpu once it's already been set")
+		}
+		if f.memGB != defaultMemGB || f.diskGB != defaultDiskGB {
+			t.Errorf("mem/disk = %d/%d, want the built-in defaults", f.memGB, f.diskGB)
+		}
+	})
+	t.Run("a typed value overrides the shown default", func(t *testing.T) {
+		cmd, f := newTestLaunchFlagsCmd()
+		p := &fakePrompter{inputs: []string{"4", "8", "100"}}
+		if err := promptLaunchSizing(cmd, p, f); err != nil {
+			t.Fatalf("promptLaunchSizing: %v", err)
+		}
+		if f.cpu != 4 || f.memGB != 8 || f.diskGB != 100 {
+			t.Errorf("cpu/mem/disk = %d/%d/%d, want 4/8/100", f.cpu, f.memGB, f.diskGB)
+		}
+	})
+}
+
+func TestPromptIntDefault(t *testing.T) {
+	t.Run("blank keeps the default", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{""}}
+		got, err := promptIntDefault(p, "X", 7)
+		if err != nil || got != 7 {
+			t.Fatalf("got %d, %v; want 7", got, err)
+		}
+	})
+	t.Run("non-numeric and non-positive replies are rejected and re-prompted", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"abc", "0", "-1", "3"}}
+		got, err := promptIntDefault(p, "X", 7)
+		if err != nil || got != 3 {
+			t.Fatalf("got %d, %v; want 3 after three rejections", got, err)
+		}
+		if n := strings.Count(p.err.String(), "positive whole number"); n != 3 {
+			t.Errorf("rejection messages = %d, want 3", n)
+		}
+	})
+}
+
+func TestRunLaunch_MissingNameNonInteractiveIsAUserInputError(t *testing.T) {
+	// tui.Interactive() is false in a test process (no real TTY), so
+	// this exercises the exact non-interactive path a script/CI hits:
+	// a missing name is still a hard, immediate error — moved here from
+	// the Args validator, but the same user-facing message and now
+	// carrying the same ErrUserInput sentinel other "you must supply
+	// this" launch errors already use (previously unwrapped/ExitGeneric).
+	f := &launchFlags{}
+	cmd := &cobra.Command{Use: "launch"}
+	cmd.SetContext(context.Background())
+	err := runLaunch(cmd, "", f)
+	if err == nil || !strings.Contains(err.Error(), "missing VM name") {
+		t.Fatalf("err = %v, want the missing-VM-name message", err)
+	}
+	if !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("err = %v, want errors.Is ErrUserInput", err)
 	}
 }
 

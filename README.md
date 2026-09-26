@@ -55,6 +55,13 @@ pmox shell web1                   # interactive SSH session
 pmox delete web1                  # stop + destroy + snippet cleanup
 ```
 
+On a terminal, `pmox launch` with no name asks for one plus
+`--cpu`/`--mem`/`--disk` (blank keeps the default shown in brackets);
+`pmox launch web1` skips the name and only asks for whichever of those
+three you didn't pass as a flag. Non-interactively, a missing name is
+still an error and unset sizing flags silently use the built-in
+default (2 cores / 2 GiB / 20 GiB), same as always.
+
 `pmox init` walks through everything: API URL, token, node SSH
 credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to

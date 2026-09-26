@@ -20,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // Built-in defaults applied when neither the CLI flag nor the resolved
@@ -62,13 +63,21 @@ type launchFlags struct {
 func newLaunchCmd() *cobra.Command {
 	f := &launchFlags{}
 	cmd := &cobra.Command{
-		Use:   "launch <name>",
+		Use:   "launch [name]",
 		Short: "Launch a VM from a configured Proxmox template",
 		Long: `Launch a new VM on the resolved Proxmox cluster from a cloud-init-
 enabled template. Clones the template, tags the new VM, resizes its
 disk, uploads the per-server cloud-init snippet, starts the VM, waits
 for the qemu-guest-agent to report an IP, then runs an SSH handshake
 to confirm the VM is reachable.
+
+On a terminal, any of the name, --cpu, --mem, and --disk you didn't
+pass are prompted for (a blank reply keeps the built-in default shown
+in brackets) — 'pmox launch' alone asks for all four; 'pmox launch
+web1' skips the name and asks only for whichever sizing flags you
+didn't set. Non-interactively (scripts, CI, --output json), a missing
+name is still an error and unset sizing flags still silently use their
+built-in default, exactly as before.
 
 The cloud-init user-data is read from
 ~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
@@ -88,16 +97,17 @@ later failure leaves a cleanable VM on the cluster — there is no
 automatic rollback. If anything after clone fails, run
 'pmox delete <vmid>' to remove it.`,
 		Args: func(cmd *cobra.Command, args []string) error {
-			switch {
-			case len(args) == 0:
-				return fmt.Errorf("missing VM name — usage: pmox launch <name> (example: pmox launch web1)")
-			case len(args) > 1:
-				return fmt.Errorf("too many arguments: pmox launch takes exactly one VM name, got %d", len(args))
+			if len(args) > 1 {
+				return fmt.Errorf("too many arguments: pmox launch takes at most one VM name, got %d", len(args))
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLaunch(cmd, args[0], f)
+			var name string
+			if len(args) == 1 {
+				name = args[0]
+			}
+			return runLaunch(cmd, name, f)
 		},
 	}
 	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPU cores (default 2)")
@@ -211,6 +221,26 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 
+	// On a terminal, fill in whatever wasn't given on the command line
+	// (name, --cpu, --mem, --disk) by asking, instead of a missing name
+	// being a hard error and unset sizing flags silently defaulting.
+	// --output json (or no terminal — scripts, CI) keeps the exact old
+	// behavior: a missing name is still an error, checked here since
+	// name is no longer validated by Args.
+	if tui.Interactive() && outputMode != "json" {
+		p := newStdPrompter(ctx)
+		if name == "" {
+			if name, err = promptLaunchName(p); err != nil {
+				return err
+			}
+		}
+		if err := promptLaunchSizing(cmd, p, f); err != nil {
+			return err
+		}
+	} else if name == "" {
+		return fmt.Errorf("%w: missing VM name — usage: pmox launch <name> (example: pmox launch web1)", exitcode.ErrUserInput)
+	}
+
 	// buildClient loads config, resolves the server, emits the D-T4
 	// verbose log line, and runs the TLS pin check — all before any PVE
 	// API call.
@@ -240,6 +270,75 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "launched %s (vmid=%d, ip=%s)\n", name, r.VMID, r.IP)
 	return nil
+}
+
+// promptLaunchName asks for the new VM's name when none was given on
+// the command line. Only called when running interactively.
+func promptLaunchName(p prompter) (string, error) {
+	for {
+		name, err := p.Prompt("VM name: ")
+		if err != nil {
+			return "", err
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			return name, nil
+		}
+		p.Errf("a VM name is required\n")
+	}
+}
+
+// promptLaunchSizing fills in whichever of --cpu/--mem/--disk weren't
+// passed on the command line, prompting for each with the same
+// built-in default resolveVMSpec would otherwise silently use — a
+// blank reply keeps that default. A flag actually passed (even as its
+// zero value, which none of these three have anyway) is never
+// re-asked. Only called when running interactively.
+func promptLaunchSizing(cmd *cobra.Command, p prompter, f *launchFlags) error {
+	if !cmd.Flags().Changed("cpu") {
+		n, err := promptIntDefault(p, "CPU cores", defaultCPU)
+		if err != nil {
+			return err
+		}
+		f.cpu = n
+	}
+	if !cmd.Flags().Changed("mem") {
+		n, err := promptIntDefault(p, "Memory in GiB", defaultMemGB)
+		if err != nil {
+			return err
+		}
+		f.memGB = n
+	}
+	if !cmd.Flags().Changed("disk") {
+		n, err := promptIntDefault(p, "Disk in GiB", defaultDiskGB)
+		if err != nil {
+			return err
+		}
+		f.diskGB = n
+	}
+	return nil
+}
+
+// promptIntDefault prompts once for a positive whole number, returning
+// def on a blank reply. A non-numeric or non-positive reply is
+// rejected with a short message and re-prompted.
+func promptIntDefault(p prompter, label string, def int) (int, error) {
+	for {
+		raw, err := p.Prompt(fmt.Sprintf("%s [%d]: ", label, def))
+		if err != nil {
+			return 0, err
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return def, nil
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			p.Errf("enter a positive whole number, or press enter for %d\n", def)
+			continue
+		}
+		return n, nil
+	}
 }
 
 // newSnippetUploader returns a closure that lazily dials pvessh on
