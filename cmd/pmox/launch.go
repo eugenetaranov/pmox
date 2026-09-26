@@ -275,16 +275,24 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 // promptLaunchName asks for the new VM's name when none was given on
 // the command line. Only called when running interactively.
 func promptLaunchName(p prompter) (string, error) {
+	return promptRequired(p, "VM name: ", "a VM name is required")
+}
+
+// promptRequired prompts once for a single line, re-prompting with errMsg
+// on a blank (post-trim) reply until a non-blank one is given. Shared by
+// every command-line wizard that needs a plain required string: a VM
+// name, a new clone name, a remote command, a filesystem path.
+func promptRequired(p prompter, label, errMsg string) (string, error) {
 	for {
-		name, err := p.Prompt("VM name: ")
+		v, err := p.Prompt(label)
 		if err != nil {
 			return "", err
 		}
-		name = strings.TrimSpace(name)
-		if name != "" {
-			return name, nil
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v, nil
 		}
-		p.Errf("a VM name is required\n")
+		p.Errf("%s\n", errMsg)
 	}
 }
 

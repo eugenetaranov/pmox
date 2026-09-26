@@ -152,6 +152,26 @@ func TestPromptLaunchName(t *testing.T) {
 	})
 }
 
+func TestPromptRequired(t *testing.T) {
+	t.Run("returns the typed value", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"web2"}}
+		got, err := promptRequired(p, "New VM name: ", "a new VM name is required")
+		if err != nil || got != "web2" {
+			t.Fatalf("got %q, %v; want web2", got, err)
+		}
+	})
+	t.Run("blank reply re-prompts with errMsg", func(t *testing.T) {
+		p := &fakePrompter{inputs: []string{"  ", "web2"}}
+		got, err := promptRequired(p, "New VM name: ", "a new VM name is required")
+		if err != nil || got != "web2" {
+			t.Fatalf("got %q, %v; want web2 after the blank retry", got, err)
+		}
+		if !strings.Contains(p.err.String(), "a new VM name is required") {
+			t.Errorf("stderr = %q, want the retry reason", p.err.String())
+		}
+	})
+}
+
 func TestPromptLaunchSizing(t *testing.T) {
 	t.Run("no flags set: prompts all three with built-in defaults", func(t *testing.T) {
 		cmd, f := newTestLaunchFlagsCmd()

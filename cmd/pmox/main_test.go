@@ -117,3 +117,69 @@ func TestSSHInsecureFlag_Registered(t *testing.T) {
 		t.Fatal("--ssh-insecure flag missing")
 	}
 }
+
+// tui.Interactive() is false in a test process (no real TTY), so this
+// exercises the exact non-interactive path a script/CI hits: a bare
+// 'pmox' still just prints help and returns no error, exactly as it did
+// before RunE existed on the root command.
+func TestRootRunE_NonInteractiveShowsHelp(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{Use: "pmox", Short: "test", RunE: rootCmd.RunE}
+	cmd.SetOut(&buf)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Usage:") {
+		t.Errorf("output = %q, want help text", buf.String())
+	}
+}
+
+func TestRootMenuOptions(t *testing.T) {
+	opts := rootMenuOptions(rootCmd)
+	if len(opts) == 0 {
+		t.Fatal("no menu options")
+	}
+	names := make([]string, len(opts))
+	for i, o := range opts {
+		names[i] = o.Value
+	}
+
+	for _, excluded := range []string{"configure", "help", "completion"} {
+		if idx := indexOf(names, excluded); idx >= 0 {
+			t.Errorf("menu includes %q at %d, want it excluded", excluded, idx)
+		}
+	}
+
+	for _, n := range []string{"launch", "delete", "apply", "doctor", "version"} {
+		if indexOf(names, n) < 0 {
+			t.Fatalf("menu missing %q (names=%v)", n, names)
+		}
+	}
+
+	// delete/launch are both in the lifecycle group, which cobra keeps
+	// (and rootMenuOptions preserves) in alphabetical order — matching
+	// the order `pmox --help` prints them in.
+	if !(indexOf(names, "delete") < indexOf(names, "launch")) {
+		t.Errorf("lifecycle group not alphabetical: %v", names)
+	}
+	// Group order must match addGrouped's registration order: lifecycle,
+	// then access, then setup, with ungrouped commands (version) last.
+	if !(indexOf(names, "launch") < indexOf(names, "apply")) {
+		t.Errorf("lifecycle group must precede access group: %v", names)
+	}
+	if !(indexOf(names, "apply") < indexOf(names, "doctor")) {
+		t.Errorf("access group must precede setup group: %v", names)
+	}
+	if !(indexOf(names, "doctor") < indexOf(names, "version")) {
+		t.Errorf("ungrouped commands (version) must come last: %v", names)
+	}
+}
+
+func indexOf(s []string, v string) int {
+	for i, x := range s {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}

@@ -7,8 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -33,11 +35,18 @@ writes on first run. Edit that file to customize the new VM, or run
 --storage and --snippet-storage are independent: the first targets
 the new VM's disk, the second targets the cloud-init snippet upload
 (must support 'snippets'). --snippet-storage falls back to the
-configured snippet_storage, then to --storage with a warning.`,
-		Args: cobra.RangeArgs(1, 2),
+configured snippet_storage, then to --storage with a warning.
+
+On a terminal, 'pmox clone' alone prompts for the source VM (the
+shared picker) and the new name; 'pmox clone web1' skips straight to
+the new-name prompt.`,
+		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			src, newName := "", args[0]
-			if len(args) == 2 {
+			var src, newName string
+			switch len(args) {
+			case 1:
+				newName = args[0]
+			case 2:
 				src, newName = args[0], args[1]
 			}
 			return runClone(cmd, src, newName, f)
@@ -63,6 +72,17 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	hk, err := resolveHook(f)
 	if err != nil {
 		return err
+	}
+	// No new name given → same terminal-only prompt launch uses for its
+	// VM name, checked before any config load / server resolution / PVE
+	// call; non-interactively this is still a hard, immediate error.
+	if newName == "" {
+		if !tui.Interactive() || outputMode == "json" {
+			return fmt.Errorf("%w: missing new VM name — usage: pmox clone [source-name|vmid] <new-name> (example: pmox clone web1 web2)", exitcode.ErrUserInput)
+		}
+		if newName, err = promptRequired(newStdPrompter(ctx), "New VM name: ", "a new VM name is required"); err != nil {
+			return err
+		}
 	}
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {

@@ -62,6 +62,13 @@ three you didn't pass as a flag. Non-interactively, a missing name is
 still an error and unset sizing flags silently use the built-in
 default (2 cores / 2 GiB / 20 GiB), same as always.
 
+On a terminal, running `pmox` with no command at all shows an
+arrow-key (or type-to-filter) picker of every command, grouped the
+same way `pmox --help` is; picking one runs it with no further
+arguments, so that command's own prompts (a VM picker, `launch`'s
+name/sizing prompts, etc.) take over from there. Non-interactively
+this still just prints help, as before.
+
 `pmox init` walks through everything: API URL, token, node SSH
 credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to
@@ -138,11 +145,12 @@ Most target-taking commands work without typing a VM name. Omit it and
 pmox auto-selects the only pmox-tagged VM when exactly one exists, or
 shows an **arrow-key picker** when several do:
 
-- `info`, `start`, `stop`, `delete`, `shell`, `exec`, `ssh-config` — omit the `[name|vmid]`.
+- `info`, `start`, `stop`, `delete`, `shell`, `exec`, `ssh-config`, `apply` — omit the `[name|vmid]`.
 - `stop` and `delete` show a **multi-select** picker (space to toggle, enter to confirm) and also accept several names at once.
-- `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM.
-- `clone <new-name>` — omit the source to pick it.
-- `mount` / `umount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`.
+- `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM, or omit both arguments entirely and pmox asks for a direction (upload/download), the VM, and both paths.
+- `clone <new-name>` — omit the source to pick it, or omit both source and new name and pmox asks for each in turn.
+- `exec [name|vmid]` — omit the remote command after `--` and pmox asks for it.
+- `mount` / `umount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, or for `mount`, omit both arguments and pmox asks for the local path and the remote target.
 - `config use-context` — omit the name to pick a context.
 
 Pickers are strictly non-obtrusive: an explicit arg always skips them,

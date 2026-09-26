@@ -22,6 +22,24 @@ import (
 	"github.com/eugenetaranov/pmox/internal/server"
 )
 
+// TestRunClone_MissingNewNameNonInteractiveIsAUserInputError mirrors
+// TestRunLaunch_MissingNameNonInteractiveIsAUserInputError: tui.Interactive()
+// is false in a test process (no real TTY), so this exercises the exact
+// non-interactive path a script/CI hits — a missing new name is a hard,
+// immediate error, checked before any config load / PVE call.
+func TestRunClone_MissingNewNameNonInteractiveIsAUserInputError(t *testing.T) {
+	f := &launchFlags{}
+	cmd := &cobra.Command{Use: "clone"}
+	cmd.SetContext(context.Background())
+	err := runClone(cmd, "web1", "", f)
+	if err == nil || !strings.Contains(err.Error(), "missing new VM name") {
+		t.Fatalf("err = %v, want the missing-new-VM-name message", err)
+	}
+	if !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("err = %v, want errors.Is ErrUserInput", err)
+	}
+}
+
 // Clone shares resolveVMSpec with launch, so an unset storage is
 // rejected before any PVE call instead of producing ide2=":cloudinit".
 func TestClone_ResolveVMSpecRejectsEmptyStorage(t *testing.T) {

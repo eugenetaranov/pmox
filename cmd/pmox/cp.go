@@ -8,9 +8,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // ensureVMRef resolves the VM side of a cp/sync transfer. An explicit
@@ -55,6 +58,56 @@ func resolveTransferArgs(args []string) (local string, remote remoteArg, localIs
 	default:
 		return args[0], remoteArg{vmRef: dstRef, remotePath: dstPath}, true, nil
 	}
+}
+
+// resolveCpSyncArgs returns cp/sync's source and destination the way
+// resolveTransferArgs does, either parsed straight from args (the
+// len==2 case zeroOrExactArgs guarantees) or, with none given on a
+// terminal, by prompting for a direction, the local path, a VM (the
+// shared picker), and the remote path. Non-interactively with zero
+// args this is still the same hard error cp/sync always gave.
+func resolveCpSyncArgs(ctx context.Context, client *pveclient.Client, args []string, usage, example string) (localArg string, remote remoteArg, localIsSource bool, err error) {
+	if len(args) == 2 {
+		return resolveTransferArgs(args)
+	}
+	if !tui.Interactive() || outputMode == "json" {
+		return "", remoteArg{}, false, fmt.Errorf("%w: expected 2 arguments, got 0 — usage: %s (example: %s)", exitcode.ErrUserInput, usage, example)
+	}
+
+	dir, err := tui.Select("Direction", []huh.Option[string]{
+		huh.NewOption("Upload: local → VM", "upload"),
+		huh.NewOption("Download: VM → local", "download"),
+	})
+	if err != nil {
+		return "", remoteArg{}, false, err
+	}
+	picked, err := vmPickFn(ctx, client)
+	if err != nil {
+		return "", remoteArg{}, false, err
+	}
+	vmRef := strconv.Itoa(picked.VMID)
+
+	p := newStdPrompter(ctx)
+	if dir == "upload" {
+		local, err := promptRequired(p, "Local source path: ", "a path is required")
+		if err != nil {
+			return "", remoteArg{}, false, err
+		}
+		remotePath, err := promptRequired(p, "Remote destination path: ", "a path is required")
+		if err != nil {
+			return "", remoteArg{}, false, err
+		}
+		return local, remoteArg{vmRef: vmRef, remotePath: remotePath}, true, nil
+	}
+	remotePath, err := promptRequired(p, "Remote source path: ", "a path is required")
+	if err != nil {
+		return "", remoteArg{}, false, err
+	}
+	local, err := promptRequired(p, "Local destination path: ", "a path is required")
+	if err != nil {
+		return "", remoteArg{}, false, err
+	}
+	return local, remoteArg{vmRef: vmRef, remotePath: remotePath}, false, nil
 }
 
 // scpOptionArgs returns the scp "-o" host-key options plus an optional
@@ -120,8 +173,11 @@ Examples:
   pmox cp ./app.tar.gz web1:/tmp/
   pmox cp web1:/var/log/syslog ./logs/
   pmox cp -r ./config/ web1:/etc/app/
-  pmox cp ./big.tar web1:/tmp/ -- -l 1000`,
-		Args:               exactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
+  pmox cp ./big.tar web1:/tmp/ -- -l 1000
+
+On a terminal, 'pmox cp' alone prompts for a direction, the local
+path, a VM (the shared picker), and the remote path.`,
+		Args:               zeroOrExactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCp(cmd, args, f, recursive)
@@ -138,17 +194,17 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 		return fmt.Errorf("scp binary not found on PATH; install OpenSSH to use pmox cp")
 	}
 
-	localArg, remote, localIsSource, err := resolveTransferArgs(args)
-	if err != nil {
-		return err
-	}
-
 	ctx := cmd.Context()
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	srv := resolved.Server
+
+	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, client, args, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
+	if err != nil {
+		return err
+	}
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {
@@ -193,8 +249,11 @@ rsync over SSH. Exactly one of source or destination must use
 Examples:
   pmox sync ./src/ web1:/opt/app/
   pmox sync web1:/var/log/ ./logs/
-  pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git`,
-		Args:               exactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
+  pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git
+
+On a terminal, 'pmox sync' alone prompts for a direction, the local
+path, a VM (the shared picker), and the remote path.`,
+		Args:               zeroOrExactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSync(cmd, args, f)
@@ -210,17 +269,17 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return fmt.Errorf("rsync binary not found on PATH; install rsync to use pmox sync")
 	}
 
-	localArg, remote, localIsSource, err := resolveTransferArgs(args)
-	if err != nil {
-		return err
-	}
-
 	ctx := cmd.Context()
 	client, resolved, err := buildClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	srv := resolved.Server
+
+	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, client, args, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/")
+	if err != nil {
+		return err
+	}
 
 	remote.vmRef, err = ensureVMRef(ctx, cmd, client, remote.vmRef)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -358,6 +359,28 @@ func TestRunMountDaemon_RefusesLiveDuplicate(t *testing.T) {
 	err = runMountDaemon(newTestUmountCmd(), "./src", "web1", "/opt/app", "", &mountFlags{debounce: 300 * time.Millisecond})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mount already active")
+}
+
+func TestResolveMountArgs(t *testing.T) {
+	t.Run("two args pass through unchanged", func(t *testing.T) {
+		cmd := newMountCmd()
+		localPath, destArg, err := resolveMountArgs(cmd, []string{"./src", "web1:/opt/app"})
+		require.NoError(t, err)
+		assert.Equal(t, "./src", localPath)
+		assert.Equal(t, "web1:/opt/app", destArg)
+	})
+
+	// tui.Interactive() is false in a test process (no real TTY), so this
+	// exercises the exact non-interactive path a script/CI hits: zero
+	// arguments is still a hard, immediate error.
+	t.Run("zero args non-interactively is an error", func(t *testing.T) {
+		cmd := newMountCmd()
+		cmd.SetContext(context.Background())
+		_, _, err := resolveMountArgs(cmd, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected 2 arguments, got 0")
+		assert.True(t, errors.Is(err, exitcode.ErrUserInput))
+	})
 }
 
 func TestMountArgValidation(t *testing.T) {

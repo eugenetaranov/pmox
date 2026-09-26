@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tui"
@@ -102,8 +103,12 @@ Examples:
   pmox mount -F ./src web1:/opt/app
   pmox mount --no-delete --no-gitignore ./src web1:/opt/app
   pmox mount --exclude=.git --exclude='*.log' ./src web1:/opt/app
-  pmox mount ./src web1:/opt/app -- --bwlimit=1000`,
-		Args: exactArgs(2, "pmox mount <local_path> [<name|vmid>:]<remote_path>", "pmox mount ./src web1:/opt/app"),
+  pmox mount ./src web1:/opt/app -- --bwlimit=1000
+
+On a terminal, 'pmox mount' alone prompts for both the local path and
+the remote target (the latter falling back to the shared VM picker
+when it has no <name|vmid>: prefix, same as when typed explicitly).`,
+		Args: zeroOrExactArgs(2, "pmox mount <local_path> [<name|vmid>:]<remote_path>", "pmox mount ./src web1:/opt/app"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMount(cmd, args, f)
 		},
@@ -143,13 +148,39 @@ Examples:
 	return cmd
 }
 
+// resolveMountArgs returns mount's two positionals, prompting for
+// whichever are missing when running interactively. cobra's Args check
+// (zeroOrExactArgs) already guarantees len(args) is 0 or 2, so only the
+// all-missing case needs handling; non-interactively that's still the
+// same hard error mount always gave for a missing argument.
+func resolveMountArgs(cmd *cobra.Command, args []string) (localPath, destArg string, err error) {
+	if len(args) == 2 {
+		return args[0], args[1], nil
+	}
+	if !tui.Interactive() || outputMode == "json" {
+		return "", "", fmt.Errorf("%w: expected 2 arguments, got 0 — usage: pmox mount <local_path> [<name|vmid>:]<remote_path> (example: pmox mount ./src web1:/opt/app)", exitcode.ErrUserInput)
+	}
+	p := newStdPrompter(cmd.Context())
+	if localPath, err = promptRequired(p, "Local path to sync: ", "a local path is required"); err != nil {
+		return "", "", err
+	}
+	if destArg, err = promptRequired(p, "Remote target ([name|vmid:]path): ", "a remote target is required"); err != nil {
+		return "", "", err
+	}
+	return localPath, destArg, nil
+}
+
 func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	rsyncPath, err := exec.LookPath("rsync")
 	if err != nil {
 		return fmt.Errorf("rsync binary not found on PATH; install rsync to use pmox mount")
 	}
 
-	localPath := args[0]
+	localPath, destArg, err := resolveMountArgs(cmd, args)
+	if err != nil {
+		return err
+	}
+
 	info, err := os.Stat(localPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -168,7 +199,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 	srv := resolved.Server
 
-	ref, remotePath, err := mountResolveDestFn(ctx, client, cmd.ErrOrStderr(), args[1])
+	ref, remotePath, err := mountResolveDestFn(ctx, client, cmd.ErrOrStderr(), destArg)
 	if err != nil {
 		return err
 	}

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 )
 
 func TestParseRemoteArg(t *testing.T) {
@@ -85,6 +89,30 @@ func TestResolveTransferArgs(t *testing.T) {
 			assert.Equal(t, tt.wantLocalSrc, localIsSrc)
 		})
 	}
+}
+
+func TestResolveCpSyncArgs(t *testing.T) {
+	t.Run("two args pass through to resolveTransferArgs, no client needed", func(t *testing.T) {
+		local, remote, localIsSrc, err := resolveCpSyncArgs(context.Background(), nil,
+			[]string{"./file.txt", "web1:/tmp/"}, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
+		require.NoError(t, err)
+		assert.Equal(t, "./file.txt", local)
+		assert.Equal(t, "web1", remote.vmRef)
+		assert.Equal(t, "/tmp/", remote.remotePath)
+		assert.True(t, localIsSrc)
+	})
+
+	// tui.Interactive() is false in a test process (no real TTY), so this
+	// exercises the exact non-interactive path a script/CI hits: zero
+	// arguments is still a hard, immediate error, and the picker/prompts
+	// are never reached (nil client would otherwise panic).
+	t.Run("zero args non-interactively is an error", func(t *testing.T) {
+		_, _, _, err := resolveCpSyncArgs(context.Background(), nil,
+			nil, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected 2 arguments, got 0")
+		assert.True(t, errors.Is(err, exitcode.ErrUserInput))
+	})
 }
 
 func TestBuildScpArgs(t *testing.T) {

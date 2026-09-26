@@ -17,6 +17,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
+	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
 	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
@@ -75,7 +76,9 @@ argument and the remote command.
 
 The VM argument is optional: when omitted, pmox auto-selects the
 only pmox VM when one exists, or shows an interactive picker when
-there are several.
+there are several. On a terminal, the remote command is also
+optional and prompted for when omitted; non-interactively it must be
+given after "--".
 
 If the VM is stopped, exec auto-starts it and waits for SSH
 readiness before running the command.
@@ -167,19 +170,31 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 }
 
 // splitExecArgs splits exec's positionals at the literal "--": at most
-// one VM argument before it, and the (required) remote command after.
+// one VM argument before it, and the remote command after. On a
+// terminal, an omitted command is prompted for instead of erroring;
+// non-interactively it is still required after "--".
 func splitExecArgs(cmd *cobra.Command, args []string) (vmArgs, remoteArgs []string, err error) {
 	n := cmd.ArgsLenAtDash()
 	if n >= 0 {
+		vmArgs = args[:n]
 		remoteArgs = args[n:]
+	} else {
+		vmArgs = args
 	}
 	if len(remoteArgs) == 0 {
-		return nil, nil, fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
+		if !tui.Interactive() || outputMode == "json" {
+			return nil, nil, fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
+		}
+		line, err := promptRequired(newStdPrompter(cmd.Context()), "Command to run: ", "a command is required")
+		if err != nil {
+			return nil, nil, err
+		}
+		remoteArgs = strings.Fields(line)
 	}
-	if n > 1 {
+	if len(vmArgs) > 1 {
 		return nil, nil, fmt.Errorf("exec takes at most one VM positional argument before `--`")
 	}
-	return args[:n], remoteArgs, nil
+	return vmArgs, remoteArgs, nil
 }
 
 // runRemote runs ssh for exec. A non-zero exit from ssh (the remote

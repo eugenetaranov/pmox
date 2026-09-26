@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -67,7 +68,8 @@ var rootCmd = &cobra.Command{
 	Long: `pmox is a command-line tool for launching and managing VMs on Proxmox VE,
 inspired by Canonical's multipass.
 
-Run ` + "`pmox --help`" + ` to see available commands.`,
+Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
+'pmox' with no command shows an interactive picker instead.`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	// Runtime errors should not print the usage block; usage is only for
 	// flag/argument parsing errors, which cobra still shows because those
@@ -81,6 +83,58 @@ Run ` + "`pmox --help`" + ` to see available commands.`,
 	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		tui.SetNoInput(noInput || envBool("PMOX_NO_INPUT") || outputMode == "json")
 	},
+	// With RunE set, cobra routes a bare 'pmox' (no positional args —
+	// any subcommand-shaped input still resolves to that subcommand and
+	// never reaches this) here instead of printing help. Non-interactively
+	// (no TTY, --no-input, --output json) fall back to the exact old
+	// behavior: print help, no error.
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if !tui.Interactive() {
+			return cmd.Help()
+		}
+		return runRootMenu(cmd)
+	},
+}
+
+// runRootMenu shows a top-level command picker (arrow keys, or type to
+// filter) and, once one is chosen, runs it exactly as if it had been
+// typed with no further arguments — so each command's own interactive
+// prompting (a VM picker, launch's name/sizing prompts, etc.) takes over
+// from there.
+func runRootMenu(cmd *cobra.Command) error {
+	root := cmd.Root()
+	opts := rootMenuOptions(root)
+	chosen, err := tui.Select("What would you like to do?", opts)
+	if err != nil {
+		return err
+	}
+	root.SetArgs([]string{chosen})
+	return root.ExecuteContext(cmd.Context())
+}
+
+// rootMenuOptions lists root's runnable subcommands in the same order
+// they appear under `pmox --help`: grouped (lifecycle, then access, then
+// setup — see addGrouped), then ungrouped commands (version) last.
+// cobra keeps Commands() sorted alphabetically by name, so each group's
+// commands come out alphabetically too, matching --help exactly. The
+// hidden 'configure' shim and cobra's own 'help'/'completion' commands
+// are noise in a picker and are skipped.
+func rootMenuOptions(root *cobra.Command) []huh.Option[string] {
+	groupOrder := []string{groupLifecycle, groupAccess, groupSetup, ""}
+	byGroup := make(map[string][]*cobra.Command, len(groupOrder))
+	for _, c := range root.Commands() {
+		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+			continue
+		}
+		byGroup[c.GroupID] = append(byGroup[c.GroupID], c)
+	}
+	var opts []huh.Option[string]
+	for _, g := range groupOrder {
+		for _, c := range byGroup[g] {
+			opts = append(opts, huh.NewOption(fmt.Sprintf("%-15s %s", c.Name(), c.Short), c.Name()))
+		}
+	}
+	return opts
 }
 
 var versionCmd = &cobra.Command{
@@ -186,6 +240,25 @@ func exactArgs(n int, usage, example string) cobra.PositionalArgs {
 			return nil
 		}
 		return fmt.Errorf("expected %d argument(s), got %d — usage: %s (example: %s)", n, got, usage, example)
+	}
+}
+
+// zeroOrExactArgs accepts either zero positional arguments (the command
+// then prompts for all of them interactively) or exactly n. Any other
+// count — most commonly a partial set that would leave the remaining
+// ones ambiguous — is rejected with the same example-driven error
+// exactArgs uses. Arguments after a literal "--" are not counted, same
+// as exactArgs.
+func zeroOrExactArgs(n int, usage, example string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		got := len(args)
+		if d := cmd.ArgsLenAtDash(); d >= 0 {
+			got = d
+		}
+		if got == 0 || got == n {
+			return nil
+		}
+		return fmt.Errorf("expected 0 or %d argument(s), got %d — usage: %s (example: %s)", n, got, usage, example)
 	}
 }
 
