@@ -349,8 +349,13 @@ tack verifies against `~/.ssh/known_hosts` (independently of pmox's own
 itself before invoking tack — the same trust-on-first-connect model
 every other pmox SSH command already applies, just extended to the one
 file tack actually reads. `--ssh-insecure` skips both tack's own
-verification and this pinning. `pmox doctor` reports whether tack and a
-default playbook are present.
+verification and this pinning. **Passwords:** every pmox-managed VM has
+passwordless sudo (the cloud-init template grants it) and key-based
+SSH, so pmox sets `TACK_SUDO_NO_PROMPT=1` / `TACK_SSH_NO_PROMPT=1` in
+tack's environment (never a flag — nothing sensitive should ever land
+in `ps` output) so it never blocks on a password prompt it doesn't
+need. `pmox doctor` reports whether tack and a default playbook are
+present.
 
 Runnable examples of all three hook shapes live in
 [examples/README.md](./examples/README.md).

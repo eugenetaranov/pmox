@@ -52,6 +52,11 @@ trust-on-first-connect model every other pmox SSH command already
 applies, so this is normally invisible. --ssh-insecure skips both tack's
 own verification and this pinning.
 
+Every pmox-managed VM has passwordless sudo (the cloud-init template
+grants it) and key-based SSH, so tack is told (via TACK_SUDO_NO_PROMPT /
+TACK_SSH_NO_PROMPT — env, not a flag, so nothing sensitive ever lands in
+argv) to never block waiting on a password it doesn't need.
+
 Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

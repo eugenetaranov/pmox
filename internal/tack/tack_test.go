@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -75,6 +76,18 @@ func TestCommand(t *testing.T) {
 	}
 	if cmd.Env == nil {
 		t.Error("Env not inherited")
+	}
+	// Every pmox-managed VM has passwordless sudo and key-based SSH, so
+	// tack must never block waiting on a password prompt — several
+	// callers (the --tack hook, --output json) don't even wire a
+	// terminal for it to prompt on. Set via env (not a flag/argv), the
+	// right shape for anything with a value too, so a real secret would
+	// never show up in `ps`.
+	if !slices.Contains(cmd.Env, "TACK_SUDO_NO_PROMPT=1") {
+		t.Errorf("Env = %v, missing TACK_SUDO_NO_PROMPT=1", cmd.Env)
+	}
+	if !slices.Contains(cmd.Env, "TACK_SSH_NO_PROMPT=1") {
+		t.Errorf("Env = %v, missing TACK_SSH_NO_PROMPT=1", cmd.Env)
 	}
 }
 

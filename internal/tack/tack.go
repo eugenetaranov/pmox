@@ -102,7 +102,17 @@ func Command(ctx context.Context, o Options) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("tack: no target host specified")
 	}
 	cmd := exec.CommandContext(ctx, "tack", Args(o)...)
-	cmd.Env = os.Environ()
+	// Every pmox-managed VM has passwordless sudo (the cloud-init
+	// template sets "sudo: ALL=(ALL) NOPASSWD:ALL" for its user) and
+	// key-based SSH (pmox always supplies KeyPath), so tack should
+	// never need to prompt for either password — and several callers
+	// (the --tack launch/clone hook, --output json) don't even wire a
+	// terminal for tack to prompt on, so an unexpected prompt just hangs
+	// forever. Set via env, not a flag: the right shape for anything
+	// with a value too, so a real secret never lands in argv (visible
+	// to any local user via ps) — these two happen to be plain
+	// booleans, but the convention should hold regardless.
+	cmd.Env = append(os.Environ(), "TACK_SUDO_NO_PROMPT=1", "TACK_SSH_NO_PROMPT=1")
 	cmd.WaitDelay = waitDelay
 	return cmd, nil
 }
