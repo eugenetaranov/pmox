@@ -159,18 +159,18 @@ func TestRootMenuOptions(t *testing.T) {
 	// delete/launch are both in the lifecycle group, which cobra keeps
 	// (and rootMenuOptions preserves) in alphabetical order — matching
 	// the order `pmox --help` prints them in.
-	if !(indexOf(names, "delete") < indexOf(names, "launch")) {
+	if indexOf(names, "delete") >= indexOf(names, "launch") {
 		t.Errorf("lifecycle group not alphabetical: %v", names)
 	}
 	// Group order must match addGrouped's registration order: lifecycle,
 	// then access, then setup, with ungrouped commands (version) last.
-	if !(indexOf(names, "launch") < indexOf(names, "apply")) {
+	if indexOf(names, "launch") >= indexOf(names, "apply") {
 		t.Errorf("lifecycle group must precede access group: %v", names)
 	}
-	if !(indexOf(names, "apply") < indexOf(names, "doctor")) {
+	if indexOf(names, "apply") >= indexOf(names, "doctor") {
 		t.Errorf("access group must precede setup group: %v", names)
 	}
-	if !(indexOf(names, "doctor") < indexOf(names, "version")) {
+	if indexOf(names, "doctor") >= indexOf(names, "version") {
 		t.Errorf("ungrouped commands (version) must come last: %v", names)
 	}
 }
