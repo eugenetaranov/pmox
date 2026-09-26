@@ -46,9 +46,11 @@ shown; pass -y to auto-approve, or --check to plan only. --output json
 also auto-approves (there is no terminal to confirm on), so a scripted
 caller relying on -y alone for that gate should know --output json has
 the same effect on its own. tack verifies the host key against
-~/.ssh/known_hosts; on the first apply to a brand-new VM you may need
-to scan it (ssh-keyscan -H <ip> >> ~/.ssh/known_hosts) or pass
---ssh-insecure.
+~/.ssh/known_hosts (independently of pmox's own known_hosts_guests);
+apply pins an unknown key there itself before invoking tack, the same
+trust-on-first-connect model every other pmox SSH command already
+applies, so this is normally invisible. --ssh-insecure skips both tack's
+own verification and this pinning.
 
 Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/.`,
 		Args: cobra.MaximumNArgs(2),
@@ -138,6 +140,20 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	// only other way to answer "what will a bare 'pmox apply <vm>' run?"
 	// is opening the tack-profile state file by hand.
 	fmt.Fprintf(cmd.ErrOrStderr(), "Applying %s (%s) to vm %d at %s\n", playbook, source, ref.VMID, ip)
+
+	// tack's own SSH client checks ~/.ssh/known_hosts and has no
+	// equivalent of ssh's -o UserKnownHostsFile, so a VM only pmox has
+	// ever SSHed to (via its own, separately-managed guest known_hosts)
+	// still looks brand-new to tack. Pin it here with the same
+	// trust-on-first-connect model guestHostKeyOpts already applies
+	// everywhere else, so a first 'pmox apply' doesn't require a manual
+	// ssh-keyscan. Best-effort: a pinning failure (e.g. host down) just
+	// falls through to tack's own, more specific connection error.
+	if pinned, err := tack.PinHostKey(ctx, ip, SSHInsecure()); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not pre-pin SSH host key: %v\n", err)
+	} else if pinned {
+		fmt.Fprintf(cmd.ErrOrStderr(), "pinned new SSH host key for %s into ~/.ssh/known_hosts\n", ip)
+	}
 
 	opts := tack.Options{
 		Playbook:    playbook,
@@ -259,6 +275,9 @@ const starterPlaybook = `# pmox tack starter playbook — https://github.com/tac
 # the roles/ path segment, since that's where tack-roles.git keeps them).
 name: pmox bootstrap
 hosts: all
+# The docker role installs packages and manages a systemd service, both
+# of which need root — sudo: true is inherited by every task below.
+sudo: true
 
 roles:
   - role: https://github.com/tackhq/tack-roles.git//roles/docker

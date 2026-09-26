@@ -89,6 +89,10 @@ type TackHook struct {
 
 func (h *TackHook) Name() string { return "tack" }
 
+// pinTackHostKeyFn is tack.PinHostKey — a real network dial. Overridden
+// in tests to avoid one.
+var pinTackHostKeyFn = tack.PinHostKey
+
 func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) error {
 	cmd, err := tack.Command(ctx, tack.Options{
 		Playbook:    h.ConfigPath,
@@ -104,6 +108,19 @@ func (h *TackHook) Run(ctx context.Context, env Env, stdout, stderr io.Writer) e
 		}
 		return err
 	}
+
+	// A freshly launched VM's first ever SSH connection is this one —
+	// tack's own client checks ~/.ssh/known_hosts and has no equivalent
+	// of ssh's -o UserKnownHostsFile, so without this it always fails
+	// the handshake on brand-new hosts. Only attempted once tack itself
+	// is confirmed available, so an environment without tack installed
+	// fails on that alone, with no SSH probe first. Best-effort: a
+	// pinning failure just falls through to tack's own, more specific
+	// connection error.
+	if pinned, err := pinTackHostKeyFn(ctx, env.IP, env.Insecure); err == nil && pinned {
+		fmt.Fprintf(stderr, "pinned new SSH host key for %s into ~/.ssh/known_hosts\n", env.IP)
+	}
+
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

@@ -343,12 +343,14 @@ pmox apply web1 --playbook ./p.yaml
 tack's own plan/apply confirmation is shown; pass `-y` (or
 `PMOX_ASSUME_YES=1`) to auto-approve — `--output json` also
 auto-approves, since there's no terminal to confirm on. **Host keys:**
-tack verifies against
-`~/.ssh/known_hosts` (independently of pmox's own `known_hosts_guests`),
-so the first apply to a brand-new VM may report an unknown host key —
-scan it (`ssh-keyscan -H <ip> >> ~/.ssh/known_hosts`) or pass
-`--ssh-insecure`. `pmox doctor` reports whether tack and a default
-playbook are present.
+tack verifies against `~/.ssh/known_hosts` (independently of pmox's own
+`known_hosts_guests`) and has no equivalent of ssh's own
+`-o UserKnownHostsFile`, so `pmox apply` pins an unknown key there
+itself before invoking tack — the same trust-on-first-connect model
+every other pmox SSH command already applies, just extended to the one
+file tack actually reads. `--ssh-insecure` skips both tack's own
+verification and this pinning. `pmox doctor` reports whether tack and a
+default playbook are present.
 
 Runnable examples of all three hook shapes live in
 [examples/README.md](./examples/README.md).

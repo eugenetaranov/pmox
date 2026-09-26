@@ -217,6 +217,20 @@ func TestStarterPlaybookRoleHasRolesPrefix(t *testing.T) {
 	}
 }
 
+// TestStarterPlaybookHasSudo guards a second regression alongside the
+// roles/ prefix fix: the docker role installs packages and manages a
+// systemd service, both of which need root (its own README says so),
+// but the scaffolded playbook never declared sudo: true. The very
+// first `pmox apply <vm>` after `--init` applied cleanly through
+// planning, then failed on the actual apt-get with a permission error
+// — again on a file pmox itself generated. Confirmed against a live
+// VM: sudo: true (inherited by every task in the play) fixes it.
+func TestStarterPlaybookHasSudo(t *testing.T) {
+	if !strings.Contains(starterPlaybook, "sudo: true") {
+		t.Errorf("starterPlaybook missing 'sudo: true':\n%s", starterPlaybook)
+	}
+}
+
 // TestTackRunError_ExitsAsHook guards the exit-code consistency fix: a
 // failed tack run through `pmox apply` now maps to the same ExitHook
 // code a failed `pmox launch --tack` hook uses, instead of collapsing

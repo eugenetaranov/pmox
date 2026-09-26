@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 )
 
 // ErrNotInstalled is returned when the tack binary is not on PATH.
@@ -117,4 +119,36 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
+}
+
+// pinHostKeyTimeout bounds PinHostKey's own dial+handshake, independent
+// of ctx's deadline (callers — apply, the --tack hook — pass a
+// long-lived, deadline-less command context). Without this, an
+// unreachable VM would hang the pre-flight probe indefinitely before
+// tack itself ever gets a chance to fail with its own, more specific
+// connection error.
+const pinHostKeyTimeout = 10 * time.Second
+
+// PinHostKey pins ip's SSH host key into ~/.ssh/known_hosts if it isn't
+// already there, with no prompt (TOFU) — a no-op once the host is
+// known. tack's own SSH client always reads that fixed file and has no
+// equivalent of ssh's -o UserKnownHostsFile, so this is the only way to
+// give a VM's first tack connection the same trust-on-first-connect
+// treatment every other pmox SSH command already applies via its own,
+// separately-managed known_hosts. insecure skips pinning entirely —
+// tack's own --ssh-insecure (wired from the same flag) already disables
+// its host-key verification, so pinning would be pointless. Callers
+// should treat a non-nil error as best-effort: fall through to tack's
+// own connection attempt rather than failing outright.
+func PinHostKey(ctx context.Context, ip string, insecure bool) (pinned bool, err error) {
+	if insecure {
+		return false, nil
+	}
+	path, err := pvessh.DefaultKnownHostsPath()
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, pinHostKeyTimeout)
+	defer cancel()
+	return pvessh.EnsureHostKeyKnown(ctx, ip, path)
 }

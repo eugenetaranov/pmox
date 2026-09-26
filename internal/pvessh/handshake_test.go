@@ -109,3 +109,57 @@ func TestPromptAndPinHostKey_SilentServerHonorsCancel(t *testing.T) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 }
+
+// TestEnsureHostKeyKnown covers the TOFU (no-prompt) pinning path used
+// for callers — currently just tack — that read a fixed known_hosts
+// file with no way to point at pmox's own: pin once on an unknown host,
+// then no-op (no second dial's worth of side effects to check for, but
+// pinned must report false) once it's known.
+func TestEnsureHostKeyKnown(t *testing.T) {
+	srv := newTestServer(t)
+	srv.start(t)
+	kh := filepath.Join(t.TempDir(), "known_hosts")
+
+	pinned, err := EnsureHostKeyKnown(context.Background(), srv.addr, kh)
+	if err != nil {
+		t.Fatalf("EnsureHostKeyKnown (first call): %v", err)
+	}
+	if !pinned {
+		t.Error("pinned = false on first call, want true (host was unknown)")
+	}
+	has, err := KnownHostsHas(kh, srv.addr)
+	if err != nil || !has {
+		t.Errorf("KnownHostsHas after pinning: has=%v err=%v, want true/nil", has, err)
+	}
+
+	pinned, err = EnsureHostKeyKnown(context.Background(), srv.addr, kh)
+	if err != nil {
+		t.Fatalf("EnsureHostKeyKnown (second call): %v", err)
+	}
+	if pinned {
+		t.Error("pinned = true on second call, want false (host already known)")
+	}
+}
+
+func TestEnsureHostKeyKnown_SilentServerHonorsCancel(t *testing.T) {
+	addr := silentListener(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	kh := filepath.Join(t.TempDir(), "known_hosts")
+	if _, err := EnsureHostKeyKnown(ctx, addr, kh); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestDefaultKnownHostsPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := DefaultKnownHostsPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownHostsPath: %v", err)
+	}
+	if want := filepath.Join(home, ".ssh", "known_hosts"); got != want {
+		t.Errorf("DefaultKnownHostsPath() = %q, want %q", got, want)
+	}
+}

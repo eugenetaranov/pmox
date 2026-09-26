@@ -16,6 +16,15 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 )
 
+// TestMain stubs out the real network dial pinTackHostKeyFn normally
+// does — host-key pinning itself is covered in internal/tack and
+// internal/pvessh; no test here needs (or should pay for) a real SSH
+// probe against a fake IP like "1.2.3.4".
+func TestMain(m *testing.M) {
+	pinTackHostKeyFn = func(context.Context, string, bool) (bool, error) { return false, nil }
+	os.Exit(m.Run())
+}
+
 func writeTempScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "hook.sh")

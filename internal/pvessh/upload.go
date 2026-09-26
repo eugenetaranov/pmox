@@ -117,10 +117,78 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 	if knownHostsPath == "" {
 		return errors.New("pvessh: knownHostsPath is empty")
 	}
-	if !strings.Contains(host, ":") {
-		host = host + ":22"
+	host = withDefaultPort(host)
+
+	capturedKey, capturedAddr, err := probeHostKey(ctx, host)
+	if err != nil {
+		return err
 	}
 
+	fp := ssh.FingerprintSHA256(capturedKey)
+	fmt.Fprintf(w, "The authenticity of host '%s (%s)' can't be established.\n", host, capturedAddr)
+	fmt.Fprintf(w, "%s key fingerprint is %s\n", capturedKey.Type(), fp)
+	fmt.Fprintf(w, "Are you sure you want to continue connecting (yes/no)? ")
+
+	br := bufio.NewReader(r)
+	ans, err := br.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read host-key answer: %w", err)
+	}
+	ans = strings.TrimSpace(strings.ToLower(ans))
+	if ans != "yes" && ans != "y" {
+		return errors.New("host-key pin declined by user")
+	}
+
+	return appendKnownHost(knownHostsPath, host, capturedKey)
+}
+
+// EnsureHostKeyKnown pins host's key into knownHostsPath if it isn't
+// already there, with no prompt (TOFU) — a no-op once the host is known.
+// It exists for callers that hand host verification off to a fixed,
+// non-pmox-managed known_hosts file with no way to point at pmox's own
+// (currently just tack, whose SSH client always reads ~/.ssh/known_hosts
+// and offers no equivalent of ssh's -o UserKnownHostsFile). This is the
+// same trust-on-first-connect model guestHostKeyOpts already applies via
+// ssh's own accept-new for every other guest connection — just extended
+// to the one file tack itself checks.
+func EnsureHostKeyKnown(ctx context.Context, host, knownHostsPath string) (pinned bool, err error) {
+	if knownHostsPath == "" {
+		return false, errors.New("pvessh: knownHostsPath is empty")
+	}
+	host = withDefaultPort(host)
+
+	known, err := KnownHostsHas(knownHostsPath, host)
+	if err != nil {
+		return false, err
+	}
+	if known {
+		return false, nil
+	}
+
+	key, _, err := probeHostKey(ctx, host)
+	if err != nil {
+		return false, err
+	}
+	if err := appendKnownHost(knownHostsPath, host, key); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// withDefaultPort appends the standard SSH port when host has none.
+func withDefaultPort(host string) string {
+	if !strings.Contains(host, ":") {
+		return host + ":22"
+	}
+	return host
+}
+
+// probeHostKey dials host, capturing its public key during the SSH
+// handshake via an accept-first HostKeyCallback (auth is deliberately
+// bogus and always fails — the callback fires before auth, so the key
+// is captured either way). Returns the key and the remote address the
+// callback observed.
+func probeHostKey(ctx context.Context, host string) (ssh.PublicKey, string, error) {
 	var capturedKey ssh.PublicKey
 	var capturedAddr string
 	callback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -142,7 +210,7 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", host)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", host, err)
+		return nil, "", fmt.Errorf("dial %s: %w", host, err)
 	}
 	// NewClientConn will fail auth, but the host-key callback fires
 	// during the handshake before auth, so we get the key either way.
@@ -152,32 +220,16 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 	}
 	_ = conn.Close()
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("host-key probe of %s: %w", host, err)
+		return nil, "", fmt.Errorf("host-key probe of %s: %w", host, err)
 	}
 
 	if capturedKey == nil {
 		if hsErr != nil {
-			return fmt.Errorf("host-key probe of %s did not capture a key: %w", host, hsErr)
+			return nil, "", fmt.Errorf("host-key probe of %s did not capture a key: %w", host, hsErr)
 		}
-		return fmt.Errorf("host-key probe of %s did not capture a key", host)
+		return nil, "", fmt.Errorf("host-key probe of %s did not capture a key", host)
 	}
-
-	fp := ssh.FingerprintSHA256(capturedKey)
-	fmt.Fprintf(w, "The authenticity of host '%s (%s)' can't be established.\n", host, capturedAddr)
-	fmt.Fprintf(w, "%s key fingerprint is %s\n", capturedKey.Type(), fp)
-	fmt.Fprintf(w, "Are you sure you want to continue connecting (yes/no)? ")
-
-	br := bufio.NewReader(r)
-	ans, err := br.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read host-key answer: %w", err)
-	}
-	ans = strings.TrimSpace(strings.ToLower(ans))
-	if ans != "yes" && ans != "y" {
-		return errors.New("host-key pin declined by user")
-	}
-
-	return appendKnownHost(knownHostsPath, host, capturedKey)
+	return capturedKey, capturedAddr, nil
 }
 
 func appendKnownHost(knownHostsPath, host string, key ssh.PublicKey) error {
@@ -227,4 +279,15 @@ func KnownHostsPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "known_hosts"), nil
+}
+
+// DefaultKnownHostsPath returns ~/.ssh/known_hosts — the fixed path
+// every plain ssh/scp client (and tack) reads by default, distinct from
+// pmox's own managed KnownHostsPath.
+func DefaultKnownHostsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".ssh", "known_hosts"), nil
 }
