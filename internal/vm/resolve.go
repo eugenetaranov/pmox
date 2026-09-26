@@ -115,16 +115,31 @@ func refFrom(r pveclient.Resource) *Ref {
 	return &Ref{VMID: r.VMID, Node: r.Node, Name: r.Name, Tags: r.Tags}
 }
 
+// ReadyTag marks a VM as having completed its initial launch/clone —
+// cloned, tagged, resized, cloud-init pushed, started, and confirmed
+// reachable — set once, right before any post-create hook runs. A
+// pmox-tagged VM missing it is either still being provisioned right
+// now, or was abandoned mid-launch by an earlier failure; 'pmox
+// cleanup's opt-in "vm" category uses its absence to spot the latter.
+const ReadyTag = "pmox-ready"
+
 // HasPMOXTag reports whether the PVE tags field contains the literal
 // `pmox` tag. PVE has shipped both `;` and `,` as the tag separator
 // across versions, so both are accepted. Matching is case-insensitive
 // and substring matches (e.g. `pmoxish`) do not count.
 func HasPMOXTag(tagsRaw string) bool {
+	return HasTag(tagsRaw, "pmox")
+}
+
+// HasTag reports whether the PVE tags field contains tag, using the
+// same `;`/`,`-separated, case-insensitive, whole-tag matching as
+// HasPMOXTag.
+func HasTag(tagsRaw, tag string) bool {
 	fields := strings.FieldsFunc(tagsRaw, func(r rune) bool {
 		return r == ';' || r == ','
 	})
 	for _, f := range fields {
-		if strings.EqualFold(strings.TrimSpace(f), "pmox") {
+		if strings.EqualFold(strings.TrimSpace(f), tag) {
 			return true
 		}
 	}

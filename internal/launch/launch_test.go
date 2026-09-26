@@ -239,6 +239,56 @@ func TestRun_TagBeforeResize(t *testing.T) {
 	}
 }
 
+// TestRun_MarksReadyOnSuccess guards the "vm" cleanup category's
+// detection signal: a VM that completed its launch has a second config
+// call setting tags to "pmox;pmox-ready", after the initial "pmox" tag
+// and after cicustom/resize — this is what tells cleanup's opt-in "vm"
+// category apart a completed launch from one abandoned mid-way.
+func TestRun_MarksReadyOnSuccess(t *testing.T) {
+	f := newLaunchFake(t)
+	opts, _ := baseOpts(t, f.client())
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	bodies := f.configBodies()
+	if len(bodies) < 3 {
+		t.Fatalf("want 3 config bodies (tag, cicustom, ready), got %d: %v", len(bodies), bodies)
+	}
+	last := bodies[len(bodies)-1]
+	if !strings.Contains(last, "tags=pmox%3Bpmox-ready") && !strings.Contains(last, "tags=pmox;pmox-ready") {
+		t.Errorf("last config body = %q, want tags=pmox;pmox-ready", last)
+	}
+}
+
+// TestRun_MarksReadyBeforeStrictHookFailure guards a hook failure from
+// ever un-readying an otherwise fully working VM: the ready tag is set
+// before the hook runs, so it must be present even when --strict-hooks
+// turns a hook failure into a launch failure.
+func TestRun_MarksReadyBeforeStrictHookFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook not supported on windows")
+	}
+	f := newLaunchFake(t)
+	script := writeHookScript(t, "exit 1")
+
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.Hook = &hook.PostCreateHook{Path: script}
+	opts.StrictHooks = true
+	opts.Stderr = &bytes.Buffer{}
+
+	_, err := Run(context.Background(), opts)
+	var hookErr *HookError
+	if !errors.As(err, &hookErr) {
+		t.Fatalf("err = %v, want *HookError (test setup)", err)
+	}
+	bodies := f.configBodies()
+	if len(bodies) == 0 || !strings.Contains(bodies[len(bodies)-1], "pmox-ready") {
+		t.Errorf("config bodies = %v, want the ready tag set despite the strict hook failure", bodies)
+	}
+}
+
 func TestRun_TagErrorMentionsCleanup(t *testing.T) {
 	f := newLaunchFake(t)
 	f.failTagCfg = true

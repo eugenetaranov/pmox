@@ -311,7 +311,7 @@ func TestReportCleanup_ExplicitApplySkipsThePrompt(t *testing.T) {
 	}
 }
 
-func TestConfirmCleanup_MentionsDestructiveTemplateDeletion(t *testing.T) {
+func TestConfirmCleanup_MentionsDestructiveVMDeletion(t *testing.T) {
 	gotPrompt := stubCleanupConfirmer(t, false)
 	cmd := newCleanupCmd()
 
@@ -325,7 +325,14 @@ func TestConfirmCleanup_MentionsDestructiveTemplateDeletion(t *testing.T) {
 	if _, err := confirmCleanup(cmd, []cleanupItem{{Category: "template"}}); err != nil {
 		t.Fatalf("confirmCleanup: %v", err)
 	}
-	if !strings.Contains(*gotPrompt, "destructive template deletion") {
-		t.Errorf("prompt = %q, want it to call out destructive template deletion", *gotPrompt)
+	if !strings.Contains(*gotPrompt, "destructive VM deletion") {
+		t.Errorf("prompt = %q, want it to call out destructive VM deletion", *gotPrompt)
+	}
+
+	if _, err := confirmCleanup(cmd, []cleanupItem{{Category: "vm"}}); err != nil {
+		t.Fatalf("confirmCleanup: %v", err)
+	}
+	if !strings.Contains(*gotPrompt, "destructive VM deletion") {
+		t.Errorf("prompt = %q, want the vm category to also call out destructive VM deletion", *gotPrompt)
 	}
 }

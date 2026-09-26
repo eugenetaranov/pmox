@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
@@ -35,6 +37,52 @@ func TestIsPMOXTemplate(t *testing.T) {
 			t.Errorf("isPMOXTemplate(%q,%d) = %v, want %v", c.name, c.vmid, got, c.want)
 		}
 	}
+}
+
+func TestVMOrphanItem(t *testing.T) {
+	cmd := &cobra.Command{}
+	base := pveclient.Resource{Node: "pve", VMID: 105, Name: "web1", Status: "stopped"}
+
+	cases := []struct {
+		name    string
+		r       pveclient.Resource
+		wantNil bool
+	}{
+		{"pmox-tagged, no ready tag → flagged", withTags(base, "pmox"), false},
+		{"pmox-tagged and ready → not flagged", withTags(base, "pmox;pmox-ready"), true},
+		{"not pmox-tagged → not flagged", withTags(base, "other"), true},
+		{"no tags at all → not flagged", base, true},
+		{"a template, even if tagged pmox → not flagged", func() pveclient.Resource {
+			r := withTags(base, "pmox")
+			r.Template = 1
+			return r
+		}(), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			item := vmOrphanItem(context.Background(), cmd, nil, "lab", "https://pve.example:8006/api2/json", c.r)
+			if c.wantNil {
+				if item != nil {
+					t.Errorf("item = %+v, want nil", item)
+				}
+				return
+			}
+			if item == nil {
+				t.Fatal("item = nil, want a flagged vm item")
+			}
+			if item.Category != "vm" {
+				t.Errorf("Category = %q, want vm", item.Category)
+			}
+			if !strings.Contains(item.Detail, "web1") || !strings.Contains(item.Detail, "105") {
+				t.Errorf("Detail = %q, want it to name the VM", item.Detail)
+			}
+		})
+	}
+}
+
+func withTags(r pveclient.Resource, tags string) pveclient.Resource {
+	r.Tags = tags
+	return r
 }
 
 func TestResolveSelection(t *testing.T) {
@@ -65,6 +113,18 @@ func TestResolveSelection(t *testing.T) {
 		sel, _ := resolveSelection(avail, cleanupOpts{includeTemplates: true}, false)
 		if !sel["template"] {
 			t.Errorf("include-templates sel = %v", sel)
+		}
+	})
+	t.Run("default excludes vm", func(t *testing.T) {
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, cleanupOpts{}, false)
+		if sel["vm"] {
+			t.Errorf("default sel = %v; want vm excluded", sel)
+		}
+	})
+	t.Run("include-vms adds vm", func(t *testing.T) {
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, cleanupOpts{includeVMs: true}, false)
+		if !sel["vm"] {
+			t.Errorf("include-vms sel = %v", sel)
 		}
 	})
 	t.Run("unknown key errors", func(t *testing.T) {

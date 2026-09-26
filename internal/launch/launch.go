@@ -18,6 +18,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/progress"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/snippet"
+	"github.com/eugenetaranov/pmox/internal/vm"
 	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
@@ -257,6 +258,15 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
 		}
+	}
+
+	// Phase 9 — mark ready: the VM is cloned, tagged, resized, cloud-init
+	// pushed, started, and confirmed reachable. Set before any hook, so
+	// a hook failure (which --strict-hooks can turn into a launch
+	// failure) never un-ready an otherwise fully working VM. Best-effort:
+	// a failure here doesn't undo one either.
+	if err := opts.Client.SetConfig(ctx, opts.Node, vmid, map[string]string{"tags": "pmox;" + vm.ReadyTag}); err != nil && opts.Stderr != nil {
+		fmt.Fprintf(opts.Stderr, "warning: could not mark vm %d ready (harmless: 'pmox cleanup's opt-in vm category may flag it): %v\n", vmid, err)
 	}
 
 	// Phase 10 — run the post-SSH hook if configured.

@@ -45,6 +45,7 @@ func newCleanupCmd() *cobra.Command {
 		only             []string
 		skip             []string
 		includeTemplates bool
+		includeVMs       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "cleanup",
@@ -61,29 +62,37 @@ func newCleanupCmd() *cobra.Command {
   ssh-key       the pmox-generated bootstrap SSH key, if no server uses it
   api-token     server-side "pmox*" API tokens not used by any config entry
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
+  vm            pmox-tagged VMs abandoned mid-launch (DESTRUCTIVE — deletes VMs)
 
 Dry-run by default. On a terminal it shows a checklist to pick
-categories (non-destructive ones pre-checked, template unchecked),
+categories (non-destructive ones pre-checked, template/vm unchecked),
 lists what it found, then asks "Remove N item(s) now? [y/N]" — say y
 to delete right there, no need to re-run with --apply. Pass --apply to
 skip that prompt and delete unconditionally (for scripts/CI; also
 skips the checklist non-interactively). Non-interactively, use --only /
---skip; add --include-templates to enable the destructive template
-category. VMs other than pmox templates are never removed (use
-'pmox delete').
+--skip; add --include-templates / --include-vms to enable those two
+destructive categories. Every other VM is never touched by cleanup
+(use 'pmox delete').
+
+The vm category flags pmox-tagged VMs missing the "pmox-ready" tag
+(set once a launch/clone completes, right before any post-create
+hook) — either abandoned mid-launch by an earlier failure, or (rarely)
+a launch/clone still running right now. Review the listed VMs before
+removing.
 
 Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
 are not covered here; they are cleared at removal time by
 'pmox init --remove' / 'pmox config delete-context'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates})
+			return runCleanup(cmd, cleanupOpts{apply: apply, only: only, skip: skip, includeTemplates: includeTemplates, includeVMs: includeVMs})
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "remove without asking (default: dry-run report; on a terminal, asks y/N instead of requiring a re-run)")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "only these categories (comma-separated)")
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
 	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
+	cmd.Flags().BoolVar(&includeVMs, "include-vms", false, "include the destructive 'vm' category (deletes VMs abandoned mid-launch)")
 	return cmd
 }
 
@@ -92,6 +101,7 @@ type cleanupOpts struct {
 	only             []string
 	skip             []string
 	includeTemplates bool
+	includeVMs       bool
 }
 
 // cleanupCategory describes a removable-leftover category.
@@ -105,6 +115,7 @@ type cleanupCategory struct {
 var cleanupCategories = []cleanupCategory{
 	{"snippet", "Orphaned snippets", false},
 	{"template", "pmox templates (DESTRUCTIVE)", true},
+	{"vm", "VMs abandoned mid-launch (DESTRUCTIVE)", true},
 	{"mount-record", "Dead mount records", false},
 	{"log", "Orphaned logs", false},
 	{"cloud-init", "Orphaned cloud-init files", false},
@@ -163,8 +174,11 @@ func resolveSelection(available []string, o cleanupOpts, interactive bool) (map[
 	if o.includeTemplates && avail["template"] {
 		sel["template"] = true
 	}
+	if o.includeVMs && avail["vm"] {
+		sel["vm"] = true
+	}
 
-	hasFlags := len(o.skip) > 0 || o.includeTemplates
+	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs
 	if interactive && !hasFlags {
 		opts := make([]huh.Option[string], 0, len(available))
 		for _, c := range cleanupCategories {
@@ -230,6 +244,9 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 					Detail:   fmt.Sprintf("%s: %s (vmid %d) on node %s", label, name, vmid, node),
 					apply:    func() error { return deleteTemplate(ctx, c, node, vmid) },
 				})
+			}
+			if item := vmOrphanItem(ctx, cmd, client, label, url, r); item != nil {
+				items = append(items, *item)
 			}
 			if !vm.HasPMOXTag(r.Tags) || !r.IsRunning() {
 				continue
@@ -330,6 +347,27 @@ func deleteTemplate(ctx context.Context, c *pveclient.Client, node string, vmid 
 		return err
 	}
 	return c.WaitTask(ctx, node, upid, 120*time.Second)
+}
+
+// vmOrphanItem returns a cleanup item for r if it's a pmox-tagged VM
+// missing the "pmox-ready" tag (vm.ReadyTag, set once a launch/clone
+// completes, right before any post-create hook) — either abandoned
+// mid-launch by an earlier failure, or (rarely) a launch/clone still
+// running right now — or nil if r doesn't qualify (a template, not
+// pmox-tagged, or already ready). Removal reuses destroyVM, the same
+// stop-then-destroy-then-forget-tack-profile path 'pmox delete' uses.
+func vmOrphanItem(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, label, url string, r pveclient.Resource) *cleanupItem {
+	if r.Template == 1 || !vm.HasPMOXTag(r.Tags) || r.HasTag(vm.ReadyTag) {
+		return nil
+	}
+	node, vmid, name, tags := r.Node, r.VMID, r.Name, r.Tags
+	return &cleanupItem{
+		Category: "vm",
+		Detail:   fmt.Sprintf("%s: %s (vmid %d) on node %s, status %s — no pmox-ready tag", label, name, vmid, node, r.Status),
+		apply: func() error {
+			return destroyVM(ctx, cmd, client, &vm.Ref{VMID: vmid, Node: node, Name: name, Tags: tags}, &deleteFlags{serverURL: url}, nil)
+		},
+	}
 }
 
 // apiTokenItems flags server-side API tokens whose bare name looks
@@ -744,17 +782,18 @@ var cleanupConfirmerFn = func(cmd *cobra.Command) tui.Confirmer {
 func confirmCleanup(cmd *cobra.Command, items []cleanupItem) (bool, error) {
 	verb := "Remove"
 	if hasDestructiveItem(items) {
-		verb = "Remove (including destructive template deletion)"
+		verb = "Remove (including destructive VM deletion)"
 	}
 	prompt := fmt.Sprintf("\n%s %d item(s) now? [y/N]: ", verb, len(items))
 	return cleanupConfirmerFn(cmd).Confirm(cmd.Context(), prompt)
 }
 
-// hasDestructiveItem reports whether items includes a "template" entry
-// — the one category that deletes VMs, not just leftover files/state.
+// hasDestructiveItem reports whether items includes an entry from a
+// category marked destructive in cleanupCategories (template, vm) —
+// the ones that delete VMs, not just leftover files/state.
 func hasDestructiveItem(items []cleanupItem) bool {
 	for _, it := range items {
-		if it.Category == "template" {
+		if c, ok := categoryByKey(it.Category); ok && c.destructive {
 			return true
 		}
 	}
