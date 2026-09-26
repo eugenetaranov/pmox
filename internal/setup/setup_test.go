@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -131,6 +132,79 @@ func TestProbeTLS(t *testing.T) {
 				t.Errorf("got %+v, want status=%v insecure=%v err=%v", r, tc.wantStatus, tc.wantInsecure, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestProbeTLS_RetriesUnreachableThenSucceeds guards the fix for a real
+// report: 'pmox init' failed with "no route to host" on its very first
+// (only) probe attempt, while 'curl' against the identical URL seconds
+// later succeeded outright — a route/interface briefly not ready
+// (waking from sleep, Wi-Fi reassociating, a DHCP lease renewing) can
+// make a perfectly reachable host fail an immediate first probe. A
+// plain "nothing answered" result must be retried before being
+// reported as unreachable.
+func TestProbeTLS_RetriesUnreachableThenSucceeds(t *testing.T) {
+	orig := ProbeRetryBackoff
+	ProbeRetryBackoff = time.Millisecond
+	t.Cleanup(func() { ProbeRetryBackoff = orig })
+
+	var calls int
+	probe := func(_ context.Context, _ string, insecure bool) (pveclient.ReachStatus, error) {
+		calls++
+		if calls < 3 {
+			return pveclient.ReachUnreachable, errors.New("no route to host")
+		}
+		return pveclient.Reachable, nil
+	}
+	r := ProbeTLS(context.Background(), probe, testURL)
+	if r.Status != pveclient.Reachable {
+		t.Errorf("status = %v, want Reachable after retrying past 2 unreachable attempts", r.Status)
+	}
+	if calls != 3 {
+		t.Errorf("probe called %d times, want 3 (1 initial + 2 retries)", calls)
+	}
+}
+
+// A genuinely dead host must still end up reported as unreachable —
+// retries help a transient hiccup, they don't paper over a real one.
+func TestProbeTLS_UnreachableAfterExhaustingRetries(t *testing.T) {
+	orig := ProbeRetryBackoff
+	ProbeRetryBackoff = time.Millisecond
+	t.Cleanup(func() { ProbeRetryBackoff = orig })
+
+	wantErr := errors.New("no route to host")
+	var calls int
+	probe := func(_ context.Context, _ string, insecure bool) (pveclient.ReachStatus, error) {
+		calls++
+		return pveclient.ReachUnreachable, wantErr
+	}
+	r := ProbeTLS(context.Background(), probe, testURL)
+	if r.Status != pveclient.ReachUnreachable || !errors.Is(r.Err, wantErr) {
+		t.Errorf("got status=%v err=%v, want ReachUnreachable/%v", r.Status, r.Err, wantErr)
+	}
+	if calls != probeRetries+1 {
+		t.Errorf("probe called %d times, want %d (1 initial + %d retries)", calls, probeRetries+1, probeRetries)
+	}
+}
+
+// A definitive answer (not-PVE, TLS-untrusted) must never be retried —
+// only the ambiguous "nothing answered at all" case is.
+func TestProbeTLS_DefinitiveAnswersAreNotRetried(t *testing.T) {
+	orig := ProbeRetryBackoff
+	ProbeRetryBackoff = time.Millisecond
+	t.Cleanup(func() { ProbeRetryBackoff = orig })
+
+	var calls int
+	probe := func(_ context.Context, _ string, insecure bool) (pveclient.ReachStatus, error) {
+		calls++
+		return pveclient.ReachNotPVE, nil
+	}
+	r := ProbeTLS(context.Background(), probe, testURL)
+	if r.Status != pveclient.ReachNotPVE {
+		t.Errorf("status = %v, want ReachNotPVE", r.Status)
+	}
+	if calls != 1 {
+		t.Errorf("probe called %d times, want 1 (a definitive answer must not retry)", calls)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/zalando/go-keyring"
@@ -24,12 +25,16 @@ import (
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/template"
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 func init() {
 	keyring.MockInit()
+	// Tests exercise ProbeTLS's unreachable-retry loop with a stubbed,
+	// instant probe function — there's nothing to actually wait out.
+	setup.ProbeRetryBackoff = time.Millisecond
 }
 
 // fakePrompter is a scripted prompter driver for tests.
@@ -214,7 +219,12 @@ func TestProbeURL_UnreachableSurfacesUnderlyingError(t *testing.T) {
 }
 
 func TestPromptReachableURLRetriesThenSucceeds(t *testing.T) {
-	stubProbe(t, true, pveclient.ReachUnreachable, pveclient.Reachable)
+	// The first URL's probe now exhausts ProbeTLS's own internal
+	// unreachable-retry loop (1 initial + probeRetries attempts) before
+	// promptReachableURL gives up on it and re-prompts for a new URL.
+	stubProbe(t, true,
+		pveclient.ReachUnreachable, pveclient.ReachUnreachable, pveclient.ReachUnreachable,
+		pveclient.Reachable)
 	p := &fakePrompter{inputs: []string{"10.0.0.9", "pve.home.lan"}}
 	got, insecure, err := promptReachableURL(context.Background(), p)
 	if err != nil {

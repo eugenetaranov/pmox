@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
@@ -101,12 +102,33 @@ type Reach struct {
 	Err error
 }
 
+// probeRetries is how many additional attempts probeReachable makes
+// when the very first one reports no usable response at all
+// (ReachUnreachable/ReachUnknown — connection refused, timeout, no
+// route to host, ...) before giving up. A route or interface that's
+// only briefly not ready (waking from sleep, Wi-Fi reassociating, a
+// DHCP lease renewing) can make a perfectly reachable host fail an
+// immediate first probe and then succeed moments later — confirmed
+// against a real report: 'pmox init' failed with "no route to host"
+// on its very first (only) attempt, while 'curl' against the
+// identical URL seconds later succeeded outright. A genuinely wrong
+// address or dead host normally fails each retry just as fast as the
+// first (a refused or no-route dial returns near-instantly, it
+// doesn't wait out probeTimeout), so this costs such a case only the
+// backoff delay, not 3× the full per-attempt timeout.
+const probeRetries = 2
+
+// ProbeRetryBackoff is a var (not const) so tests — in this package and
+// callers like cmd/pmox — can shrink it instead of actually waiting out
+// the retry delays.
+var ProbeRetryBackoff = 700 * time.Millisecond
+
 // ProbeTLS probes canonicalURL with strict TLS and, if the certificate
 // is untrusted, confirms the host is reachable when verification is
 // skipped. An untrusted endpoint that also fails the insecure probe
 // keeps Status ReachTLSUntrusted.
 func ProbeTLS(ctx context.Context, probe ProbeFunc, canonicalURL string) Reach {
-	status, err := probe(ctx, canonicalURL, false)
+	status, err := probeReachable(ctx, probe, canonicalURL)
 	if status == pveclient.ReachTLSUntrusted {
 		// Confirm the host is actually reachable when we ignore the cert.
 		if s2, _ := probe(ctx, canonicalURL, true); s2 == pveclient.Reachable {
@@ -114,6 +136,28 @@ func ProbeTLS(ctx context.Context, probe ProbeFunc, canonicalURL string) Reach {
 		}
 	}
 	return Reach{Status: status, Err: err}
+}
+
+// probeReachable retries a "nothing answered at all" result up to
+// probeRetries times with a short backoff. A definitive answer
+// (reachable, TLS-untrusted, not-PVE) is never retried — only the
+// ambiguous "no usable response" case that a brief network hiccup and
+// a genuinely dead host both produce identically.
+func probeReachable(ctx context.Context, probe ProbeFunc, canonicalURL string) (pveclient.ReachStatus, error) {
+	status, err := probe(ctx, canonicalURL, false)
+	for attempt := 0; attempt < probeRetries && isUnreachable(status); attempt++ {
+		select {
+		case <-ctx.Done():
+			return status, err
+		case <-time.After(ProbeRetryBackoff):
+		}
+		status, err = probe(ctx, canonicalURL, false)
+	}
+	return status, err
+}
+
+func isUnreachable(s pveclient.ReachStatus) bool {
+	return s == pveclient.ReachUnreachable || s == pveclient.ReachUnknown
 }
 
 // PinOptions returns the pveclient options for a connection in the given TLS
