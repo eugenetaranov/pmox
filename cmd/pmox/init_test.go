@@ -224,6 +224,7 @@ func TestPromptReachableURLRetriesThenSucceeds(t *testing.T) {
 	// promptReachableURL gives up on it and re-prompts for a new URL.
 	stubProbe(t, true,
 		pveclient.ReachUnreachable, pveclient.ReachUnreachable, pveclient.ReachUnreachable,
+		pveclient.ReachUnreachable, pveclient.ReachUnreachable,
 		pveclient.Reachable)
 	p := &fakePrompter{inputs: []string{"10.0.0.9", "pve.home.lan"}}
 	got, insecure, err := promptReachableURL(context.Background(), p)

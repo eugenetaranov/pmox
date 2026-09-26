@@ -107,21 +107,26 @@ type Reach struct {
 // (ReachUnreachable/ReachUnknown — connection refused, timeout, no
 // route to host, ...) before giving up. A route or interface that's
 // only briefly not ready (waking from sleep, Wi-Fi reassociating, a
-// DHCP lease renewing) can make a perfectly reachable host fail an
-// immediate first probe and then succeed moments later — confirmed
-// against a real report: 'pmox init' failed with "no route to host"
-// on its very first (only) attempt, while 'curl' against the
-// identical URL seconds later succeeded outright. A genuinely wrong
-// address or dead host normally fails each retry just as fast as the
-// first (a refused or no-route dial returns near-instantly, it
-// doesn't wait out probeTimeout), so this costs such a case only the
-// backoff delay, not 3× the full per-attempt timeout.
-const probeRetries = 2
+// DHCP lease renewing, a stale ARP/neighbor cache entry) can make a
+// perfectly reachable host fail an immediate first probe and then
+// succeed moments later — confirmed against a real report: 'pmox
+// init' repeatedly failed with "no route to host" on a single-NIC
+// machine with a healthy route/ARP entry moments after, while 'curl'
+// against the identical URL seconds later always succeeded outright.
+// A genuinely wrong address or dead host normally fails each retry
+// just as fast as the first (a refused or no-route dial returns
+// near-instantly, it doesn't wait out probeTimeout), so this costs
+// such a case only the backoff delays below, not probeRetries× the
+// full per-attempt timeout.
+const probeRetries = 4
 
-// ProbeRetryBackoff is a var (not const) so tests — in this package and
-// callers like cmd/pmox — can shrink it instead of actually waiting out
-// the retry delays.
-var ProbeRetryBackoff = 700 * time.Millisecond
+// ProbeRetryBackoff is the delay before the first retry; each
+// subsequent retry doubles it, up to probeRetryBackoffCap. It's a var
+// (not const) so tests — in this package and callers like cmd/pmox —
+// can shrink it instead of actually waiting out the retry delays.
+var ProbeRetryBackoff = 500 * time.Millisecond
+
+const probeRetryBackoffCap = 2 * time.Second
 
 // ProbeTLS probes canonicalURL with strict TLS and, if the certificate
 // is untrusted, confirms the host is reachable when verification is
@@ -139,19 +144,23 @@ func ProbeTLS(ctx context.Context, probe ProbeFunc, canonicalURL string) Reach {
 }
 
 // probeReachable retries a "nothing answered at all" result up to
-// probeRetries times with a short backoff. A definitive answer
-// (reachable, TLS-untrusted, not-PVE) is never retried — only the
-// ambiguous "no usable response" case that a brief network hiccup and
-// a genuinely dead host both produce identically.
+// probeRetries times with exponential backoff (capped). A definitive
+// answer (reachable, TLS-untrusted, not-PVE) is never retried — only
+// the ambiguous "no usable response" case that a brief network
+// hiccup and a genuinely dead host both produce identically.
 func probeReachable(ctx context.Context, probe ProbeFunc, canonicalURL string) (pveclient.ReachStatus, error) {
 	status, err := probe(ctx, canonicalURL, false)
+	backoff := ProbeRetryBackoff
 	for attempt := 0; attempt < probeRetries && isUnreachable(status); attempt++ {
 		select {
 		case <-ctx.Done():
 			return status, err
-		case <-time.After(ProbeRetryBackoff):
+		case <-time.After(backoff):
 		}
 		status, err = probe(ctx, canonicalURL, false)
+		if backoff *= 2; backoff > probeRetryBackoffCap {
+			backoff = probeRetryBackoffCap
+		}
 	}
 	return status, err
 }
