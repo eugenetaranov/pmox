@@ -168,3 +168,31 @@ func TestWaitForSSH_TCPOnlyNotEnough(t *testing.T) {
 		t.Errorf("handshakeMeansReady(%v) = true, want false for io.EOF / transport close", hsErr)
 	}
 }
+
+// TestHandshakeMeansReady_ServerDisconnectDuringBoot guards a real
+// false-positive: sshd sends a raw SSH_MSG_DISCONNECT (x/crypto/ssh
+// formats this as "ssh: disconnect, reason N: ...") instead of a normal
+// USERAUTH_FAILURE when PAM's pam_nologin rejects the very first
+// ("none") auth probe during boot — the client-observed symptom is the
+// "System is booting up..." banner followed by "Connection closed".
+// Before this fix, the generic "ssh:"-prefix match below classified
+// this the same as a real auth failure (server negotiated fine, just
+// rejected our credentials) and declared the guest ready — so
+// 'pmox launch' printed success and handed off to a VM that then
+// refused 'pmox shell' moments later with the exact same nologin
+// message. A disconnect must be classified as "retry", not "ready".
+func TestHandshakeMeansReady_ServerDisconnectDuringBoot(t *testing.T) {
+	nologin := errors.New(`ssh: disconnect, reason 11: System is booting up. Unprivileged users are not permitted to log in yet. Please come back later. For technical details, see pam_nologin(8).`)
+	if handshakeMeansReady(nologin) {
+		t.Errorf("handshakeMeansReady(%v) = true, want false — a server disconnect is not readiness", nologin)
+	}
+
+	// A genuine auth-style rejection (the server engaged normally and
+	// just doesn't accept our probe's lack of credentials) must still
+	// count as ready — this is the behavior TestWaitForSSH_HandshakeSuccess
+	// and the doc comment describe; confirm the fix didn't overcorrect.
+	authFailure := errors.New("ssh: unable to authenticate, attempted methods [none], no supported methods remain")
+	if !handshakeMeansReady(authFailure) {
+		t.Errorf("handshakeMeansReady(%v) = false, want true for a normal auth-failure response", authFailure)
+	}
+}

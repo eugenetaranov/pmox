@@ -119,7 +119,10 @@ func sshHandshake(conn net.Conn, deadline time.Time) error {
 // actually indicates that sshd answered the banner. Auth-style errors
 // mean the server negotiated protocol version and key exchange with
 // us — it's ready. Transport-level errors (EOF, reset) mean sshd is
-// still warming up, so the caller should retry.
+// still warming up, so the caller should retry — and so does a
+// server-initiated disconnect (e.g. PAM's pam_nologin during boot),
+// which looks superficially like an auth-style error but means the
+// opposite: sshd refused the connection outright.
 func handshakeMeansReady(err error) bool {
 	if err == nil {
 		return true
@@ -139,7 +142,20 @@ func handshakeMeansReady(err error) bool {
 	if strings.Contains(msg, "connection reset") {
 		return false
 	}
-	// Any error surfaced with the "ssh:" prefix (including
+	// A server-initiated disconnect (x/crypto/ssh formats this as
+	// "ssh: disconnect, reason N: ...") means sshd actively refused the
+	// connection during our auth-less probe — most concretely PAM's
+	// pam_nologin ("System is booting up. Unprivileged users are not
+	// permitted to log in yet.") sent as the disconnect message before
+	// the "none" method even gets a normal auth-failure response. That
+	// is the opposite of ready, and must be checked before the generic
+	// "ssh:" prefix match below, which would otherwise treat it the
+	// same as a real auth failure and declare the guest ready to log
+	// into while it's still finishing boot.
+	if strings.HasPrefix(msg, "ssh: disconnect,") {
+		return false
+	}
+	// Any other error surfaced with the "ssh:" prefix (including
 	// "unable to authenticate" / "no supported methods") means the
 	// client successfully parsed the server's banner.
 	if strings.Contains(msg, "ssh:") ||
