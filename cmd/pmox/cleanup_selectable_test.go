@@ -208,6 +208,56 @@ func TestResolveSelection(t *testing.T) {
 			t.Error("checklist missing the empty 'vm' category entirely")
 		}
 	})
+	// huh's MultiSelect scrolls its initial viewport to the first
+	// pre-checked option. cleanupCategories' declared order is
+	// otherwise meaningful and unrelated to which categories currently
+	// have items, so if the only checked (non-destructive, populated)
+	// category sits late in that order, the widget would otherwise
+	// scroll straight past every earlier category. The checklist must
+	// instead order its options with every populated category first.
+	t.Run("populated categories precede empty ones regardless of declared order", func(t *testing.T) {
+		orig := selectCategoriesFn
+		var gotOpts []huh.Option[string]
+		selectCategoriesFn = func(_ string, opts []huh.Option[string]) ([]string, error) {
+			gotOpts = opts
+			return nil, nil
+		}
+		t.Cleanup(func() { selectCategoriesFn = orig })
+
+		// "api-token" is declared near the end of cleanupCategories,
+		// well after several categories left empty here; "context" is
+		// declared after it and populated too (destructive, so
+		// unchecked, but still must not be scrolled past).
+		counts := map[string]int{"api-token": 1, "context": 1}
+		if _, err := resolveSelection([]string{"api-token", "context"}, counts, cleanupOpts{}, true); err != nil {
+			t.Fatal(err)
+		}
+		if len(gotOpts) != len(cleanupCategories) {
+			t.Fatalf("checklist has %d options, want all %d categories", len(gotOpts), len(cleanupCategories))
+		}
+
+		firstEmptyIdx := -1
+		for i, o := range gotOpts {
+			if !strings.Contains(o.Key, "nothing to clean") {
+				continue
+			}
+			firstEmptyIdx = i
+			break
+		}
+		if firstEmptyIdx == -1 {
+			t.Fatal("expected at least one empty category in the checklist")
+		}
+		for i, o := range gotOpts[:firstEmptyIdx] {
+			if strings.Contains(o.Key, "nothing to clean") {
+				t.Errorf("option %d (%q) is empty but appears before the first empty option at %d", i, o.Key, firstEmptyIdx)
+			}
+		}
+		for i, o := range gotOpts[firstEmptyIdx:] {
+			if !strings.Contains(o.Key, "nothing to clean") {
+				t.Errorf("option %d (%q) is populated but appears after the first empty option", firstEmptyIdx+i, o.Key)
+			}
+		}
+	})
 }
 
 func TestCategoryLabel(t *testing.T) {
