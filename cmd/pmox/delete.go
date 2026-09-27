@@ -239,6 +239,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 		if errors.Is(err, pveclient.ErrNotFound) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "VM %q (vmid %d) is already gone\n", ref.Name, ref.VMID)
 			forgetTackProfile(cmd, f.serverURL, ref.VMID)
+			forgetVMIdentity(cmd, f.serverURL, ref.VMID)
 			return nil
 		}
 		return fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
@@ -286,6 +287,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 	}
 
 	forgetTackProfile(cmd, f.serverURL, ref.VMID)
+	forgetVMIdentity(cmd, f.serverURL, ref.VMID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleted VM %q (vmid %d)\n", ref.Name, ref.VMID)
 	return nil
 }

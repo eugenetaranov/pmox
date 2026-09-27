@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
@@ -143,7 +144,7 @@ func TestSSH_ResolveTaggedRunningVM(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
-		&sshFlags{user: "pmox"}, "", "")
+		&sshFlags{user: "pmox"}, "", &config.Server{})
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestSSH_ResolveUser_FlagWinsOverConfig(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
-		&sshFlags{user: "root"}, "ubuntu", "")
+		&sshFlags{user: "root"}, "", &config.Server{User: "ubuntu"})
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}
@@ -178,7 +179,7 @@ func TestSSH_ResolveUser_ConfigWhenFlagEmpty(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
-		&sshFlags{}, "ubuntu", "")
+		&sshFlags{}, "", &config.Server{User: "ubuntu"})
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestSSH_ResolveUser_DefaultWhenNothingSet(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "web1",
-		&sshFlags{}, "", "")
+		&sshFlags{}, "", &config.Server{})
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestSSH_ResolveUntaggedWithoutForce(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	_, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "legacy",
-		&sshFlags{user: "pmox"}, "", "")
+		&sshFlags{user: "pmox"}, "", &config.Server{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -228,7 +229,7 @@ func TestSSH_ResolveUntaggedWithForce(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	target, err := resolveSSHTarget(cmd.Context(), cmd, f.client(), "legacy",
-		&sshFlags{user: "pmox", force: true}, "", "")
+		&sshFlags{user: "pmox", force: true}, "", &config.Server{})
 	if err != nil {
 		t.Fatalf("resolveSSHTarget: %v", err)
 	}

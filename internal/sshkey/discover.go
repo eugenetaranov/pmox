@@ -68,19 +68,6 @@ func DefaultSuggestion(current, sshDir string) string {
 	return ""
 }
 
-// ResolvePubKey maps a selected key file to the public key pmox should
-// store: a private key resolves to its adjacent .pub when that exists; a
-// .pub (or anything else) is used as-is.
-func ResolvePubKey(selected string) string {
-	if strings.HasSuffix(selected, ".pub") {
-		return selected
-	}
-	if _, err := os.Stat(selected + ".pub"); err == nil {
-		return selected + ".pub"
-	}
-	return selected
-}
-
 // DefaultComment returns the comment pmox stamps on generated keys:
 // "pmox@<hostname>", or plain "pmox" when the hostname is unavailable.
 func DefaultComment() string {

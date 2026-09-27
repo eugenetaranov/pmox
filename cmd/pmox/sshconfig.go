@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
 	"github.com/eugenetaranov/pmox/internal/vmwait"
@@ -66,7 +67,7 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 	if err != nil {
 		return err
 	}
-	info, err := resolveSSHConnInfo(ctx, client, arg, f, srv.User, srv.SSHPubkey)
+	info, err := resolveSSHConnInfo(ctx, client, arg, f, resolved.URL, srv, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -85,7 +86,7 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 
 // resolveSSHConnInfo resolves a VM's connection details WITHOUT starting
 // it (unlike shell/exec). A stopped VM is an error, since there is no IP.
-func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg string, f *sshFlags, configUser, configPubkey string) (*sshConnInfo, error) {
+func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg string, f *sshFlags, serverURL string, srv *config.Server, stderr io.Writer) (*sshConnInfo, error) {
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return nil, err
@@ -114,11 +115,13 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 		return nil, fmt.Errorf("VM %q is running but the guest agent reports no usable IPv4 address yet", ref.Name)
 	}
 
-	key, err := resolveIdentityKey(f.identity, configPubkey)
+	user, key, note, err := resolveGuestIdentity(serverURL, ref.VMID, f.user, f.identity, srv)
 	if err != nil {
 		return nil, err
 	}
-	user := firstNonEmpty(f.user, configUser, defaultUser)
+	if note != "" && stderr != nil {
+		fmt.Fprintln(stderr, note)
+	}
 
 	info := &sshConnInfo{
 		Name:         ref.Name,

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
@@ -127,7 +128,7 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, arg, f, srv.User, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, arg, f, resolved.URL, srv)
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, vmArg, f, srv.User, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, vmArg, f, resolved.URL, srv)
 	if err != nil {
 		return err
 	}
@@ -233,7 +234,7 @@ type sshTarget struct {
 	Key  string
 }
 
-func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, configUser, configPubkey string) (*sshTarget, error) {
+func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, serverURL string, srv *config.Server) (*sshTarget, error) {
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return nil, err
@@ -248,14 +249,17 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 		return nil, err
 	}
 
-	key, err := resolveIdentityKey(f.identity, configPubkey)
+	user, key, note, err := resolveGuestIdentity(serverURL, ref.VMID, f.user, f.identity, srv)
 	if err != nil {
 		return nil, err
+	}
+	if note != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), note)
 	}
 
 	return &sshTarget{
 		IP:   ip,
-		User: firstNonEmpty(f.user, configUser, defaultUser),
+		User: user,
 		Key:  key,
 	}, nil
 }

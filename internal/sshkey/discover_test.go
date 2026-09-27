@@ -66,23 +66,6 @@ func TestDefaultSuggestion(t *testing.T) {
 	}
 }
 
-func TestResolvePubKey(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "id_ed25519")
-	touch(t, priv)
-	touch(t, priv+".pub")
-	if got := ResolvePubKey(priv); got != priv+".pub" {
-		t.Errorf("private→pub: got %q", got)
-	}
-	if got := ResolvePubKey(priv + ".pub"); got != priv+".pub" {
-		t.Errorf(".pub direct: got %q", got)
-	}
-	lone := filepath.Join(dir, "lone")
-	if got := ResolvePubKey(lone); got != lone {
-		t.Errorf("lone: got %q", got)
-	}
-}
-
 func TestDefaultComment(t *testing.T) {
 	if c := DefaultComment(); !strings.HasPrefix(c, "pmox") {
 		t.Errorf("DefaultComment = %q", c)

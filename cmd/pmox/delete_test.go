@@ -18,6 +18,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmidentity"
 )
 
 // fakePVE is a minimal httptest-backed PVE server for the delete
@@ -377,6 +378,53 @@ func TestDelete_ForgetsTackProfile_AlreadyGone(t *testing.T) {
 	}
 	if _, ok, err := tackprofile.Get(stateDir, serverURL, 100); err != nil || ok {
 		t.Errorf("tack profile still remembered after already-gone delete (ok=%v, err=%v)", ok, err)
+	}
+}
+
+// TestDelete_ForgetsVMIdentity mirrors TestDelete_ForgetsTackProfile: a
+// recorded per-VM SSH identity must be pruned on delete too, so a VMID
+// Proxmox later reassigns to an unrelated VM doesn't inherit the
+// deleted VM's identity record.
+func TestDelete_ForgetsVMIdentity(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	const serverURL = "https://pve.example:8006/api2/json"
+	stateDir, err := guestIdentityStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := vmidentity.Set(stateDir, serverURL, 100, vmidentity.Identity{User: "ubuntu"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	if err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{serverURL: serverURL}, yesConfirmer); err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if _, ok, err := vmidentity.Get(stateDir, serverURL, 100); err != nil || ok {
+		t.Errorf("vm identity still remembered after delete (ok=%v, err=%v)", ok, err)
+	}
+}
+
+func TestDelete_ForgetsVMIdentity_AlreadyGone(t *testing.T) {
+	f := newFakePVE(t)
+	f.clusterBody = taggedRunningVM
+	f.vmStatus = ""
+	const serverURL = "https://pve.example:8006/api2/json"
+	stateDir, err := guestIdentityStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := vmidentity.Set(stateDir, serverURL, 100, vmidentity.Identity{User: "ubuntu"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, _, _ := newTestDeleteCmd()
+	if err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, &deleteFlags{serverURL: serverURL}, yesConfirmer); err != nil {
+		t.Fatalf("executeDelete: %v", err)
+	}
+	if _, ok, err := vmidentity.Get(stateDir, serverURL, 100); err != nil || ok {
+		t.Errorf("vm identity still remembered after already-gone delete (ok=%v, err=%v)", ok, err)
 	}
 }
 

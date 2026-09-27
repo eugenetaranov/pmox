@@ -160,19 +160,25 @@ func TestResolvePlaybookMissingIsFriendly(t *testing.T) {
 	}
 }
 
-func TestApplyNoConfigSuggestsInitEarly(t *testing.T) {
-	// No tack dir at all: apply must guide to --init before touching the
-	// cluster/picker (so this needs no configured server).
+func TestApplyNoConfigAutoScaffoldsThenContinues(t *testing.T) {
+	// No tack dir at all: apply must auto-scaffold one (same as --init)
+	// instead of erroring out, then continue on to resolving a server —
+	// which still fails here since none is configured, but with a
+	// different error than the old early "run --init" guidance.
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	cmd := newApplyCmd()
 	cmd.SetContext(context.Background())
 	err := runApply(cmd, nil, &applyFlags{})
-	if err == nil || !strings.Contains(err.Error(), "--init") {
-		t.Fatalf("want early --init hint, got %v", err)
+	if err == nil {
+		t.Fatal("want an error (no server configured), got nil")
 	}
-	if !errors.Is(err, exitcode.ErrUserInput) {
-		t.Errorf("no-config apply should map to ErrUserInput, got %v", err)
+	if strings.Contains(err.Error(), "no tack playbooks yet") {
+		t.Errorf("apply should have auto-scaffolded instead of erroring on missing tack dir: %v", err)
+	}
+	pb := filepath.Join(cfg, "pmox", "tack", "playbook.yaml")
+	if _, statErr := os.Stat(pb); statErr != nil {
+		t.Errorf("playbook not auto-scaffolded: %v", statErr)
 	}
 }
 
@@ -181,7 +187,7 @@ func TestApplyInitScaffoldsAndDoesNotClobber(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	cmd := newApplyCmd()
 
-	if err := runApplyInit(cmd); err != nil {
+	if err := runApplyInit(cmd, false); err != nil {
 		t.Fatalf("runApplyInit: %v", err)
 	}
 	pb := filepath.Join(cfg, "pmox", "tack", "playbook.yaml")
@@ -196,7 +202,7 @@ func TestApplyInitScaffoldsAndDoesNotClobber(t *testing.T) {
 	if err := os.WriteFile(pb, []byte("MINE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runApplyInit(cmd); err != nil {
+	if err := runApplyInit(cmd, false); err != nil {
 		t.Fatalf("runApplyInit second: %v", err)
 	}
 	got, _ := os.ReadFile(pb)
@@ -215,7 +221,7 @@ func TestApplyInitNonInteractiveScaffoldsFixedDefault(t *testing.T) {
 	cmd := newApplyCmd()
 	cmd.SetContext(context.Background())
 
-	if err := runApplyInit(cmd); err != nil {
+	if err := runApplyInit(cmd, false); err != nil {
 		t.Fatalf("runApplyInit: %v", err)
 	}
 	pb := filepath.Join(cfg, "pmox", "tack", "playbook.yaml")

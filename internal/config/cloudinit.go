@@ -11,6 +11,8 @@ import (
 	"strings"
 	"text/template"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/eugenetaranov/pmox/internal/atomicfile"
 	"github.com/eugenetaranov/pmox/internal/paths"
 )
@@ -79,6 +81,51 @@ func CloudInitAuthorizesKey(path, pubKeyLine string) (authorized, hasAnyKey bool
 		}
 	}
 	return false, true, nil
+}
+
+// PubKeyBody exports pubKeyBody for cross-package comparison of a
+// recorded VM identity's key body against the currently configured key.
+func PubKeyBody(line string) string { return pubKeyBody(line) }
+
+// CloudInitIdentity is the user + ssh_authorized_keys lines actually
+// baked into a rendered (post-template) cloud-init file.
+type CloudInitIdentity struct {
+	User     string
+	KeyLines []string
+}
+
+// ParseCloudInitIdentity extracts the users[0].{name,ssh_authorized_keys}
+// stanza from rendered cloud-init YAML bytes. The file is always plain
+// valid YAML at this point (no more {{.User}}/{{.SSHPubkey}}
+// placeholders), and RenderTemplate only ever writes one users[] entry.
+func ParseCloudInitIdentity(data []byte) (CloudInitIdentity, error) {
+	var doc struct {
+		Users []struct {
+			Name              string   `yaml:"name"`
+			SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys"`
+		} `yaml:"users"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return CloudInitIdentity{}, fmt.Errorf("parse cloud-init identity: %w", err)
+	}
+	if len(doc.Users) == 0 {
+		return CloudInitIdentity{}, nil
+	}
+	return CloudInitIdentity{User: doc.Users[0].Name, KeyLines: doc.Users[0].SSHAuthorizedKeys}, nil
+}
+
+// CloudInitIdentityFromFile reads path and parses it via
+// ParseCloudInitIdentity. A missing file returns a zero value and no
+// error (mirrors CloudInitKeyBodies).
+func CloudInitIdentityFromFile(path string) (CloudInitIdentity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return CloudInitIdentity{}, nil
+		}
+		return CloudInitIdentity{}, err
+	}
+	return ParseCloudInitIdentity(data)
 }
 
 //go:embed cloud-init.template.yaml

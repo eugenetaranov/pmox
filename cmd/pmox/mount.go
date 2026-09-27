@@ -204,7 +204,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, ref, &f.sshFlags, srv.User, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, ref, &f.sshFlags, resolved.URL, srv)
 	if err != nil {
 		return err
 	}

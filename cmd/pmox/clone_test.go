@@ -20,6 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/vmidentity"
 )
 
 // TestRunClone_MissingNewNameNonInteractiveIsAUserInputError mirrors
@@ -180,6 +181,64 @@ func TestClone_DrivesLaunchStateMachineFromSourceVMID(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ip=10.0.0.7") {
 		t.Errorf("stdout missing ip: %q", out.String())
+	}
+}
+
+// After a successful clone, the user + key actually baked into the new
+// VM's cloud-init (not current global config, which this test never
+// sets) must be recorded under (ServerURL, new vmid) so later commands
+// (apply/ssh/...) can use it even if config drifts afterward.
+func TestClone_RecordsVMIdentityOnSuccess(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	f := pvetest.New(t)
+	f.Handle("GET", "/cluster/resources", pvetest.JSON(cloneSourceVM))
+	f.Handle("GET", "/cluster/nextid", pvetest.JSON(`{"data":"600"}`))
+	f.Handle("POST", "/clone", pvetest.JSON(`{"data":"UPID:pve1:clone:"}`))
+	f.Handle("GET", "/tasks/", pvetest.TaskOK)
+	f.Handle("POST", "/config", pvetest.JSON(`{"data":null}`))
+	f.Handle("PUT", "/resize", pvetest.JSON(`{"data":null}`))
+	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/nodes/pve1/storage", pvetest.JSON(`{"data":[{"storage":"local-lvm","content":"snippets,images","active":1,"enabled":1}]}`))
+	f.Handle("GET", "/storage/local-lvm", pvetest.JSON(`{"data":{"path":"/var/lib/vz"}}`))
+	f.Handle("GET", "/agent/network-get-interfaces", func(w http.ResponseWriter, _ *http.Request, _ string) {
+		fmt.Fprint(w, `{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"10.0.0.7"}]}]}}`)
+	})
+
+	cmd, _, _ := newTestInfoCmd()
+	const serverURL = "https://pve1.test:8006/api2/json"
+	partial := launch.Options{
+		ServerURL:      serverURL,
+		CPU:            2,
+		MemMB:          2048,
+		DiskSize:       "20G",
+		Storage:        "local-lvm",
+		SnippetStorage: "local-lvm",
+		Wait:           5 * time.Second,
+		NoWaitSSH:      true,
+		CloudInitPath:  writeCloneCI(t),
+		UploadSnippet: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+	}
+	if err := executeClone(cmd.Context(), cmd, f.Client(), "web1", "web1-copy", partial); err != nil {
+		t.Fatalf("executeClone: %v", err)
+	}
+
+	dir, err := guestIdentityStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := vmidentity.Get(dir, serverURL, 600)
+	if err != nil {
+		t.Fatalf("vmidentity.Get: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected an identity recorded for the new vmid, found none")
+	}
+	want := vmidentity.Identity{User: "ubuntu", SSHPubkeyLine: "ssh-ed25519 AAAA test"}
+	if got != want {
+		t.Errorf("recorded identity = %+v, want %+v", got, want)
 	}
 }
 

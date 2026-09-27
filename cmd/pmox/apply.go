@@ -90,19 +90,21 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	ctx := cmd.Context()
 
 	if f.initCfg {
-		return runApplyInit(cmd)
+		return runApplyInit(cmd, false)
 	}
 
 	// Onboarding: if there is no tack config at all and the user didn't
-	// point at an explicit playbook, guide them to --init before touching
-	// tack, the cluster, or a picker.
+	// point at an explicit playbook, scaffold one automatically (same as
+	// --init) instead of erroring out and telling them to re-run by hand.
 	if f.playbook == "" {
 		dir, err := tackDir()
 		if err != nil {
 			return err
 		}
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return fmt.Errorf("%w: no tack playbooks yet — run 'pmox apply --init' to scaffold %s", exitcode.ErrUserInput, dir)
+			if err := runApplyInit(cmd, true); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -147,9 +149,12 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	if err != nil {
 		return err
 	}
-	key, err := resolveIdentityKey(f.identity, srv.SSHPubkey)
+	user, key, note, err := resolveGuestIdentity(resolved.URL, ref.VMID, f.user, f.identity, srv)
 	if err != nil {
 		return err
+	}
+	if note != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), note)
 	}
 
 	// Say up front which playbook is about to run and against what — the
@@ -173,7 +178,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 
 	opts := tack.Options{
 		Playbook:    playbook,
-		User:        firstNonEmpty(f.user, srv.User, defaultUser),
+		User:        user,
 		IP:          ip,
 		KeyPath:     key,
 		Insecure:    SSHInsecure(),
@@ -263,7 +268,12 @@ func rememberTackProfile(serverURL string, vmid int, profile string) error {
 	return tackprofile.Set(stateDir, serverURL, vmid, profile)
 }
 
-func runApplyInit(cmd *cobra.Command) error {
+// runApplyInit scaffolds ~/.config/pmox/tack/ with a starter playbook.
+// fallback is true when this is called automatically from a bare
+// 'pmox apply <vm>' (no tack config yet) rather than an explicit --init,
+// in which case the "edit it, then run" hint is skipped since the apply
+// that triggered scaffolding is about to continue in this same invocation.
+func runApplyInit(cmd *cobra.Command, fallback bool) error {
 	dir, err := tackDir()
 	if err != nil {
 		return err
@@ -297,7 +307,9 @@ func runApplyInit(cmd *cobra.Command) error {
 		return fmt.Errorf("write %s: %w", playbook, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "scaffolded %s\n", playbook)
-	fmt.Fprintf(cmd.OutOrStdout(), "edit it, then run: pmox apply <vm>\n")
+	if !fallback {
+		fmt.Fprintf(cmd.OutOrStdout(), "edit it, then run: pmox apply <vm>\n")
+	}
 	return nil
 }
 

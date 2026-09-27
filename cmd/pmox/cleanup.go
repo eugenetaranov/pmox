@@ -140,6 +140,7 @@ var cleanupCategories = []cleanupCategory{
 	{"log", "Orphaned logs", false},
 	{"cloud-init", "Orphaned cloud-init files", false},
 	{"tack-profile", "Stale tack profiles", false},
+	{"vm-identity", "Stale VM identity records", false},
 	{"secret", "Orphaned secrets", false},
 	{"known-host", "Stale known_hosts pins", false},
 	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
@@ -339,6 +340,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	items = append(items, staleKnownHostItems(liveIPs, ipsComplete, ew)...)
 	items = append(items, cloudInitItems(cfg)...)
 	items = append(items, tackProfileItems(cfg, vmidsByURL, reachableURLs)...)
+	items = append(items, vmIdentityItems(cfg, vmidsByURL, reachableURLs)...)
 	items = append(items, secretItems(cfg)...)
 	items = append(items, sshKeyItems(cfg)...)
 	items = append(items, contextItems(cfg)...)

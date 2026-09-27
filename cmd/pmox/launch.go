@@ -268,6 +268,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	if err != nil {
 		return err
 	}
+	recordVMIdentity(cmd.ErrOrStderr(), resolved.URL, r.VMID, opts.CloudInitPath)
 	fmt.Fprintf(cmd.OutOrStdout(), "launched %s (vmid=%d, ip=%s)\n", name, r.VMID, r.IP)
 	return nil
 }

@@ -194,14 +194,13 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 // without a real TTY.
 var (
 	chooseSSHKeyActionFn = chooseSSHKeyAction
-	browseForKeyFn       = browseForKey
 	selectExistingKeyFn  = selectExistingKey
 )
 
 // errSSHKeyChoiceBack signals that the user picked "← Back" from
-// selectExistingKey (or cancelled browseForKey), telling promptSSHKey's
-// loop to return to the top-level generate/existing/browse menu instead
-// of treating it as a real key path or aborting the wizard.
+// selectExistingKey, telling promptSSHKey's loop to return to the
+// top-level generate/existing menu instead of treating it as a real key
+// path or aborting the wizard.
 var errSSHKeyChoiceBack = errors.New("ssh key: back to menu")
 
 // sshKeyBackValue is the huh.Option value bound to the "← Back" row in
@@ -212,9 +211,8 @@ const sshKeyBackValue = "\x00pmox:back"
 
 // promptSSHKey resolves the SSH public key pmox injects into cloud-init.
 // Interactively it leads with a top-level choice — generate a new
-// dedicated bootstrap key, pick an existing one, or browse the filesystem.
-// Non-interactively it falls back to a plain-text path prompt defaulting
-// to the suggested key.
+// dedicated bootstrap key, or pick an existing one. Non-interactively it
+// falls back to a plain-text path prompt defaulting to the suggested key.
 func promptSSHKey(p prompter, current string) (string, error) {
 	home, _ := os.UserHomeDir()
 	sshDir := filepath.Join(home, ".ssh")
@@ -232,14 +230,6 @@ func promptSSHKey(p prompter, current string) (string, error) {
 		switch choice {
 		case "generate":
 			return generateBootstrapKey(p, sshDir, home)
-		case "browse":
-			path, ok := browseForKeyFn(home)
-			if !ok {
-				// Cancelled (Esc) → back to the choice menu.
-				continue
-			}
-			p.Printf("Default SSH public key: %s\n", displayPath(path, home))
-			return path, nil
 		default: // "existing"
 			path, err := selectExistingKeyFn(p, sshDir, home, suggest)
 			if errors.Is(err, errSSHKeyChoiceBack) {
@@ -282,8 +272,8 @@ func promptDefaultUser(p prompter, current string) (string, error) {
 	return user, nil
 }
 
-// chooseSSHKeyAction shows the generate/existing/browse menu and returns
-// the selected action key. The default lands on "existing" when a key is
+// chooseSSHKeyAction shows the generate/existing menu and returns the
+// selected action key. The default lands on "existing" when a key is
 // already available, otherwise "generate".
 func chooseSSHKeyAction(suggest string) (string, error) {
 	choice := "existing"
@@ -296,7 +286,6 @@ func chooseSSHKeyAction(suggest string) (string, error) {
 		Options(
 			huh.NewOption("Generate a new dedicated key", "generate"),
 			huh.NewOption("Use an existing key", "existing"),
-			huh.NewOption("Browse for a key…", "browse"),
 		).
 		Value(&choice).
 		Filtering(false).
@@ -322,27 +311,6 @@ func generateBootstrapKey(p prompter, sshDir, home string) (string, error) {
 		p.Printf("generated new SSH key: %s\n", displayPath(pub, home))
 	}
 	return pub, nil
-}
-
-// browseForKey opens a filesystem picker rooted at home. It returns the
-// resolved public-key path and ok=true on selection, or ok=false if the
-// user cancels.
-func browseForKey(home string) (string, bool) {
-	var selected string
-	fmt.Println()
-	err := huh.NewFilePicker().
-		Title("Select an SSH key file").
-		CurrentDirectory(home).
-		ShowHidden(true).
-		FileAllowed(true).
-		DirAllowed(false).
-		Value(&selected).
-		WithTheme(tui.Theme()).
-		Run()
-	if err != nil || selected == "" {
-		return "", false
-	}
-	return sshkey.ResolvePubKey(selected), true
 }
 
 // selectExistingKey shows a picker of ~/.ssh/*.pub, falling back to a

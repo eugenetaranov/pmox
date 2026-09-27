@@ -78,6 +78,70 @@ func TestRenderTemplate(t *testing.T) {
 	}
 }
 
+func TestParseCloudInitIdentity(t *testing.T) {
+	pubkey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI test@host"
+	rendered, err := RenderTemplate("ubuntu", pubkey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseCloudInitIdentity(rendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User != "ubuntu" {
+		t.Errorf("User = %q, want ubuntu", got.User)
+	}
+	if len(got.KeyLines) != 1 || got.KeyLines[0] != pubkey {
+		t.Errorf("KeyLines = %v, want [%q]", got.KeyLines, pubkey)
+	}
+}
+
+func TestParseCloudInitIdentity_MultipleKeys(t *testing.T) {
+	data := []byte(`users:
+  - name: e
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA one
+      - ssh-ed25519 AAAA two
+`)
+	got, err := ParseCloudInitIdentity(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User != "e" {
+		t.Errorf("User = %q, want e", got.User)
+	}
+	want := []string{"ssh-ed25519 AAAA one", "ssh-ed25519 AAAA two"}
+	if len(got.KeyLines) != len(want) || got.KeyLines[0] != want[0] || got.KeyLines[1] != want[1] {
+		t.Errorf("KeyLines = %v, want %v", got.KeyLines, want)
+	}
+}
+
+func TestParseCloudInitIdentity_NoUsersStanza(t *testing.T) {
+	got, err := ParseCloudInitIdentity([]byte("package_update: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User != "" || len(got.KeyLines) != 0 {
+		t.Errorf("got %+v, want zero value", got)
+	}
+}
+
+func TestCloudInitIdentityFromFile_MissingFile(t *testing.T) {
+	got, err := CloudInitIdentityFromFile(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got.User != "" || len(got.KeyLines) != 0 {
+		t.Errorf("got %+v, want zero value", got)
+	}
+}
+
+func TestPubKeyBodyExported(t *testing.T) {
+	if got := PubKeyBody("ssh-ed25519 AAAABBBB test@host"); got != "AAAABBBB" {
+		t.Errorf("PubKeyBody = %q, want AAAABBBB", got)
+	}
+}
+
 func TestWriteStarterCloudInit_FirstWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "subdir", "cloud-init.yaml")

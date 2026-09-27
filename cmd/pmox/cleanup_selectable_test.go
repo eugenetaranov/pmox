@@ -18,6 +18,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
+	"github.com/eugenetaranov/pmox/internal/vmidentity"
 )
 
 func TestIsPMOXTemplate(t *testing.T) {
@@ -279,6 +280,35 @@ func TestTackProfileItems(t *testing.T) {
 	}
 	for _, it := range items {
 		if it.Category != "tack-profile" {
+			t.Errorf("category = %q", it.Category)
+		}
+	}
+}
+
+func TestVMIdentityItems(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	urlA := "https://a.example:8006/api2/json"
+	urlGone := "https://gone.example:8006/api2/json"
+	cfg := &config.Config{Servers: map[string]*config.Server{urlA: {TokenID: "x@y!z"}}}
+
+	dir, err := guestIdentityStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = vmidentity.Set(dir, urlA, 101, vmidentity.Identity{User: "ubuntu"})  // live VM → keep
+	_ = vmidentity.Set(dir, urlA, 555, vmidentity.Identity{User: "e"})       // reachable, VM gone → stale
+	_ = vmidentity.Set(dir, urlGone, 1, vmidentity.Identity{User: "orphan"}) // server gone → stale
+
+	vmidsByURL := map[string]map[int]bool{urlA: {101: true}}
+	reachable := map[string]bool{urlA: true}
+
+	items := vmIdentityItems(cfg, vmidsByURL, reachable)
+	if len(items) != 2 {
+		t.Fatalf("got %d stale, want 2: %+v", len(items), items)
+	}
+	for _, it := range items {
+		if it.Category != "vm-identity" {
 			t.Errorf("category = %q", it.Category)
 		}
 	}

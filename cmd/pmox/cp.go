@@ -211,7 +211,7 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, srv.User, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, resolved.URL, srv)
 	if err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, srv.User, srv.SSHPubkey)
+	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, resolved.URL, srv)
 	if err != nil {
 		return err
 	}

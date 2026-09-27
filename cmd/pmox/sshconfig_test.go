@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 )
 
@@ -19,7 +21,7 @@ func sshConfigServer(t *testing.T, status string) *pvetest.Server {
 
 func TestSSHConfig_ResolveRunningVM(t *testing.T) {
 	s := sshConfigServer(t, "running")
-	info, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{}, "pmox", "")
+	info, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{}, "", &config.Server{User: "pmox"}, io.Discard)
 	if err != nil {
 		t.Fatalf("resolveSSHConnInfo: %v", err)
 	}
@@ -36,7 +38,7 @@ func TestSSHConfig_ResolveRunningVM(t *testing.T) {
 
 func TestSSHConfig_UserOverride(t *testing.T) {
 	s := sshConfigServer(t, "running")
-	info, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{user: "ubuntu"}, "pmox", "")
+	info, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{user: "ubuntu"}, "", &config.Server{User: "pmox"}, io.Discard)
 	if err != nil {
 		t.Fatalf("resolveSSHConnInfo: %v", err)
 	}
@@ -50,7 +52,7 @@ func TestSSHConfig_UserOverride(t *testing.T) {
 
 func TestSSHConfig_StoppedVMErrors(t *testing.T) {
 	s := sshConfigServer(t, "stopped")
-	_, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{}, "pmox", "")
+	_, err := resolveSSHConnInfo(context.Background(), s.Client(), "web1", &sshFlags{}, "", &config.Server{User: "pmox"}, io.Discard)
 	if err == nil {
 		t.Fatal("expected an error for a stopped VM")
 	}
@@ -62,7 +64,7 @@ func TestSSHConfig_StoppedVMErrors(t *testing.T) {
 func TestSSHConfig_UntaggedRefusedWithoutForce(t *testing.T) {
 	s := pvetest.New(t)
 	s.Handle("GET", "/cluster/resources", pvetest.JSON(`{"data":[{"vmid":200,"name":"legacy","node":"pve1","status":"running","tags":""}]}`))
-	_, err := resolveSSHConnInfo(context.Background(), s.Client(), "legacy", &sshFlags{}, "pmox", "")
+	_, err := resolveSSHConnInfo(context.Background(), s.Client(), "legacy", &sshFlags{}, "", &config.Server{User: "pmox"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("untagged VM should be refused with a --force hint, got: %v", err)
 	}
