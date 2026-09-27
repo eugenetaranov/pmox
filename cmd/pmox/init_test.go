@@ -534,6 +534,87 @@ func TestPromptSSHKeyNonInteractiveUsesSuggestion(t *testing.T) {
 	}
 }
 
+func TestPromptSSHKeyBackFromExistingListThenGenerate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	origInteractive, origChoose, origSelect := interactiveFn, chooseSSHKeyActionFn, selectExistingKeyFn
+	interactiveFn = func() bool { return true }
+	chooseCalls := 0
+	chooseSSHKeyActionFn = func(suggest string) (string, error) {
+		chooseCalls++
+		if chooseCalls == 1 {
+			return "existing", nil
+		}
+		return "generate", nil
+	}
+	selectCalls := 0
+	selectExistingKeyFn = func(p prompter, sshDir, home, suggest string) (string, error) {
+		selectCalls++
+		return "", errSSHKeyChoiceBack
+	}
+	t.Cleanup(func() {
+		interactiveFn, chooseSSHKeyActionFn, selectExistingKeyFn = origInteractive, origChoose, origSelect
+	})
+
+	p := &fakePrompter{}
+	got, err := promptSSHKey(p, "")
+	if err != nil {
+		t.Fatalf("promptSSHKey: %v", err)
+	}
+	want := filepath.Join(home, ".ssh", "pmox_ed25519.pub")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if chooseCalls != 2 {
+		t.Errorf("chooseSSHKeyActionFn called %d times, want 2 (menu shown again after back)", chooseCalls)
+	}
+	if selectCalls != 1 {
+		t.Errorf("selectExistingKeyFn called %d times, want 1", selectCalls)
+	}
+}
+
+func TestPromptSSHKeyBrowseCancelReturnsToMenu(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	origInteractive, origChoose, origBrowse, origSelect := interactiveFn, chooseSSHKeyActionFn, browseForKeyFn, selectExistingKeyFn
+	interactiveFn = func() bool { return true }
+	chooseCalls := 0
+	chooseSSHKeyActionFn = func(suggest string) (string, error) {
+		chooseCalls++
+		if chooseCalls == 1 {
+			return "browse", nil
+		}
+		return "generate", nil
+	}
+	browseCalls := 0
+	browseForKeyFn = func(home string) (string, bool) {
+		browseCalls++
+		return "", false // simulate Esc-cancel
+	}
+	selectExistingKeyFn = func(p prompter, sshDir, home, suggest string) (string, error) {
+		t.Fatal("selectExistingKeyFn should not be called — browse-cancel must go back to the menu, not fall back to the existing-key list")
+		return "", nil
+	}
+	t.Cleanup(func() {
+		interactiveFn, chooseSSHKeyActionFn, browseForKeyFn, selectExistingKeyFn = origInteractive, origChoose, origBrowse, origSelect
+	})
+
+	p := &fakePrompter{}
+	got, err := promptSSHKey(p, "")
+	if err != nil {
+		t.Fatalf("promptSSHKey: %v", err)
+	}
+	want := filepath.Join(home, ".ssh", "pmox_ed25519.pub")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if chooseCalls != 2 || browseCalls != 1 {
+		t.Errorf("chooseCalls=%d browseCalls=%d, want 2/1", chooseCalls, browseCalls)
+	}
+}
+
 func TestConfiguredUser(t *testing.T) {
 	cfg := &config.Config{Servers: map[string]*config.Server{
 		"https://pve.example:8006/api2/json":   {User: "deploy"},

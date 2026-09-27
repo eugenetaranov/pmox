@@ -188,6 +188,28 @@ func promptSSHAuthMethod(p prompter) (string, error) {
 	return choice, nil
 }
 
+// Test seams for the SSH-key wizard's huh-backed pickers. Production wires
+// them to the real implementations below; tests replace them with
+// in-process stubs so promptSSHKey's back-navigation loop can be exercised
+// without a real TTY.
+var (
+	chooseSSHKeyActionFn = chooseSSHKeyAction
+	browseForKeyFn       = browseForKey
+	selectExistingKeyFn  = selectExistingKey
+)
+
+// errSSHKeyChoiceBack signals that the user picked "← Back" from
+// selectExistingKey (or cancelled browseForKey), telling promptSSHKey's
+// loop to return to the top-level generate/existing/browse menu instead
+// of treating it as a real key path or aborting the wizard.
+var errSSHKeyChoiceBack = errors.New("ssh key: back to menu")
+
+// sshKeyBackValue is the huh.Option value bound to the "← Back" row in
+// selectExistingKey's picker. It can never collide with a real key path:
+// sshkey.FindPubKeys only yields absolute filesystem paths, and no
+// filesystem allows NUL bytes in a path.
+const sshKeyBackValue = "\x00pmox:back"
+
 // promptSSHKey resolves the SSH public key pmox injects into cloud-init.
 // Interactively it leads with a top-level choice — generate a new
 // dedicated bootstrap key, pick an existing one, or browse the filesystem.
@@ -202,22 +224,29 @@ func promptSSHKey(p prompter, current string) (string, error) {
 		return sshKeyTextFallback(p, home, suggest)
 	}
 
-	choice, err := chooseSSHKeyAction(suggest)
-	if err != nil {
-		return "", tui.AbortErr(err)
-	}
-	switch choice {
-	case "generate":
-		return generateBootstrapKey(p, sshDir, home)
-	case "browse":
-		if path, ok := browseForKey(home); ok {
+	for {
+		choice, err := chooseSSHKeyActionFn(suggest)
+		if err != nil {
+			return "", tui.AbortErr(err)
+		}
+		switch choice {
+		case "generate":
+			return generateBootstrapKey(p, sshDir, home)
+		case "browse":
+			path, ok := browseForKeyFn(home)
+			if !ok {
+				// Cancelled (Esc) → back to the choice menu.
+				continue
+			}
 			p.Printf("Default SSH public key: %s\n", displayPath(path, home))
 			return path, nil
+		default: // "existing"
+			path, err := selectExistingKeyFn(p, sshDir, home, suggest)
+			if errors.Is(err, errSSHKeyChoiceBack) {
+				continue
+			}
+			return path, err
 		}
-		// Cancelled browse → fall back to picking an existing key.
-		return selectExistingKey(p, sshDir, home, suggest)
-	default: // "existing"
-		return selectExistingKey(p, sshDir, home, suggest)
 	}
 }
 
@@ -322,7 +351,8 @@ func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error)
 	pubKeys := sshkey.FindPubKeys(sshDir)
 	if len(pubKeys) > 0 {
 		fmt.Println()
-		opts := make([]huh.Option[string], 0, len(pubKeys))
+		opts := make([]huh.Option[string], 0, len(pubKeys)+1)
+		opts = append(opts, huh.NewOption("← Back", sshKeyBackValue))
 		for _, k := range pubKeys {
 			label := k
 			if rel, rerr := filepath.Rel(sshDir, k); rerr == nil {
@@ -341,13 +371,16 @@ func selectExistingKey(p prompter, sshDir, home, suggest string) (string, error)
 			Filtering(false).
 			WithTheme(tui.Theme()).
 			Run()
-		if err == nil && picked != "" {
+		switch {
+		case err == nil && picked == sshKeyBackValue:
+			return "", errSSHKeyChoiceBack
+		case err == nil && picked != "":
 			if _, rErr := os.ReadFile(picked); rErr == nil {
 				p.Printf("Default SSH public key: %s\n", displayPath(picked, home))
 				return picked, nil
 			}
 			p.Errf("cannot read %s\n", displayPath(picked, home))
-		} else if errors.Is(err, huh.ErrUserAborted) {
+		case errors.Is(err, huh.ErrUserAborted):
 			return "", tui.ErrAborted
 		}
 	}
