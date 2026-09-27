@@ -227,15 +227,23 @@ func resolveSelection(available []string, counts map[string]int, o cleanupOpts, 
 
 	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs || len(o.include) > 0
 	if interactive && !hasFlags {
-		// Populated categories first (stable within each group), empty
-		// ones after: huh's MultiSelect scrolls its initial viewport to
-		// the first pre-checked option, which would otherwise push
-		// earlier-declared-but-currently-empty categories out of view
-		// whenever the first checked category happens to sit late in
-		// cleanupCategories' otherwise-meaningful declared order.
+		// huh's MultiSelect scrolls its initial viewport to the index of
+		// the first pre-checked (Selected) option — not merely the first
+		// populated one. A populated-but-unchecked (destructive) category
+		// declared earlier than the first checked category would still
+		// get scrolled past otherwise. So the order must be: checked
+		// items first (guaranteeing the jump target, if any, lands at
+		// index 0), then populated-but-unchecked items, then empty ones
+		// — each group stable, preserving cleanupCategories' declared
+		// order within itself.
 		ordered := make([]cleanupCategory, 0, len(cleanupCategories))
 		for _, c := range cleanupCategories {
-			if counts[c.key] > 0 {
+			if sel[c.key] {
+				ordered = append(ordered, c)
+			}
+		}
+		for _, c := range cleanupCategories {
+			if !sel[c.key] && counts[c.key] > 0 {
 				ordered = append(ordered, c)
 			}
 		}

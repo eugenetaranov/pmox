@@ -208,14 +208,18 @@ func TestResolveSelection(t *testing.T) {
 			t.Error("checklist missing the empty 'vm' category entirely")
 		}
 	})
-	// huh's MultiSelect scrolls its initial viewport to the first
-	// pre-checked option. cleanupCategories' declared order is
-	// otherwise meaningful and unrelated to which categories currently
-	// have items, so if the only checked (non-destructive, populated)
-	// category sits late in that order, the widget would otherwise
-	// scroll straight past every earlier category. The checklist must
-	// instead order its options with every populated category first.
-	t.Run("populated categories precede empty ones regardless of declared order", func(t *testing.T) {
+	// huh's MultiSelect scrolls its initial viewport to the index of the
+	// first pre-checked (Selected) option — not merely the first
+	// populated one. cleanupCategories' declared order is otherwise
+	// meaningful and unrelated to which categories currently have items,
+	// so a populated-but-unchecked (destructive) category declared
+	// earlier than the first checked (non-destructive) category would
+	// still get scrolled past if options were merely grouped
+	// "populated before empty" without also accounting for checked
+	// state. The checklist must order checked items first, then
+	// populated-but-unchecked, then empty — so the widget's jump target
+	// (if any) always lands at index 0.
+	t.Run("checked category always leads, even with an earlier-declared populated destructive category", func(t *testing.T) {
 		orig := selectCategoriesFn
 		var gotOpts []huh.Option[string]
 		selectCategoriesFn = func(_ string, opts []huh.Option[string]) ([]string, error) {
@@ -224,16 +228,22 @@ func TestResolveSelection(t *testing.T) {
 		}
 		t.Cleanup(func() { selectCategoriesFn = orig })
 
-		// "api-token" is declared near the end of cleanupCategories,
-		// well after several categories left empty here; "context" is
-		// declared after it and populated too (destructive, so
-		// unchecked, but still must not be scrolled past).
-		counts := map[string]int{"api-token": 1, "context": 1}
-		if _, err := resolveSelection([]string{"api-token", "context"}, counts, cleanupOpts{}, true); err != nil {
+		// "template" is declared near the start of cleanupCategories
+		// (destructive, so never pre-checked) and "api-token" (the only
+		// checked category here) is declared near the end — reproduces
+		// the exact real-world case where a populated destructive
+		// category sat ahead of the first checked one and got scrolled
+		// out of view entirely, despite the earlier "populated before
+		// empty" fix.
+		counts := map[string]int{"template": 2, "api-token": 1, "context": 1}
+		if _, err := resolveSelection([]string{"template", "api-token", "context"}, counts, cleanupOpts{}, true); err != nil {
 			t.Fatal(err)
 		}
 		if len(gotOpts) != len(cleanupCategories) {
 			t.Fatalf("checklist has %d options, want all %d categories", len(gotOpts), len(cleanupCategories))
+		}
+		if len(gotOpts) == 0 || gotOpts[0].Value != "api-token" {
+			t.Fatalf("first option = %+v, want the only checked category (api-token) at index 0", gotOpts[0])
 		}
 
 		firstEmptyIdx := -1
