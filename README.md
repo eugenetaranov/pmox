@@ -185,7 +185,7 @@ scans every configured context, in selectable categories:
 
 On a terminal, `pmox cleanup` shows a **checklist of every category it
 checks**, not just the ones that found something — an empty one is
-listed dimmed with "nothing to clean" instead of disappearing, so the
+listed dimmed with "clean" instead of disappearing, so the
 list stays a complete map of what cleanup covers; one with items shows
 the count and is pre-checked (unless it's one of the four destructive
 categories above, which start unchecked regardless). Then it asks

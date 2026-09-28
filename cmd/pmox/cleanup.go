@@ -70,7 +70,7 @@ func newCleanupCmd() *cobra.Command {
 
 Dry-run by default. On a terminal it shows a checklist of every
 category above — not just ones with something found: an empty one is
-listed dimmed as "nothing to clean" instead of disappearing, so the
+listed dimmed as "clean" instead of disappearing, so the
 list stays a complete map of what cleanup checks. A populated
 category shows its count and is pre-checked, except the four
 destructive ones, which start unchecked regardless. Then it asks
@@ -173,7 +173,7 @@ func categoryByKey(k string) (cleanupCategory, bool) {
 // there's anything to act on.
 func categoryLabel(c cleanupCategory, count int) string {
 	if count == 0 {
-		return tui.Muted(fmt.Sprintf("%s — nothing to clean", c.title))
+		return tui.Muted(fmt.Sprintf("%s — clean", c.title))
 	}
 	return fmt.Sprintf("%s (%d)", c.title, count)
 }

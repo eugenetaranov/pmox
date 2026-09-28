@@ -212,8 +212,8 @@ func TestResolveSelection(t *testing.T) {
 		for _, o := range gotOpts {
 			if o.Value == "vm" {
 				sawEmptyVM = true
-				if !strings.Contains(o.Key, "nothing to clean") {
-					t.Errorf("empty category label = %q, want it to say there's nothing to clean", o.Key)
+				if !strings.Contains(o.Key, "clean") {
+					t.Errorf("empty category label = %q, want it to say clean", o.Key)
 				}
 			}
 			if o.Value == "snippet" && !strings.Contains(o.Key, "(3)") {
@@ -264,7 +264,7 @@ func TestResolveSelection(t *testing.T) {
 
 		firstEmptyIdx := -1
 		for i, o := range gotOpts {
-			if !strings.Contains(o.Key, "nothing to clean") {
+			if !strings.Contains(o.Key, "clean") {
 				continue
 			}
 			firstEmptyIdx = i
@@ -274,12 +274,12 @@ func TestResolveSelection(t *testing.T) {
 			t.Fatal("expected at least one empty category in the checklist")
 		}
 		for i, o := range gotOpts[:firstEmptyIdx] {
-			if strings.Contains(o.Key, "nothing to clean") {
+			if strings.Contains(o.Key, "clean") {
 				t.Errorf("option %d (%q) is empty but appears before the first empty option at %d", i, o.Key, firstEmptyIdx)
 			}
 		}
 		for i, o := range gotOpts[firstEmptyIdx:] {
-			if !strings.Contains(o.Key, "nothing to clean") {
+			if !strings.Contains(o.Key, "clean") {
 				t.Errorf("option %d (%q) is populated but appears after the first empty option", firstEmptyIdx+i, o.Key)
 			}
 		}
@@ -335,8 +335,8 @@ func TestCategoryLabel(t *testing.T) {
 		t.Errorf("categoryLabel(c, 3) = %q, want %q", got, "Orphaned snippets (3)")
 	}
 	got := categoryLabel(c, 0)
-	if !strings.Contains(got, "Orphaned snippets") || !strings.Contains(got, "nothing to clean") {
-		t.Errorf("categoryLabel(c, 0) = %q, want it to name the category and say nothing to clean", got)
+	if !strings.Contains(got, "Orphaned snippets") || !strings.Contains(got, "clean") {
+		t.Errorf("categoryLabel(c, 0) = %q, want it to name the category and say clean", got)
 	}
 }
 
