@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -86,11 +88,24 @@ func withTags(r pveclient.Resource, tags string) pveclient.Resource {
 	return r
 }
 
+// itemsFromCounts builds synthetic cleanupItems for tests that only
+// care about per-category counts, not item detail — n empty-Detail
+// items per category.
+func itemsFromCounts(counts map[string]int) []cleanupItem {
+	var items []cleanupItem
+	for cat, n := range counts {
+		for i := 0; i < n; i++ {
+			items = append(items, cleanupItem{Category: cat})
+		}
+	}
+	return items
+}
+
 func TestResolveSelection(t *testing.T) {
 	avail := []string{"snippet", "template", "log"}
 
 	t.Run("default excludes template", func(t *testing.T) {
-		sel, err := resolveSelection(avail, nil, cleanupOpts{}, false)
+		sel, err := resolveSelection(avail, nil, cleanupOpts{}, false, io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,61 +114,61 @@ func TestResolveSelection(t *testing.T) {
 		}
 	})
 	t.Run("only restricts", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, nil, cleanupOpts{only: []string{"snippet"}}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{only: []string{"snippet"}}, false, io.Discard)
 		if !sel["snippet"] || sel["log"] || sel["template"] {
 			t.Errorf("only sel = %v", sel)
 		}
 	})
 	t.Run("skip removes", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, nil, cleanupOpts{skip: []string{"log"}}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{skip: []string{"log"}}, false, io.Discard)
 		if !sel["snippet"] || sel["log"] {
 			t.Errorf("skip sel = %v", sel)
 		}
 	})
 	t.Run("include-templates adds template", func(t *testing.T) {
-		sel, _ := resolveSelection(avail, nil, cleanupOpts{includeTemplates: true}, false)
+		sel, _ := resolveSelection(avail, nil, cleanupOpts{includeTemplates: true}, false, io.Discard)
 		if !sel["template"] {
 			t.Errorf("include-templates sel = %v", sel)
 		}
 	})
 	t.Run("default excludes vm", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{}, false)
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{}, false, io.Discard)
 		if sel["vm"] {
 			t.Errorf("default sel = %v; want vm excluded", sel)
 		}
 	})
 	t.Run("include-vms adds vm", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{includeVMs: true}, false)
+		sel, _ := resolveSelection([]string{"snippet", "vm"}, nil, cleanupOpts{includeVMs: true}, false, io.Discard)
 		if !sel["vm"] {
 			t.Errorf("include-vms sel = %v", sel)
 		}
 	})
 	t.Run("default excludes context and tack-config", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{}, false)
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{}, false, io.Discard)
 		if sel["context"] || sel["tack-config"] {
 			t.Errorf("default sel = %v; want context/tack-config excluded", sel)
 		}
 	})
 	t.Run("generic --include adds any destructive category", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{include: []string{"context", "tack-config"}}, false)
+		sel, _ := resolveSelection([]string{"snippet", "context", "tack-config"}, nil, cleanupOpts{include: []string{"context", "tack-config"}}, false, io.Discard)
 		if !sel["context"] || !sel["tack-config"] {
 			t.Errorf("--include sel = %v, want both context and tack-config", sel)
 		}
 	})
 	t.Run("generic --include is equivalent to include-templates/include-vms", func(t *testing.T) {
-		sel, _ := resolveSelection([]string{"snippet", "template", "vm"}, nil, cleanupOpts{include: []string{"template", "vm"}}, false)
+		sel, _ := resolveSelection([]string{"snippet", "template", "vm"}, nil, cleanupOpts{include: []string{"template", "vm"}}, false, io.Discard)
 		if !sel["template"] || !sel["vm"] {
 			t.Errorf("--include sel = %v, want both template and vm", sel)
 		}
 	})
 	t.Run("unknown key errors", func(t *testing.T) {
-		_, err := resolveSelection(avail, nil, cleanupOpts{only: []string{"bogus"}}, false)
+		_, err := resolveSelection(avail, nil, cleanupOpts{only: []string{"bogus"}}, false, io.Discard)
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("err = %v, want ErrUserInput", err)
 		}
 	})
 	t.Run("unknown --include key errors", func(t *testing.T) {
-		_, err := resolveSelection(avail, nil, cleanupOpts{include: []string{"bogus"}}, false)
+		_, err := resolveSelection(avail, nil, cleanupOpts{include: []string{"bogus"}}, false, io.Discard)
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("err = %v, want ErrUserInput", err)
 		}
@@ -165,7 +180,7 @@ func TestResolveSelection(t *testing.T) {
 			return []string{"snippet"}, nil // user unchecks log
 		}
 		t.Cleanup(func() { selectCategoriesFn = orig })
-		sel, err := resolveSelection(avail, nil, cleanupOpts{}, true)
+		sel, err := resolveSelection(avail, nil, cleanupOpts{}, true, io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +201,8 @@ func TestResolveSelection(t *testing.T) {
 		t.Cleanup(func() { selectCategoriesFn = orig })
 		// avail (and counts) only cover "snippet" — every other
 		// registered category has nothing to clean right now.
-		if _, err := resolveSelection([]string{"snippet"}, map[string]int{"snippet": 3}, cleanupOpts{}, true); err != nil {
+		items := itemsFromCounts(map[string]int{"snippet": 3})
+		if _, err := resolveSelection([]string{"snippet"}, items, cleanupOpts{}, true, io.Discard); err != nil {
 			t.Fatal(err)
 		}
 		if len(gotOpts) != len(cleanupCategories) {
@@ -235,8 +251,8 @@ func TestResolveSelection(t *testing.T) {
 		// category sat ahead of the first checked one and got scrolled
 		// out of view entirely, despite the earlier "populated before
 		// empty" fix.
-		counts := map[string]int{"template": 2, "api-token": 1, "context": 1}
-		if _, err := resolveSelection([]string{"template", "api-token", "context"}, counts, cleanupOpts{}, true); err != nil {
+		items := itemsFromCounts(map[string]int{"template": 2, "api-token": 1, "context": 1})
+		if _, err := resolveSelection([]string{"template", "api-token", "context"}, items, cleanupOpts{}, true, io.Discard); err != nil {
 			t.Fatal(err)
 		}
 		if len(gotOpts) != len(cleanupCategories) {
@@ -266,6 +282,49 @@ func TestResolveSelection(t *testing.T) {
 			if !strings.Contains(o.Key, "nothing to clean") {
 				t.Errorf("option %d (%q) is populated but appears after the first empty option", firstEmptyIdx+i, o.Key)
 			}
+		}
+	})
+	// A destructive category's checklist row only shows a count (e.g.
+	// "pmox templates (DESTRUCTIVE) (2)") — since it starts unchecked,
+	// an operator would otherwise have to tick it (committing to
+	// eventual removal) just to see which 2 templates it refers to. The
+	// full detail (name/vmid/node) must be printed up front instead.
+	t.Run("prints full item detail before the checklist", func(t *testing.T) {
+		orig := selectCategoriesFn
+		selectCategoriesFn = func(_ string, _ []huh.Option[string]) ([]string, error) {
+			return nil, nil
+		}
+		t.Cleanup(func() { selectCategoriesFn = orig })
+
+		items := []cleanupItem{
+			{Category: "template", Detail: "192.168.0.185: ubuntu-2404-lts-pmox-9000 (vmid 9000) on node p0"},
+			{Category: "template", Detail: "192.168.0.185: ubuntu-2404-lts-pmox-9001 (vmid 9001) on node p0"},
+		}
+		var out bytes.Buffer
+		if _, err := resolveSelection([]string{"template"}, items, cleanupOpts{}, true, &out); err != nil {
+			t.Fatal(err)
+		}
+		got := out.String()
+		if !strings.Contains(got, "pmox templates (DESTRUCTIVE) (2)") {
+			t.Errorf("preview missing category header: %q", got)
+		}
+		if !strings.Contains(got, "ubuntu-2404-lts-pmox-9000 (vmid 9000)") || !strings.Contains(got, "ubuntu-2404-lts-pmox-9001 (vmid 9001)") {
+			t.Errorf("preview missing full item detail: %q", got)
+		}
+	})
+	t.Run("no preview when nothing was found", func(t *testing.T) {
+		orig := selectCategoriesFn
+		selectCategoriesFn = func(_ string, _ []huh.Option[string]) ([]string, error) {
+			return nil, nil
+		}
+		t.Cleanup(func() { selectCategoriesFn = orig })
+
+		var out bytes.Buffer
+		if _, err := resolveSelection(nil, nil, cleanupOpts{}, true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Len() != 0 {
+			t.Errorf("expected no preview output when there's nothing found, got %q", out.String())
 		}
 	})
 }

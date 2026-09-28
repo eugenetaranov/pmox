@@ -124,6 +124,13 @@ type cleanupOpts struct {
 	include          []string
 }
 
+// hasSelectionFlags reports whether any non-interactive selection flag
+// was passed — when true, the interactive checklist (and its preview)
+// is skipped in favor of the flag-resolved set.
+func (o cleanupOpts) hasSelectionFlags() bool {
+	return len(o.skip) > 0 || o.includeTemplates || o.includeVMs || len(o.include) > 0
+}
+
 // cleanupCategory describes a removable-leftover category.
 type cleanupCategory struct {
 	key         string
@@ -183,7 +190,11 @@ var selectCategoriesFn = tui.SelectMultiChecked
 // checked but found nothing in) — the interactive checklist lists
 // every category regardless, so a category with nothing to clean is
 // still visible (dimmed, annotated) rather than silently absent.
-func resolveSelection(available []string, counts map[string]int, o cleanupOpts, interactive bool) (map[string]bool, error) {
+func resolveSelection(available []string, items []cleanupItem, o cleanupOpts, interactive bool, w io.Writer) (map[string]bool, error) {
+	counts := make(map[string]int, len(cleanupCategories))
+	for _, it := range items {
+		counts[it.Category]++
+	}
 	toValidate := append(append([]string{}, o.only...), o.skip...)
 	toValidate = append(toValidate, o.include...)
 	for _, k := range toValidate {
@@ -225,8 +236,19 @@ func resolveSelection(available []string, counts map[string]int, o cleanupOpts, 
 		}
 	}
 
-	hasFlags := len(o.skip) > 0 || o.includeTemplates || o.includeVMs || len(o.include) > 0
+	hasFlags := o.hasSelectionFlags()
 	if interactive && !hasFlags {
+		if len(items) > 0 {
+			// Show exactly what was found — name/vmid/node, not just a
+			// per-category count — before asking what to act on. A
+			// destructive category starts unchecked, so without this an
+			// operator would have to tick it (committing it to the
+			// eventual removal) just to see what it actually refers to.
+			fmt.Fprintln(w, "Found items:")
+			fmt.Fprintln(w)
+			printItemsByCategory(w, items)
+			fmt.Fprintln(w)
+		}
 		// huh's MultiSelect scrolls its initial viewport to the index of
 		// the first pre-checked (Selected) option — not merely the first
 		// populated one. A populated-but-unchecked (destructive) category
@@ -373,12 +395,8 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
-	counts := make(map[string]int, len(cleanupCategories))
-	for _, it := range items {
-		counts[it.Category]++
-	}
 	interactive := tui.Interactive() && outputMode != "json"
-	selected, err := resolveSelection(available, counts, o, interactive)
+	selected, err := resolveSelection(available, items, o, interactive, cmd.OutOrStdout())
 	if err != nil {
 		return err
 	}
@@ -801,6 +819,27 @@ func pruneKnownHosts(path string, liveIPs map[string]bool) error {
 }
 
 // reportCleanup prints (and, with apply, performs) the planned removals.
+// printItemsByCategory prints one "<title> (<n>):" header per category
+// that has items, in cleanupCategories' canonical order, followed by
+// each item's full detail (name/vmid/node, wherever the category's
+// Detail already carries that) indented on its own line.
+func printItemsByCategory(w io.Writer, items []cleanupItem) {
+	byCat := map[string][]cleanupItem{}
+	for _, it := range items {
+		byCat[it.Category] = append(byCat[it.Category], it)
+	}
+	for _, c := range cleanupCategories {
+		list := byCat[c.key]
+		if len(list) == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "%s (%d):\n", c.title, len(list))
+		for _, it := range list {
+			fmt.Fprintf(w, "  - %s\n", it.Detail)
+		}
+	}
+}
+
 func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive bool) error {
 	w := cmd.OutOrStdout()
 
@@ -831,21 +870,7 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive b
 		return nil
 	}
 
-	// Group by category in the canonical order (from cleanupCategories).
-	byCat := map[string][]cleanupItem{}
-	for _, it := range items {
-		byCat[it.Category] = append(byCat[it.Category], it)
-	}
-	for _, c := range cleanupCategories {
-		list := byCat[c.key]
-		if len(list) == 0 {
-			continue
-		}
-		fmt.Fprintf(w, "%s (%d):\n", c.title, len(list))
-		for _, it := range list {
-			fmt.Fprintf(w, "  - %s\n", it.Detail)
-		}
-	}
+	printItemsByCategory(w, items)
 
 	if !apply {
 		if !interactive {
