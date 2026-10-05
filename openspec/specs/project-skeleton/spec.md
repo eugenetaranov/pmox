@@ -1,19 +1,23 @@
-## ADDED Requirements
+## Purpose
+
+Repository layout, build pipeline, version stamping, exit codes, CI, and release workflow for the single static `pmox` binary.
+
+## Requirements
 
 ### Requirement: Buildable Go binary
 
 The repository SHALL contain a Go module that produces a single static
-binary named `pmox` via `make build`, with no CGo dependencies and no
+binary named `pmox` via `task build`, with no CGo dependencies and no
 runtime requirements beyond a libc-compatible target OS.
 
 #### Scenario: Local build on macOS or Linux
-- **WHEN** a developer runs `make build` in a fresh clone with Go 1.24 installed
+- **WHEN** a developer runs `task build` in a fresh clone with Go 1.24 installed
 - **THEN** the build SHALL succeed and produce `bin/pmox`
 - **AND** the binary SHALL execute and exit 0 when invoked with no arguments
 - **AND** the binary SHALL print Cobra-generated usage text on stderr or stdout
 
 #### Scenario: Cross-compilation
-- **WHEN** a developer runs `make build-all`
+- **WHEN** a developer runs `task build-all`
 - **THEN** the build SHALL produce `bin/pmox-linux-amd64`, `bin/pmox-linux-arm64`, `bin/pmox-darwin-amd64`, and `bin/pmox-darwin-arm64`
 
 ### Requirement: Version metadata embedded at build time
@@ -23,7 +27,7 @@ The binary SHALL embed version, commit, and build-date strings via
 git revision.
 
 #### Scenario: Version flag with ldflag injection
-- **WHEN** the binary is built via `make build` from a tagged commit
+- **WHEN** the binary is built via `task build` from a tagged commit
 - **AND** the user runs `pmox --version`
 - **THEN** the output SHALL contain the tag, the short commit SHA, and an RFC3339 build date
 
@@ -91,7 +95,7 @@ tags matching `v*`, and pull requests to `main`.
 
 #### Scenario: CI build job verifies the binary
 - **WHEN** the `build` job runs
-- **THEN** it SHALL invoke `make build` and then `./bin/pmox --version`
+- **THEN** it SHALL invoke `task build` and then `./bin/pmox --version`
 
 ### Requirement: Release pipeline
 
@@ -122,7 +126,7 @@ familiar with tack can navigate pmox without documentation.
 
 #### Scenario: Source layout
 - **WHEN** a reader inspects the repo root
-- **THEN** they SHALL find `cmd/pmox/`, `internal/`, `Makefile`, `.goreleaser.yaml`, `.github/workflows/`, `go.mod`, `LICENSE`, and `README.md`
+- **THEN** they SHALL find `cmd/pmox/`, `internal/`, `Taskfile.yml`, `.goreleaser.yaml`, `.github/workflows/`, `go.mod`, `LICENSE`, and `README.md`
 - **AND** SHALL NOT find a `pkg/` directory
 - **AND** SHALL NOT find any per-subcommand files in `cmd/pmox/` other than `main.go`
 

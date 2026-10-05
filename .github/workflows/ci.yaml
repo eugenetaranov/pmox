@@ -22,8 +22,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Set up Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+
       - name: Build
-        run: make build
+        run: task build
 
       - name: Verify binary
         run: ./bin/pmox --version
@@ -79,7 +84,7 @@ jobs:
               - 'docs/**'
               - 'examples/**'
               - 'internal/tools/doccheck/**'
-              - 'Makefile'
+              - 'Taskfile.yml'
 
       - name: Set up Go
         if: steps.changes.outputs.docs == 'true'
@@ -87,6 +92,12 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: make docs-check
+      - name: Set up Task
         if: steps.changes.outputs.docs == 'true'
-        run: make docs-check
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: task docs-check
+        if: steps.changes.outputs.docs == 'true'
+        run: task docs-check

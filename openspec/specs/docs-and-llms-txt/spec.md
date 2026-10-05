@@ -117,27 +117,27 @@ preparation, and common first-launch errors.
 
 ### Requirement: Link checker
 
-The `Makefile` SHALL expose a `docs-check` target that validates
+The `Taskfile.yml` SHALL expose a `docs-check` task that validates
 every relative link in `README.md`, `llms.txt`, `docs/*.md`, and
 `examples/README.md` resolves to an existing file in the
 repository.
 
 #### Scenario: docs-check prefers lychee when available
-- **WHEN** `make docs-check` runs and `lychee` is on PATH
+- **WHEN** `task docs-check` runs and `lychee` is on PATH
 - **THEN** it SHALL invoke `lychee --offline README.md llms.txt
   docs/ examples/`
 - **AND** otherwise it SHALL fall back to
   `go run ./internal/tools/doccheck`
 
 #### Scenario: Broken internal link fails the check
-- **WHEN** `make docs-check` runs against a tree where `README.md`
+- **WHEN** `task docs-check` runs against a tree where `README.md`
   references `./examples/nonexistent.yaml`
 - **THEN** the command SHALL exit non-zero
 - **AND** SHALL name the broken link with its source file and line
   number
 
 #### Scenario: Healthy tree passes
-- **WHEN** `make docs-check` runs against the v1 tree
+- **WHEN** `task docs-check` runs against the v1 tree
 - **THEN** the command SHALL exit 0
 
 #### Scenario: External links are not fetched
@@ -149,6 +149,6 @@ repository.
 #### Scenario: CI runs docs-check on doc changes
 - **WHEN** a PR modifies any file under `README.md`, `llms.txt`,
   `docs/`, `examples/`, `internal/tools/doccheck/`, or the
-  `Makefile`
-- **THEN** CI SHALL run `make docs-check`
+  `Taskfile.yml`
+- **THEN** CI SHALL run `task docs-check`
 - **AND** the PR SHALL be blocked if the check fails

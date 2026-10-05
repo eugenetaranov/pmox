@@ -579,11 +579,11 @@ success, so the VM stays reachable for manual follow-up. Pass
 ## Development
 
 ```
-make build             # ./bin/pmox
-make test              # unit tests
-make lint              # golangci-lint
-make docs-check        # validate README/llms.txt/docs/examples links
-make release-dry-run   # local goreleaser snapshot
+task build             # ./bin/pmox
+task test              # unit tests
+task lint              # golangci-lint
+task docs-check        # validate README/llms.txt/docs/examples links
+task release-dry-run   # local goreleaser snapshot
 ```
 
 The project layout mirrors [tackhq/tack](https://github.com/tackhq/tack):

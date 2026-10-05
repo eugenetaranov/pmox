@@ -4,7 +4,7 @@
 // start with "http"; and asserts each target resolves relative to the
 // containing file. Exits 0 on a clean walk, 1 on any miss.
 //
-// The tool exists as the offline fallback for `make docs-check` when
+// The tool exists as the offline fallback for `task docs-check` when
 // lychee is not on PATH. Scope is deliberately narrow: no network
 // fetches, no anchor checking, no image validation.
 package main
