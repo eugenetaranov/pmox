@@ -25,24 +25,6 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/pmox
 
-  build-all:
-    desc: Build for all platforms
-    deps: [build-linux, build-darwin]
-
-  build-linux:
-    desc: Build for Linux (amd64, arm64)
-    cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}}-linux-amd64 ./cmd/pmox
-      - GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}}-linux-arm64 ./cmd/pmox
-
-  build-darwin:
-    desc: Build for macOS (amd64, arm64)
-    cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}}-darwin-amd64 ./cmd/pmox
-      - GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}}-darwin-arm64 ./cmd/pmox
-
   test:
     desc: Run unit tests
     cmds:
@@ -114,6 +96,11 @@ tasks:
         git tag -a "$TAG" -m "Release $TAG"
         git push origin "$TAG"
         echo "Release $TAG pushed. GitHub Actions will build and publish artifacts."
+
+  upgrade-local:
+    desc: Wait for a release (TAG=vX.Y.Z, default latest), verify the brew formula, upgrade local install
+    cmds:
+      - scripts/upgrade-local.sh {{.TAG}}
 
   release-dry-run:
     desc: Test release without publishing

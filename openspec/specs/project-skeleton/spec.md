@@ -17,8 +17,8 @@ runtime requirements beyond a libc-compatible target OS.
 - **AND** the binary SHALL print Cobra-generated usage text on stderr or stdout
 
 #### Scenario: Cross-compilation
-- **WHEN** a developer runs `task build-all`
-- **THEN** the build SHALL produce `bin/pmox-linux-amd64`, `bin/pmox-linux-arm64`, `bin/pmox-darwin-amd64`, and `bin/pmox-darwin-arm64`
+- **WHEN** the release workflow runs GoReleaser for a tag
+- **THEN** it SHALL produce binaries for linux/amd64, linux/arm64, darwin/amd64, and darwin/arm64
 
 ### Requirement: Version metadata embedded at build time
 
