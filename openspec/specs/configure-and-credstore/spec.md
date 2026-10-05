@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Interactive `pmox init`/`configure` that discovers cluster settings, stores the API token secret in the OS keychain (with a file fallback), handles TLS verification, and manages configured servers.
+
+## Requirements
 
 ### Requirement: SSH credential prompts in configure
 

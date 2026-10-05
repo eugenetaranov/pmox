@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+SSH/SFTP access to Proxmox nodes (`internal/pvessh`) for operations the PVE HTTP API cannot perform, such as uploading cloud-init snippets.
+
+## Requirements
 
 ### Requirement: pvessh package
 

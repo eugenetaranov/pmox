@@ -1,4 +1,8 @@
-## MODIFIED Requirements
+## Purpose
+
+`pmox delete` resolves a VM, confirms with the operator, stops it if running, and destroys it, guarding against deleting VMs pmox did not create.
+
+## Requirements
 
 ### Requirement: `pmox delete` command
 

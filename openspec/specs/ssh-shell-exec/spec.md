@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`pmox shell` and `pmox exec` — interactive SSH sessions and remote command execution on pmox VMs.
+
+## Requirements
 
 ### Requirement: `pmox shell` command
 

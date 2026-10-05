@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+A shared yes/no confirmation prompt for destructive commands, with `--yes` / `PMOX_ASSUME_YES` bypasses and safe refusal when stdin is not a TTY.
+
+## Requirements
 
 ### Requirement: Confirmer interface in `internal/tui`
 

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`pmox sync` mirrors directories between the local machine and a pmox VM with rsync over SSH.
+
+## Requirements
 
 ### Requirement: `pmox sync` command
 

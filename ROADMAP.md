@@ -12,7 +12,7 @@ slices under `openspec/changes/`.
 
 | #  | Slice                         | State       | Notes |
 |----|-------------------------------|-------------|-------|
-| 1  | `project-skeleton`            | ✅ Shipped  | `cmd/pmox`, exit codes, Makefile, goreleaser, CI, release workflow, license, placeholder README |
+| 1  | `project-skeleton`            | ✅ Shipped  | `cmd/pmox`, exit codes, Taskfile, goreleaser, CI, release workflow, license, placeholder README |
 | 2  | `configure-and-credstore`     | ✅ Shipped  | `pmox init` with interactive prompts, auto-discovery, keychain, TLS fallback, `--list`, `--remove` |
 | 3  | `server-resolution`           | ✅ Shipped  | `internal/server.Resolve` + `--server` root flag + `PMOX_SERVER` |
 | 4  | `pveclient-core`              | ✅ Shipped  | Launch/lifecycle endpoints, `WaitTask`, form-body helper, no-retry client |
@@ -51,15 +51,20 @@ part of real user flows:
 | `cloudinit-key-selection`           | `--regen-cloud-init` picks/persists the SSH key; `configure` offers regen on key drift; `doctor` flags `ssh_pubkey`-vs-cloud-init mismatch |
 | `cleanup`                           | `pmox cleanup [--apply]` — remove orphaned snippets + stale local state (mount records/logs, known_hosts pins) across all contexts; dry-run by default |
 | `secret-store-fallback`             | Keychain-preferred secrets with an automatic `~/.config/pmox/secrets.yaml` (0600) fallback for headless/CI; `PMOX_SECRET_STORE=auto\|keychain\|file`; tolerant reads, dual-backend removal, `doctor` backend check |
+| `streamline-configure`              | `configure` accepts a bare IP/hostname, probes reachability before asking for credentials, retries transient failures |
+| `configure-token-autocreate`        | `configure` can log in with username/password and create the API token itself |
+| `init-form-ui`                      | `pmox init` as a form with back navigation and a review screen before anything is written; `config edit` re-configures a context |
+| `tack-apply-command`                | `pmox apply` runs tack against new or existing VMs (fixes the broken `--tack` hook); first-time `--init` scaffolding with a tack-roles checklist |
+| `cleanup-selectable`                | `cleanup` categories are selectable in a checklist; opt-in destructive categories (templates, abandoned VMs, contexts, tack config) |
+| `cleanup-checklist-*`               | Checklist always lists every category, never scrolls a populated one out of view, and previews item detail before selection |
 
 Archived slice artifacts live in `openspec/changes/archive/`; the synced
 capability specs live in `openspec/specs/`.
 
 ## Next up
 
-All v1 feature slices are shipped. Remaining pre-release work is
-tracked under [Prereqs for the first real release](#prereqs-for-the-first-real-release)
-below.
+All v1 feature slices are shipped and released (`v0.25.x`). Candidate
+next features are the items under [Out of scope for v1](#out-of-scope-for-v1).
 
 ## Out of scope for v1
 
@@ -76,17 +81,3 @@ Questions flagged during exploration that don't block progress:
 - Interrupt behavior of `pmox delete` between stop and destroy
 - Keychain account-key collision when two pmox installs on one host
   configure the same URL with different credentials
-- `openspec/specs/` directory uses `## ADDED Requirements` / `## REMOVED
-  Requirements` format but `openspec validate --specs` expects canonical
-  `## Purpose` / `## Requirements` sections, so 12 of 15 existing specs
-  fail validation. Cosmetic; artifacts in `openspec/changes/archive/` are
-  the source of truth. Worth a dedicated cleanup pass.
-
-## Prereqs for the first real release
-
-- Set `HOMEBREW_TAP_TOKEN` in GitHub repo Settings → Secrets and Variables →
-  Actions, scoped to write to `eugenetaranov/homebrew-tap`. Without it, the
-  goreleaser brew step fails but the GitHub release still publishes.
-- Slice 1 task 10.8 (end-to-end release-workflow dry-run via a throwaway tag)
-  is deferred to `v0.1.0` itself; `make release-dry-run` has already
-  validated the goreleaser config locally.

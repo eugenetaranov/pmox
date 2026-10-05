@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Resolution of which configured Proxmox server a command targets, via `--server`, `PMOX_SERVER`, or the configured default.
+
+## Requirements
 
 ### Requirement: Deterministic server resolution
 

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+VM lifecycle commands — `list`, `info`, `start`, `stop`, `delete`, `clone` — over the PVE HTTP API.
+
+## Requirements
 
 ### Requirement: `pmox list` command
 

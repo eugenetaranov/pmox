@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`pmox cp` copies files and directories between the local machine and a pmox VM over SSH.
+
+## Requirements
 
 ### Requirement: `pmox cp` command
 
