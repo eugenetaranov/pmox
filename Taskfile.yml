@@ -101,18 +101,3 @@ tasks:
     desc: Wait for a release (TAG=vX.Y.Z, default latest), verify the brew formula, upgrade local install
     cmds:
       - scripts/upgrade-local.sh {{.TAG}}
-
-  release-dry-run:
-    desc: Test release without publishing
-    cmds:
-      - goreleaser release --snapshot --clean --skip=publish
-
-  release-snapshot:
-    desc: Create snapshot release
-    cmds:
-      - goreleaser release --snapshot --clean
-
-  release-check:
-    desc: Check GoReleaser configuration
-    cmds:
-      - goreleaser check
