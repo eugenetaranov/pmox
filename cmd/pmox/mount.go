@@ -221,6 +221,10 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	fmt.Fprintf(stderr, "Syncing %s → %s:%s\n", localPath, ref, remotePath)
 
 	if err := mountRsyncRunFn(rsyncPath, rsyncArgs, stderr); err != nil {
+		var authErr *sshAuthError
+		if explained := explainSSHFailure(ctx, target, resolved.URL, err, false); errors.As(explained, &authErr) {
+			return explained
+		}
 		return fmt.Errorf("initial rsync failed: %w", err)
 	}
 	fmt.Fprintf(stderr, "%s initial sync complete\n", timestamp())

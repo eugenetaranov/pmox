@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,12 +15,14 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/accessreg"
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/setup"
 	"github.com/eugenetaranov/pmox/internal/tackprofile"
 	"github.com/eugenetaranov/pmox/internal/tui"
@@ -157,13 +160,15 @@ var cleanupCategories = []cleanupCategory{
 	{"known-host", "Stale known_hosts pins", false},
 	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
 	{"api-token", "Orphaned pmox API tokens", false},
+	{"access-grant", "Access grants for deleted VMs", false},
+	{"access-key", "Published keys nobody is granted (DESTRUCTIVE)", true},
 	{"context", "Configured server contexts (DESTRUCTIVE)", true},
 	{"tack-config", "~/.config/pmox/tack (playbooks + roles) (DESTRUCTIVE)", true},
 }
 
 // remoteCleanupCategories are the categories found by scanning a
 // configured Proxmox cluster (as opposed to local files).
-var remoteCleanupCategories = []string{"snippet", "template", "vm", "api-token"}
+var remoteCleanupCategories = []string{"snippet", "template", "vm", "api-token", "access-grant", "access-key"}
 
 func categoryByKey(k string) (cleanupCategory, bool) {
 	for _, c := range cleanupCategories {
@@ -365,6 +370,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 		}
 
 		items = append(items, apiTokenItems(ctx, client, label, srv.TokenID)...)
+		items = append(items, accessRegistryItems(ctx, cfg, url, label, vmids)...)
 
 		if srv.Node == "" {
 			continue // no node → can't scope snippet storage
@@ -967,4 +973,78 @@ func hasDestructiveItem(items []cleanupItem) bool {
 		}
 	}
 	return false
+}
+
+// accessRegistryItems flags access-registry entries cleanup can drop:
+// grants naming VMIDs that no longer exist on the cluster (safe), and
+// published keys nobody has any grant for (opt-in: the person may simply
+// not have been granted anything yet). Silent when the registry can't
+// be reached (no node SSH) or is unused.
+func accessRegistryItems(ctx context.Context, cfg *config.Config, url, label string, vmids map[int]bool) []cleanupItem {
+	r, err := server.Resolve(ctx, server.Options{Cfg: cfg, Flag: url})
+	if err != nil || !r.HasNodeSSH() {
+		return nil
+	}
+	fs, closeFS, err := openRegistryFn(ctx, r)
+	if err != nil {
+		return nil
+	}
+	defer closeFS()
+	acc, err := accessreg.ReadAccess(ctx, fs)
+	if err != nil {
+		return nil
+	}
+	keys, _, err := accessreg.ListKeys(ctx, fs)
+	if err != nil {
+		return nil
+	}
+	// Each apply re-opens the registry: cleanup applies items after the
+	// scan, by which time this connection is closed.
+	withRegistry := func(fn func(accessreg.FS) error) error {
+		fs, closeFS, err := openRegistryFn(ctx, r)
+		if err != nil {
+			return err
+		}
+		defer closeFS()
+		return fn(fs)
+	}
+
+	var items []cleanupItem
+	names := make([]string, 0, len(acc.People))
+	for n := range acc.People {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, id := range acc.People[n].VMs {
+			if vmids[id] {
+				continue
+			}
+			name, vmid := n, id
+			items = append(items, cleanupItem{
+				Category: "access-grant",
+				Detail:   fmt.Sprintf("%s: %s's grant for vmid %d (VM no longer exists)", label, name, vmid),
+				apply: func() error {
+					return withRegistry(func(fs accessreg.FS) error {
+						_, err := accessreg.UpdateAccess(ctx, fs, func(a *accessreg.Access) error { a.RevokeVMs(name, vmid); return nil })
+						return err
+					})
+				},
+			})
+		}
+	}
+	for _, k := range keys {
+		if g := acc.People[k.Name]; g != nil && (g.AllVMs || len(g.VMs) > 0) {
+			continue
+		}
+		name, fp := k.Name, k.Fingerprint
+		items = append(items, cleanupItem{
+			Category: "access-key",
+			Detail:   fmt.Sprintf("%s: published key %s (%s) has no grants", label, name, fp),
+			apply: func() error {
+				return withRegistry(func(fs accessreg.FS) error { return accessreg.UnpublishKey(ctx, fs, name) })
+			},
+		})
+	}
+	return items
 }

@@ -189,6 +189,11 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 		OutputJSON:  outputMode == "json",
 	}
 	if err := tack.Run(ctx, opts, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+		target := &sshTarget{IP: ip, User: user, Key: key, VMID: ref.VMID, Name: ref.Name}
+		var authErr *sshAuthError
+		if explained := explainSSHFailure(ctx, target, resolved.URL, err, false); errors.As(explained, &authErr) {
+			return explained
+		}
 		return &tackRunError{err: err}
 	}
 

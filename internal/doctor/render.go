@@ -9,7 +9,7 @@ import (
 // setup flow (config first, then connectivity, storage, SSH, template)
 // with local tooling last. Unknown groups print after these in first-seen
 // order.
-var groupOrder = []string{"config", "api", "storage", "ssh", "template", "tooling"}
+var groupOrder = []string{"config", "api", "storage", "ssh", "template", "access", "tooling"}
 
 var groupTitle = map[string]string{
 	"config":   "Config",
@@ -17,6 +17,7 @@ var groupTitle = map[string]string{
 	"storage":  "Storage",
 	"ssh":      "Node SSH",
 	"template": "Template",
+	"access":   "VM access sharing",
 	"tooling":  "Local tooling",
 }
 

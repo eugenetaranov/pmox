@@ -132,6 +132,7 @@ func executeClone(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		return err
 	}
 	recordVMIdentity(cmd.ErrOrStderr(), partial.ServerURL, r.VMID, partial.CloudInitPath)
+	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, partial.ServerURL, r.VMID, ref.Node, newName)
 	fmt.Fprintf(cmd.OutOrStdout(), "cloned %s -> %s (vmid=%d, ip=%s)\n", ref.Name, newName, r.VMID, r.IP)
 	return nil
 }

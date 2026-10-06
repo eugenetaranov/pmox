@@ -269,6 +269,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 	recordVMIdentity(cmd.ErrOrStderr(), resolved.URL, r.VMID, opts.CloudInitPath)
+	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, resolved.URL, r.VMID, opts.Node, name)
 	fmt.Fprintf(cmd.OutOrStdout(), "launched %s (vmid=%d, ip=%s)\n", name, r.VMID, r.IP)
 	return nil
 }

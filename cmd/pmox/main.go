@@ -172,7 +172,7 @@ func init() {
 	)
 	addGrouped(groupAccess,
 		newShellCmd(), newExecCmd(), newApplyCmd(), newCpCmd(), newSyncCmd(),
-		newMountCmd(), newUmountCmd(), newSSHConfigCmd(),
+		newMountCmd(), newUmountCmd(), newSSHConfigCmd(), newKeyCmd(), newAccessCmd(),
 	)
 	// initCmd is declared in init.go; register + group it here so
 	// all command registration lives in one place.

@@ -13,10 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/accessreg"
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
 	"github.com/eugenetaranov/pmox/internal/doctor"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/guestkeys"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/server"
@@ -366,6 +368,11 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 
 	// --- Node SSH (independent of API auth) ---
 	doctorNodeSSH(ctx, cl, resolved, deps)
+
+	// --- VM access sharing (optional feature) ---
+	if authOK {
+		doctorAccess(ctx, cl, client, resolved, cfg)
+	}
 }
 
 // doctorConfigDefaults checks the launch defaults. All three are hard
@@ -840,4 +847,81 @@ func doctorSSHDial(ctx context.Context, resolved *server.Resolved) error {
 		return err
 	}
 	return c.Close()
+}
+
+// doctorAccessPermsFn is a seam over the token's permission lookup.
+var doctorAccessPermsFn = func(ctx context.Context, c *pveclient.Client) (pveclient.Permissions, error) {
+	return c.GetPermissions(ctx)
+}
+
+// doctorAccess checks the optional VM access sharing feature ('pmox key'
+// / 'pmox access'): whether the token can edit guests' keys, whether the
+// cluster registry is reachable, and whether running VMs match it. A
+// token without the guest-agent privileges is only informational —
+// sharing is opt-in.
+func doctorAccess(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, resolved *server.Resolved, cfg *config.Config) {
+	if perms, err := doctorAccessPermsFn(ctx, client); err == nil {
+		fileIO := perms.HasPriv("/vms", "VM.GuestAgent.FileRead") && perms.HasPriv("/vms", "VM.GuestAgent.FileWrite")
+		if fileIO || perms.HasPriv("/vms", "VM.Monitor") {
+			cl.Pass("access.privileges", "access", "token can update VMs' shared keys through the guest agent")
+		} else {
+			cl.Info("access.privileges", "access", "token can't update VMs' shared keys (needs VM.GuestAgent.FileRead + VM.GuestAgent.FileWrite on PVE 9, or VM.Monitor on PVE 8) — only needed for 'pmox access'")
+		}
+	}
+
+	if !resolved.HasNodeSSH() {
+		cl.Info("access.registry", "access", "access registry not checked: it is reached over node SSH, which isn't configured")
+		return
+	}
+	fs, closeFS, err := openRegistryFn(ctx, resolved)
+	if err != nil {
+		cl.Warn("access.registry", "access", "could not open the access registry: "+err.Error(), "check node SSH ('pmox doctor' Node SSH section)")
+		return
+	}
+	defer closeFS()
+	acc, err := accessreg.ReadAccess(ctx, fs)
+	if err != nil {
+		cl.Warn("access.registry", "access", "access registry unreadable: "+err.Error(), "fix or remove "+accessreg.AccessFile)
+		return
+	}
+	keys, badKeys, err := accessreg.ListKeys(ctx, fs)
+	if err != nil {
+		cl.Warn("access.registry", "access", "could not list published keys: "+err.Error(), "")
+		return
+	}
+	if len(keys) == 0 && len(acc.People) == 0 {
+		cl.Info("access.registry", "access", "access registry not used yet (share VMs with 'pmox key publish' + 'pmox access')")
+		return
+	}
+	msg := fmt.Sprintf("access registry: %d published key(s), %d person(s) with grants", len(keys), len(acc.People))
+	if len(badKeys) > 0 {
+		cl.Warn("access.registry", "access", fmt.Sprintf("%s; %d unreadable key file(s)", msg, len(badKeys)), "inspect "+accessreg.KeysDir)
+	} else {
+		cl.Pass("access.registry", "access", msg)
+	}
+
+	env := &accessEnv{cfg: cfg, resolved: resolved, client: client, agent: guestAgentFn(client), fs: fs}
+	vms, err := pmoxVMs(ctx, env)
+	if err != nil {
+		return
+	}
+	var drifted []string
+	for _, r := range vms {
+		want, _ := acc.KeysFor(r.VMID, keys)
+		if !r.IsRunning() {
+			continue
+		}
+		_, have, rerr := guestkeys.Read(ctx, env.agent, guestkeys.Target{Node: r.Node, VMID: r.VMID, User: guestUserFor(env, r.VMID)})
+		if rerr != nil {
+			continue // unreadable guests are reported by 'pmox access list'
+		}
+		if strings.Join(have, "\n") != strings.Join(want, "\n") {
+			drifted = append(drifted, r.Name)
+		}
+	}
+	if len(drifted) == 0 {
+		cl.Pass("access.drift", "access", "running VMs match the access registry")
+		return
+	}
+	cl.Warn("access.drift", "access", "VMs out of sync with the access registry: "+strings.Join(drifted, ", "), "run 'pmox access sync'")
 }

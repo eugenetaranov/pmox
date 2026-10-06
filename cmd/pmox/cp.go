@@ -217,7 +217,7 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 	}
 
 	scpArgs := buildScpArgs(scpPath, target, localArg, remote.remotePath, localIsSource, recursive, guestHostKeyOpts(), extraArgsAfterDash(cmd))
-	return scpRunFn(scpPath, scpArgs)
+	return explainSSHFailure(ctx, target, resolved.URL, scpRunFn(scpPath, scpArgs), false)
 }
 
 func buildScpArgs(scpPath string, target *sshTarget, localPath, remotePath string, localIsSource, recursive bool, hostKeyOpts, extra []string) []string {
@@ -292,7 +292,7 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, guestHostKeyOpts(), extraArgsAfterDash(cmd))
-	return rsyncRunFn(rsyncPath, rsyncArgs)
+	return explainSSHFailure(ctx, target, resolved.URL, rsyncRunFn(rsyncPath, rsyncArgs), false)
 }
 
 func buildRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, localIsSource bool, hostKeyOpts, extra []string) []string {

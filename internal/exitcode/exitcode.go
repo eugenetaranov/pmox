@@ -22,7 +22,8 @@ const (
 	ExitUnauthorized = 6
 	ExitTimeout      = 7
 	ExitHook         = 8
-	ExitWarnings     = 9 // doctor --strict: all checks passed but warnings present
+	ExitWarnings     = 9  // doctor --strict: all checks passed but warnings present
+	ExitSSHAuth      = 10 // a VM rejected the caller's SSH key (see 'pmox access')
 
 	// ExitInterrupted is the conventional 128+SIGINT code, used when the
 	// user aborts an interactive prompt (Ctrl-C) or interrupts pmox.

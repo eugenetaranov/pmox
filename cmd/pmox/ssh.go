@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -95,11 +94,7 @@ The default login user is "pmox". Override with --user / --identity.`,
 	return cmd
 }
 
-// sshExecFn is the function used to replace the process for shell.
-// Tests override this to capture args without actually exec'ing.
-var sshExecFn = syscall.Exec
-
-// sshRunFn is the function used to run a command for exec.
+// sshRunFn is the function used to run ssh for shell and exec.
 // Tests override this to capture args.
 var sshRunFn = func(sshPath string, args []string) error {
 	c := exec.Command(sshPath, args[1:]...)
@@ -133,8 +128,10 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
+	// ssh runs as a child (not exec'd over pmox) so a rejected key can be
+	// explained afterwards; the session's exit status passes through.
 	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), nil)
-	return sshExecFn(sshPath, sshArgs, os.Environ())
+	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 
 func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
@@ -167,7 +164,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), remoteArgs)
-	return runRemote(sshPath, sshArgs)
+	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 
 // splitExecArgs splits exec's positionals at the literal "--": at most
@@ -232,6 +229,9 @@ type sshTarget struct {
 	IP   string
 	User string
 	Key  string
+	// VM identity, for SSH-auth guidance (see explainSSHFailure).
+	VMID int
+	Name string
 }
 
 func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, serverURL string, srv *config.Server) (*sshTarget, error) {
@@ -261,6 +261,8 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 		IP:   ip,
 		User: user,
 		Key:  key,
+		VMID: ref.VMID,
+		Name: ref.Name,
 	}, nil
 }
 
