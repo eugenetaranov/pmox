@@ -86,6 +86,10 @@ type Config struct {
 	// the single-configured / picker rules).
 	CurrentContext string   `yaml:"current_context,omitempty"`
 	MountExcludes  []string `yaml:"mount_excludes,omitempty"`
+	// TackDefaultPlaybook is the playbook 'pmox apply' runs by default,
+	// relative to ~/.config/pmox/tack (e.g. "site.yml"). Empty means
+	// playbook.yaml.
+	TackDefaultPlaybook string `yaml:"tack_default_playbook,omitempty"`
 }
 
 // Context is a named server entry (kubectl-style).

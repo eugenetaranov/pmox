@@ -448,7 +448,7 @@ Playbooks and roles live under `~/.config/pmox/tack/`:
 
 ```
 ~/.config/pmox/tack/
-  playbook.yaml     # default, used by `pmox apply <vm>`
+  playbook.yaml     # default, used by `pmox apply <vm>` (or set one with --default)
   web.yaml          # a named profile: `pmox apply <vm> web`
   roles/            # local roles (or reference tack-roles remotely)
 ```
@@ -460,9 +460,30 @@ checklist (space to toggle, enter to confirm) so you pick what to
 bootstrap with instead of getting a single hardcoded example role;
 picking none scaffolds a bare starter with a commented example.
 Non-interactively, or if the list can't be fetched, it scaffolds the
-same fixed default as always. The playbook is resolved in order:
-`--playbook <path>` → a profile argument (`<profile>.yaml`) → the
-profile last used for that VM (remembered per VM) → `playbook.yaml`.
+same fixed default as always.
+
+**Playbooks from a git repo.** `pmox apply --init <url>` clones a repo
+(`https://…`, `git@host:path`, `ssh://…`) into `~/.config/pmox/tack/`
+instead. Any existing directory is first moved aside to
+`tack.bak-<timestamp>`, after asking (or with `-y`). pmox then finds the
+repo's playbooks: YAML files with a `hosts:` play, skipping `roles/`.
+With exactly one, it becomes the default. With several, you pick the
+default on a terminal; scripts get `site`/`playbook`/`main` if present.
+
+```
+pmox apply --init git@github.com:me/infra.git
+pmox apply --default web        # change the default (no name: pick one)
+pmox apply --update             # git pull; re-pick if the default vanished
+pmox apply web1 playbooks/db    # run another playbook by name, once
+```
+
+The playbook is resolved in order:
+1. `--playbook <path>`;
+2. a playbook name argument (`web`, `playbooks/db`);
+3. the playbook last used for that VM (remembered per VM);
+4. the default (`pmox apply --default`, else `playbook.yaml`).
+
+`launch --tack` uses the same default.
 
 ```
 pmox apply web1                 # default or remembered profile

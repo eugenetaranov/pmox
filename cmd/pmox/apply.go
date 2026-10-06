@@ -31,7 +31,12 @@ type applyFlags struct {
 	user     string
 	identity string
 	initCfg  bool
+	setDef   string
+	update   bool
 }
+
+// pickDefaultSentinel is --default's value when given without a name.
+const pickDefaultSentinel = "\x00pmox-pick-default"
 
 func newApplyCmd() *cobra.Command {
 	f := &applyFlags{}
@@ -42,10 +47,10 @@ func newApplyCmd() *cobra.Command {
 reusing the SSH user and key pmox already knows.
 
 Playbooks live under ~/.config/pmox/tack/. The playbook is resolved in
-order: --playbook <path>, then a named profile argument
-(~/.config/pmox/tack/<profile>.yaml), then the profile last used for that
-VM, then the default ~/.config/pmox/tack/playbook.yaml. The chosen
-profile is remembered per VM so a later bare 'pmox apply <vm>' reuses it.
+order: --playbook <path>, then a playbook name argument (e.g. web,
+playbooks/db), then the one last used for that VM, then the default
+(set with --default; otherwise playbook.yaml). A named playbook is
+remembered per VM so a later bare 'pmox apply <vm>' reuses it.
 
 The VM is auto-started if stopped. tack's own plan/apply confirmation is
 shown; pass -y to auto-approve, or --check to plan only. --output json
@@ -62,6 +67,13 @@ Every pmox-managed VM has passwordless sudo (the cloud-init template
 grants it) and key-based SSH, so tack is told (via TACK_SUDO_NO_PROMPT /
 TACK_SSH_NO_PROMPT — env, not a flag, so nothing sensitive ever lands in
 argv) to never block waiting on a password it doesn't need.
+
+Playbooks can come from a git repo: 'pmox apply --init <url>' clones it
+into ~/.config/pmox/tack/ (moving any existing dir aside after asking, or
+with -y), finds its playbooks and sets the default — asking which one
+when there are several. 'pmox apply --default [name]' changes the
+default; 'pmox apply --update' pulls the repo. Run another playbook once
+with 'pmox apply <vm> <name>' (e.g. web, playbooks/db).
 
 Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/. On
 a terminal it offers a checklist of the roles published in
@@ -82,15 +94,35 @@ it scaffolds the same fixed default as before.`,
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "auto-approve tack's plan (env: PMOX_ASSUME_YES; --output json also auto-approves)")
 	cmd.Flags().StringVarP(&f.user, "user", "u", "", "SSH login user (defaults to server config 'user', then 'pmox')")
 	cmd.Flags().StringVarP(&f.identity, "identity", "i", "", "path to SSH private key")
-	cmd.Flags().BoolVar(&f.initCfg, "init", false, "scaffold a starter ~/.config/pmox/tack/ and exit")
+	cmd.Flags().BoolVar(&f.initCfg, "init", false, "set up ~/.config/pmox/tack/ and exit: a starter playbook, or clone a git repo given as the argument (https://…, git@…)")
+	cmd.Flags().StringVar(&f.setDef, "default", "", "set the default playbook (by name; without a name, pick one) and exit")
+	cmd.Flags().Lookup("default").NoOptDefVal = pickDefaultSentinel
+	cmd.Flags().BoolVar(&f.update, "update", false, "git pull the cloned playbook repo and exit")
 	return cmd
 }
 
 func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	ctx := cmd.Context()
 
-	if f.initCfg {
+	switch {
+	case f.initCfg && len(args) > 0:
+		if !isGitURL(args[0]) {
+			return fmt.Errorf("%w: %q is not a git URL (https://…, ssh://…, git@host:path)", exitcode.ErrUserInput, args[0])
+		}
+		return runApplyInitFromURL(cmd, args[0], f.yes || envBool("PMOX_ASSUME_YES"))
+	case f.initCfg:
 		return runApplyInit(cmd, false)
+	case f.setDef != "":
+		name := f.setDef
+		if name == pickDefaultSentinel {
+			name = ""
+			if len(args) > 0 { // '--default web' parses web as an argument
+				name = args[0]
+			}
+		}
+		return runApplySetDefault(cmd, name)
+	case f.update:
+		return runApplyUpdate(cmd)
 	}
 
 	// Onboarding: if there is no tack config at all and the user didn't
@@ -237,6 +269,9 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 		switch {
 		case profileArg != "":
 			playbook = filepath.Join(dir, profileArg+".yaml")
+			if p, found := findPlaybook(dir, profileArg); found {
+				playbook = p
+			}
 			recordProfile = profileArg
 			source = fmt.Sprintf("profile %q", profileArg)
 		default:
@@ -246,10 +281,12 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 			}
 			if prof, ok, _ := tackprofile.Get(stateDir, serverURL, vmid); ok {
 				playbook = filepath.Join(dir, prof+".yaml")
+				if p, found := findPlaybook(dir, prof); found {
+					playbook = p
+				}
 				source = fmt.Sprintf("remembered profile %q", prof)
-			} else {
-				playbook = filepath.Join(dir, "playbook.yaml")
-				source = "default playbook"
+			} else if playbook, source, err = defaultPlaybook(); err != nil {
+				return "", "", "", err
 			}
 		}
 	}
@@ -258,7 +295,11 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 	// which used to sail through here and only fail after the VM was
 	// already started and SSH-ready, wasting a boot cycle.
 	if _, statErr := os.Stat(playbook); statErr != nil {
-		return "", "", "", fmt.Errorf("%w: playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, playbook)
+		hint := "create it or run 'pmox apply --init [git-url]' to set up ~/.config/pmox/tack/"
+		if names := knownPlaybookNames(); len(names) > 0 {
+			hint = "available: " + strings.Join(names, ", ")
+		}
+		return "", "", "", fmt.Errorf("%w: playbook %s not found — %s", exitcode.ErrUserInput, playbook, hint)
 	}
 	return playbook, recordProfile, source, nil
 }

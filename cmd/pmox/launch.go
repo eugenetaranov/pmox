@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -160,11 +159,11 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 	case f.tack != "":
 		path := f.tack
 		if path == tackDefaultSentinel {
-			dir, err := tackDir()
+			p, _, err := defaultPlaybook()
 			if err != nil {
 				return nil, err
 			}
-			path = filepath.Join(dir, "playbook.yaml")
+			path = p
 		}
 		// Checked here, before any config load or PVE call, so a missing
 		// playbook (most commonly: --tack was never scaffolded with
