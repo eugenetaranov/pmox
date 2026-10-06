@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,7 +31,7 @@ func newKeyCmd() *cobra.Command {
 Publishing puts your SSH PUBLIC key on the cluster under your local
 username. A cluster admin can then give you access to VMs with
 'pmox access'. Private keys and API tokens never leave your machine.`,
-		newKeyPublishCmd(), newKeyUnpublishCmd(), newKeyShowCmd())
+		newKeyListCmd(), newKeyPublishCmd(), newKeyUnpublishCmd(), newKeyShowCmd())
 }
 
 func newKeyPublishCmd() *cobra.Command {
@@ -250,4 +252,88 @@ func printPublishStatus(cmd *cobra.Command, out io.Writer, r *server.Resolved, n
 	default:
 		fmt.Fprintf(out, "  status: a DIFFERENT key is published as %s (%s, from %s)\n", name, existing.Fingerprint, existing.Host)
 	}
+}
+
+func newKeyListCmd() *cobra.Command {
+	f := &keyFlags{}
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List everyone's published keys",
+		Args:    cobra.NoArgs,
+		RunE:    func(cmd *cobra.Command, _ []string) error { return runKeyList(cmd, f) },
+	}
+	addContextsFlag(cmd, &f.all)
+	return cmd
+}
+
+func runKeyList(cmd *cobra.Command, f *keyFlags) error {
+	ctx := cmd.Context()
+	w := cmd.OutOrStdout()
+	cfg, targets, err := selectContexts(ctx, f.all, false)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		Context     string `json:"context"`
+		Name        string `json:"name"`
+		Fingerprint string `json:"fingerprint"`
+		Host        string `json:"published_from,omitempty"`
+		Published   string `json:"published_at,omitempty"`
+		Access      string `json:"access"`
+	}
+	rows := []row{}
+	for _, r := range targets {
+		fs, closeFS, err := openRegistryFn(ctx, r)
+		if err != nil {
+			return err
+		}
+		keys, badKeys, kerr := accessreg.ListKeys(ctx, fs)
+		acc, aerr := accessreg.ReadAccess(ctx, fs)
+		closeFS()
+		if kerr != nil {
+			return kerr
+		}
+		if aerr != nil {
+			return aerr
+		}
+		for _, e := range badKeys {
+			fmt.Fprintln(cmd.ErrOrStderr(), tui.Warnf("unreadable key file: "+e.Error()))
+		}
+		for _, k := range keys {
+			published := ""
+			if !k.PublishedAt.IsZero() {
+				published = k.PublishedAt.Local().Format("2006-01-02")
+			}
+			rows = append(rows, row{targetLabel(cfg, r), k.Name, k.Fingerprint, k.Host, published, accessByID(acc.People[k.Name])})
+		}
+	}
+	if outputMode == "json" {
+		return printJSON(w, rows)
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "no published keys — people publish theirs with 'pmox key publish'")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tFINGERPRINT\tFROM\tPUBLISHED\tACCESS")
+	for _, r := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Name, r.Fingerprint, r.Host, r.Published, r.Access)
+	}
+	return tw.Flush()
+}
+
+// accessByID summarizes a grant by VMID (no API call to name the VMs).
+func accessByID(g *accessreg.Grant) string {
+	switch {
+	case g == nil || (!g.AllVMs && len(g.VMs) == 0):
+		return "no access"
+	case g.AllVMs:
+		return "all pmox VMs"
+	}
+	ids := make([]string, len(g.VMs))
+	for i, id := range g.VMs {
+		ids[i] = strconv.Itoa(id)
+	}
+	return "vmid " + strings.Join(ids, ", ")
 }

@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/accessreg"
@@ -275,20 +278,30 @@ func addAccessChangeFlags(cmd *cobra.Command, f *accessFlags) {
 
 func runAccessChange(cmd *cobra.Command, args []string, f *accessFlags, grant bool) error {
 	ctx := cmd.Context()
-	if f.to == "" {
-		return fmt.Errorf("%w: --to <name> is required", exitcode.ErrUserInput)
-	}
-	if err := accessreg.ValidName(f.to); err != nil {
-		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
-	}
-	if f.allVMs == (len(args) > 0) {
-		return fmt.Errorf("%w: name one or more VMs, or pass --all-vms", exitcode.ErrUserInput)
+	// On a terminal, whatever wasn't given is asked for (the palette runs
+	// 'access grant' with no arguments); scripts must pass it.
+	prompt := tui.Interactive() && (f.to == "" || (!f.allVMs && len(args) == 0))
+	if !prompt {
+		if f.to == "" {
+			return fmt.Errorf("%w: --to <name> is required", exitcode.ErrUserInput)
+		}
+		if f.allVMs == (len(args) > 0) {
+			return fmt.Errorf("%w: name one or more VMs, or pass --all-vms", exitcode.ErrUserInput)
+		}
 	}
 	env, err := openAccessEnv(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer env.close()
+	if prompt {
+		if args, err = promptAccessChange(ctx, env, f, args, grant); err != nil {
+			return err
+		}
+	}
+	if err := accessreg.ValidName(f.to); err != nil {
+		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
+	}
 
 	if grant {
 		if _, err := accessreg.GetKey(ctx, env.fs, f.to); errors.Is(err, accessreg.ErrNotPublished) {
@@ -377,10 +390,11 @@ func newAccessSyncCmd() *cobra.Command {
 
 func newAccessListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list [vm]",
-		Short: "Show who can reach which VMs",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runAccessList,
+		Use:     "show [vm]",
+		Aliases: []string{"list", "ls"},
+		Short:   "Show who can reach which VMs",
+		Args:    cobra.MaximumNArgs(1),
+		RunE:    runAccessList,
 	}
 }
 
@@ -546,4 +560,90 @@ func applySharedAccess(ctx context.Context, stderr io.Writer, client *pveclient.
 	default:
 		warn(o.Detail)
 	}
+}
+
+// Seams over the grant/revoke pickers.
+var (
+	pickPersonFn = tui.Select
+	pickVMsFn    = tui.SelectMulti
+)
+
+// promptAccessChange asks for the person and VMs a grant/revoke didn't
+// name. Grant offers everyone with a published key and every pmox VM;
+// revoke offers only people with access and only what they can reach.
+func promptAccessChange(ctx context.Context, env *accessEnv, f *accessFlags, args []string, grant bool) ([]string, error) {
+	keys, _, err := accessreg.ListKeys(ctx, env.fs)
+	if err != nil {
+		return nil, err
+	}
+	acc, err := accessreg.ReadAccess(ctx, env.fs)
+	if err != nil {
+		return nil, err
+	}
+	vms, err := pmoxVMs(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+
+	if f.to == "" {
+		var opts []huh.Option[string]
+		if grant {
+			for _, k := range keys {
+				opts = append(opts, huh.NewOption(fmt.Sprintf("%-12s %s   %s", k.Name, k.Fingerprint, grantSummary(acc.People[k.Name], vms)), k.Name))
+			}
+			if len(opts) == 0 {
+				return nil, fmt.Errorf("%w: nobody has published a key yet — people run 'pmox key publish' first", exitcode.ErrNotFound)
+			}
+		} else {
+			names := make([]string, 0, len(acc.People))
+			for n := range acc.People {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				opts = append(opts, huh.NewOption(fmt.Sprintf("%-12s %s", n, grantSummary(acc.People[n], vms)), n))
+			}
+			if len(opts) == 0 {
+				return nil, fmt.Errorf("%w: nobody has been granted access", exitcode.ErrNotFound)
+			}
+		}
+		verb := "Grant access to"
+		if !grant {
+			verb = "Revoke access from"
+		}
+		if f.to, err = pickPersonFn(verb+":", opts); err != nil {
+			return nil, err
+		}
+	}
+
+	if f.allVMs || len(args) > 0 {
+		return args, nil
+	}
+	current := acc.People[f.to]
+	var opts []huh.Option[string]
+	if grant || (current != nil && current.AllVMs) {
+		opts = append(opts, huh.NewOption("★ All pmox VMs, including future ones", allVMsValue))
+	}
+	for _, r := range vms {
+		if !grant && (current == nil || (!current.AllVMs && !slices.Contains(current.VMs, r.VMID))) {
+			continue
+		}
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-20s %-6d %s", r.Name, r.VMID, r.Status), strconv.Itoa(r.VMID)))
+	}
+	if len(opts) == 0 {
+		return nil, fmt.Errorf("%w: %s has no VM access to revoke", exitcode.ErrNotFound, f.to)
+	}
+	title := fmt.Sprintf("VMs to give %s access to (space to select)", f.to)
+	if !grant {
+		title = fmt.Sprintf("VMs to remove %s's access from (space to select)", f.to)
+	}
+	picked, err := pickVMsFn(title, opts)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Contains(picked, allVMsValue) {
+		f.allVMs = true
+		return nil, nil
+	}
+	return picked, nil
 }

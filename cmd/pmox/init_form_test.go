@@ -231,7 +231,17 @@ func (h *harness) run(cmd tea.Cmd) {
 	select {
 	case msg = <-ch:
 	case <-time.After(30 * time.Millisecond):
-		return
+		// Timers (cursor blink, spinner tick) never return promptly and
+		// are dropped — but a wizard operation still running is waited
+		// for, however slow the machine.
+		if opsInFlight.Load() == 0 {
+			return
+		}
+		select {
+		case msg = <-ch:
+		case <-time.After(5 * time.Second):
+			return // not ours after all (e.g. a timer); drop it
+		}
 	}
 	if msg == nil {
 		return
@@ -243,6 +253,11 @@ func (h *harness) run(cmd tea.Cmd) {
 		return
 	}
 	if _, ok := msg.(tea.QuitMsg); ok {
+		return
+	}
+	// Timer messages (cursor blink, spinner tick) re-arm themselves; never
+	// feed them back, or the harness would loop on them.
+	if name := reflect.TypeOf(msg).String(); strings.Contains(strings.ToLower(name), "blink") || strings.Contains(name, "spinner.TickMsg") {
 		return
 	}
 	_, next := h.m.Update(msg)
@@ -647,7 +662,7 @@ func TestWizardCtrlCMidProbeWritesNothing(t *testing.T) {
 	h := newHarness(t, oneNode(), nil, "")
 	h.conn.in.urlRaw, h.conn.in.tokenSource, h.conn.in.tokenID, h.conn.in.tokenSecret = "pve.home.lan", "paste", "root@pam!pmox", "sek"
 	h.conn.canonical = formURL
-	_ = h.conn.probe() // started, result never delivered
+	h.run(wizard.Busy("Checking pve.home.lan:8006 …")) // probe in progress, result never delivered
 	h.key(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if !errors.Is(h.m.Err(), tui.ErrAborted) {
 		t.Fatalf("err = %v, want ErrAborted", h.m.Err())

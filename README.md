@@ -170,8 +170,8 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `context list` / `add` / `use` / `current` / `rename` / `delete` | Add and switch between Proxmox servers | `pmox context add` |
 | `config edit` / `path` / `cloud-init` | Edit a context; config file path; show or `--regenerate` the cloud-init template | `pmox config edit prod` |
 | `mount create` / `list` / `delete` | Continuous rsync of a local dir to a VM; list or stop background mounts | `pmox mount list` |
-| `key publish` / `unpublish` / `show` | Publish your SSH public key to the cluster's access registry | `pmox key publish` |
-| `access setup` / `grant` / `revoke` / `list` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
+| `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
+| `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
 
 ### Maintenance
 
@@ -244,7 +244,7 @@ stay with their owner.
    alice$ pmox access grant web1 db1 --to bob
    alice$ pmox access grant --all-vms --to carol   # every pmox VM, including future ones
    alice$ pmox access revoke web1 --to bob
-   alice$ pmox access list                    # who can reach what, and whether each VM matches
+   alice$ pmox access show                    # who can reach what, and whether each VM matches
    ```
 
 3. **Bob connects as usual**: `pmox shell web1`.

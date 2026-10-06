@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -118,10 +119,19 @@ func runWizard(ctx context.Context, p prompter, st *wizState, title, start strin
 	return nil
 }
 
+// opsInFlight counts wizard operations created but not yet finished. The
+// test harness waits for these (and only these) instead of guessing with
+// a timeout, which flaked on slow CI runners.
+var opsInFlight atomic.Int32
+
 // busyThen shows label with a spinner, then runs op. Sequenced (not
 // batched) so the spinner can never start after op's result arrived.
 func busyThen(label string, op func() tea.Msg) tea.Cmd {
-	return tea.Sequence(wizard.Busy(label), op)
+	opsInFlight.Add(1)
+	return tea.Sequence(wizard.Busy(label), func() tea.Msg {
+		defer opsInFlight.Add(-1)
+		return op()
+	})
 }
 
 // ---------------------------------------------------------------- Connection

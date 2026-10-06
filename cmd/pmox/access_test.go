@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/accessreg"
@@ -16,6 +17,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/guestkeys"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // fakeGuests is an in-memory guest filesystem per VMID, standing in for
@@ -318,4 +320,74 @@ func TestCleanupAccessRegistryItems(t *testing.T) {
 	if _, err := accessreg.GetKey(ctx, reg, "carol"); !errors.Is(err, accessreg.ErrNotPublished) {
 		t.Errorf("carol's key should be unpublished: %v", err)
 	}
+}
+
+func TestKeyListShowsEveryone(t *testing.T) {
+	ctx := context.Background()
+	reg, _ := setupAccessEnv(t)
+	publishAs(ctx, t, reg, "bob", testKeyA)
+	publishAs(ctx, t, reg, "carol", testKeyB)
+	_, _ = accessreg.UpdateAccess(ctx, reg, func(a *accessreg.Access) error { a.GrantAll("carol"); a.GrantVMs("bob", 101); return nil })
+	out, err := runCmd(t, "key", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"bob", "carol", "SHA256:", "all pmox VMs", "vmid 101"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("key list missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAccessShowAndListAlias(t *testing.T) {
+	setupAccessEnv(t)
+	for _, verb := range []string{"show", "list"} {
+		if out, err := runCmd(t, "access", verb); err != nil || !strings.Contains(out, "People:") {
+			t.Errorf("access %s: %v\n%s", verb, err, out)
+		}
+	}
+}
+
+func TestAccessGrantPromptsWhenBare(t *testing.T) {
+	ctx := context.Background()
+	reg, guests := setupAccessEnv(t)
+	publishAs(ctx, t, reg, "bob", testKeyA)
+	origP, origV := pickPersonFn, pickVMsFn
+	t.Cleanup(func() { pickPersonFn, pickVMsFn = origP, origV })
+	forceInteractive(t)
+	pickPersonFn = func(string, []huh.Option[string]) (string, error) { return "bob", nil }
+	pickVMsFn = func(string, []huh.Option[string]) ([]string, error) { return []string{"101"}, nil }
+
+	if out, err := runCmd(t, "access", "grant"); err != nil {
+		t.Fatalf("bare grant on a terminal: %v\n%s", err, out)
+	}
+	if got := guests.managed(101); len(got) != 1 || got[0] != "bob" {
+		t.Errorf("web1 managed = %v", got)
+	}
+	// Revoke offers only what bob can reach.
+	var offered []string
+	pickVMsFn = func(_ string, opts []huh.Option[string]) ([]string, error) {
+		for _, o := range opts {
+			offered = append(offered, o.Value)
+		}
+		return []string{"101"}, nil
+	}
+	if _, err := runCmd(t, "access", "revoke"); err != nil {
+		t.Fatal(err)
+	}
+	if len(offered) != 1 || offered[0] != "101" {
+		t.Errorf("revoke offered %v, want only bob's VM", offered)
+	}
+	if got := guests.managed(101); len(got) != 0 {
+		t.Errorf("after revoke web1 = %v", got)
+	}
+}
+
+// forceInteractive makes tui.Interactive report a terminal for the test.
+func forceInteractive(t *testing.T) {
+	t.Helper()
+	in, errT := tui.StdinIsTerminal, tui.StderrIsTerminal
+	tui.StdinIsTerminal = func() bool { return true }
+	tui.StderrIsTerminal = func() bool { return true }
+	t.Cleanup(func() { tui.StdinIsTerminal, tui.StderrIsTerminal = in, errT })
 }
