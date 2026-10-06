@@ -1,0 +1,4 @@
+--- stdout
+cloud-init at CFG/pmox/cloud-init/pve.home.lan-8006.yaml authorizes a different SSH key than the one you selected.
+Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: regenerated cloud-init at CFG/pmox/cloud-init/pve.home.lan-8006.yaml — relaunch existing VMs to apply the new key
+--- stderr

@@ -1,0 +1,5 @@
+--- stdout
+Default template (VMID): => typed
+--- stderr
+node pve has 1 VMs but none are marked as templates
+  Fix: in the PVE web UI, right-click a VM → Convert to template.

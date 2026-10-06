@@ -108,6 +108,41 @@ func (c *Client) writeAndRename(tmp, dest string, content []byte) error {
 	return nil
 }
 
+// HostKey is a node's SSH host key as captured by FetchHostKey, ready
+// to show to the user (Type, Fingerprint) and pin (AppendKnownHost).
+type HostKey struct {
+	Host        string // host:port that was dialed
+	Addr        string // remote address the handshake observed
+	Type        string // e.g. ssh-ed25519
+	Fingerprint string // SHA256:... as printed by ssh
+	key         ssh.PublicKey
+}
+
+// FetchHostKey dials host once with an accept-first host-key callback
+// and returns its key without trusting it anywhere. Pair with
+// AppendKnownHost once the user has accepted the fingerprint.
+func FetchHostKey(ctx context.Context, host string) (HostKey, error) {
+	host = withDefaultPort(host)
+	key, addr, err := probeHostKey(ctx, host)
+	if err != nil {
+		return HostKey{}, err
+	}
+	return HostKey{Host: host, Addr: addr, Type: key.Type(), Fingerprint: ssh.FingerprintSHA256(key), key: key}, nil
+}
+
+// AppendKnownHost pins k into knownHostsPath (creating the file with
+// mode 0600 under a parent dir with mode 0700). It NEVER touches
+// ~/.ssh/known_hosts unless that is the path given.
+func AppendKnownHost(knownHostsPath string, k HostKey) error {
+	if knownHostsPath == "" {
+		return errors.New("pvessh: knownHostsPath is empty")
+	}
+	if k.key == nil {
+		return errors.New("pvessh: host key was not fetched")
+	}
+	return appendKnownHost(knownHostsPath, k.Host, k.key)
+}
+
 // PromptAndPinHostKey dials the host once with an accept-first host-key
 // callback, prints the fingerprint to w, and reads y/n from r. On "yes"
 // it appends the key to knownHostsPath (creating the file with mode
@@ -117,16 +152,13 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 	if knownHostsPath == "" {
 		return errors.New("pvessh: knownHostsPath is empty")
 	}
-	host = withDefaultPort(host)
-
-	capturedKey, capturedAddr, err := probeHostKey(ctx, host)
+	k, err := FetchHostKey(ctx, host)
 	if err != nil {
 		return err
 	}
 
-	fp := ssh.FingerprintSHA256(capturedKey)
-	fmt.Fprintf(w, "The authenticity of host '%s (%s)' can't be established.\n", host, capturedAddr)
-	fmt.Fprintf(w, "%s key fingerprint is %s\n", capturedKey.Type(), fp)
+	fmt.Fprintf(w, "The authenticity of host '%s (%s)' can't be established.\n", k.Host, k.Addr)
+	fmt.Fprintf(w, "%s key fingerprint is %s\n", k.Type, k.Fingerprint)
 	fmt.Fprintf(w, "Are you sure you want to continue connecting (yes/no)? ")
 
 	br := bufio.NewReader(r)
@@ -139,7 +171,7 @@ func PromptAndPinHostKey(ctx context.Context, host string, w io.Writer, r io.Rea
 		return errors.New("host-key pin declined by user")
 	}
 
-	return appendKnownHost(knownHostsPath, host, capturedKey)
+	return AppendKnownHost(knownHostsPath, k)
 }
 
 // EnsureHostKeyKnown pins host's key into knownHostsPath if it isn't

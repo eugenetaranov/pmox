@@ -1,0 +1,4 @@
+--- stdout
+Default storage: => typed
+--- stderr
+no storage pools returned for node pve

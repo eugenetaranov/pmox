@@ -144,3 +144,21 @@ func TestCreateTokenEscapesPath(t *testing.T) {
 		t.Errorf("escaped path = %q", gotPath)
 	}
 }
+
+func TestDeleteTokenWithTicket(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/access/users/root@pam/token/pmox-personal" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Cookie") != "PVEAuthCookie=PVE:tkt" || r.Header.Get("CSRFPreventionToken") != "csrf123" {
+			t.Errorf("missing ticket auth headers: %v", r.Header)
+		}
+		_, _ = w.Write([]byte(`{"data":null}`))
+	}))
+	defer srv.Close()
+
+	err := DeleteTokenWithOptions(context.Background(), srv.URL, false, Options{}, Ticket{Cookie: "PVE:tkt", CSRF: "csrf123"}, "root@pam", "pmox-personal")
+	if err != nil {
+		t.Fatalf("DeleteTokenWithOptions: %v", err)
+	}
+}

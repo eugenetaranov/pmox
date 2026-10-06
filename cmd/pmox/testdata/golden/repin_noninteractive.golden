@@ -1,0 +1,3 @@
+--- stdout
+--- stderr
+error: tls verification failed: TLS certificate for https://pve.home.lan:8006/api2/json CHANGED — pinned sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, now sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, re-run 'pmox init' in an interactive terminal to review and re-pin it, or clear tls_pin_sha256 for this server in the pmox config

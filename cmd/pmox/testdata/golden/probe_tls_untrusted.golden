@@ -1,0 +1,3 @@
+--- stdout
+--- stderr
+cannot reach https://pve.home.lan:8006/api2/json: <nil>

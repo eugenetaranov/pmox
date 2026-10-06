@@ -74,11 +74,19 @@ credentials, default node/template/storage/bridge, and your SSH
 public key. It writes a starter cloud-init file to
 `~/.config/pmox/cloud-init/<slug>.yaml` that you can edit in place.
 
-On a terminal, `pmox init` is a **guided form**: a Connection page (URL +
-token), then Defaults (node/template/storage/bridge), then Access (SSH key
-/ user / node SSH), ending in a **review screen** that lists everything and
-lets you jump back and change any answer — nothing is written until you
-confirm. (Piped/`--no-input`/CI use falls back to plain prompts.)
+On a terminal, `pmox init` is a **single-screen wizard**: a tab bar
+(Connection › Defaults › Access › Review) stays put while each page is
+redrawn in place. Connection takes the URL and token. Defaults shows
+node, template, storage, snippet storage and bridge on one page;
+changing the node reloads its options. Access holds the SSH key, default
+user and node SSH login. The flow ends on a **review screen** that lists
+everything and lets you jump back and change any answer. Nothing is
+written until you confirm. Probes, logins and SSH checks run with an
+inline spinner. A failure is shown on its own page with your answers
+kept. Trust questions (overwrite a server, a changed TLS certificate,
+the node's SSH host key, enabling snippets) appear as dialogs. **Esc**
+goes back a page, **Ctrl-C** quits without saving. Piped, `--no-input`
+and CI runs fall back to plain prompts.
 
 The URL prompt is forgiving — type a bare IP (`10.0.0.5`), a hostname
 (`pve.lan`), `host:port`, or paste the web-UI address; the scheme

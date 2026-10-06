@@ -1,0 +1,4 @@
+--- stdout
+Default node: => typed
+--- stderr
+could not list nodes: api error: 500 Internal Server Error: boom

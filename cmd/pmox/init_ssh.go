@@ -155,37 +155,19 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 	return nil, "", "", fmt.Errorf("%w: too many failed SSH credential attempts", exitcode.ErrUserInput)
 }
 
-// promptSSHAuthMethod asks how to authenticate the node SSH connection.
-// Interactively it's a themed picker; non-interactively (the linear
-// fallback, no TTY) it falls back to a plain "p/k" text prompt.
+// promptSSHAuthMethod asks how to authenticate the node SSH connection
+// with a plain "p/k" text prompt. It only runs on the linear
+// (non-interactive) path; the interactive wizard has its own field.
 func promptSSHAuthMethod(p prompter) (string, error) {
-	if !interactiveFn() {
-		ans, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
-		if err != nil {
-			return "", err
-		}
-		ans = strings.ToLower(strings.TrimSpace(ans))
-		if ans == "" {
-			ans = "p"
-		}
-		return ans, nil
-	}
-
-	choice := "password"
-	err := huh.NewSelect[string]().
-		Title("Authenticate with").
-		Options(
-			huh.NewOption("Password", "password"),
-			huh.NewOption("SSH key file", "key"),
-		).
-		Value(&choice).
-		Filtering(false).
-		WithTheme(tui.Theme()).
-		Run()
+	ans, err := p.Prompt("Authenticate with (p)assword or (k)ey file? [p]: ")
 	if err != nil {
-		return "", tui.AbortErr(err)
+		return "", err
 	}
-	return choice, nil
+	ans = strings.ToLower(strings.TrimSpace(ans))
+	if ans == "" {
+		ans = "p"
+	}
+	return ans, nil
 }
 
 // Test seams for the SSH-key wizard's huh-backed pickers. Production wires

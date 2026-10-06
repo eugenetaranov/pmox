@@ -1,0 +1,8 @@
+--- stdout
+no storage supports snippets. enable snippets on "local"? [Y/n]: => 
+--- stderr
+could not enable snippets on "local": 403 forbidden
+no snippet storage configured.
+  Fix: edit /etc/pve/storage.cfg on the PVE host and add 'snippets' to
+       the content= line of a directory-backed storage, then re-run
+       'pmox init' to record it.

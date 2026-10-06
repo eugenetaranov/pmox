@@ -37,16 +37,39 @@ type persistInput struct {
 }
 
 // persistServer writes the collected server config, stores its secrets,
-// and writes the starter cloud-init template. Shared by the linear and
-// form init flows.
+// and writes the starter cloud-init template. Used by the linear init
+// flow; the interactive wizard composes the same cores (persistCore,
+// ensureCloudInit, regenCloudInit) with in-app dialogs instead.
 func persistServer(ctx context.Context, p prompter, cfg *config.Config, in persistInput) error {
+	srv, notices, err := persistCore(cfg, in)
+	if err != nil {
+		return err
+	}
+	printNotices(p, notices)
+	// Starter cloud-init is non-fatal — creds are saved; user can rerun
+	// with --regen-cloud-init.
+	writeInitialCloudInit(p, in.canonical, in.user, in.sshKey)
+
+	if in.template == createTemplateSentinel {
+		if err := offerBuiltTemplate(ctx, p, in, srv); err != nil {
+			p.Errf("warning: building the template failed: %v\n", err)
+			p.Errf("no default template is set — run 'pmox create-template' when ready, then set one with a fresh 'pmox init' (or edit the config file's 'template:' field).\n")
+		}
+	}
+	return nil
+}
+
+// persistCore saves the server config and its secrets and returns the
+// saved server plus the "configured server" / "config saved to" lines.
+// It never prompts and never builds a template.
+func persistCore(cfg *config.Config, in persistInput) (*config.Server, []notice, error) {
 	// The picker's "build a new template now" choice isn't a real
 	// template value — leave the field unset until offerBuiltTemplate
-	// (below) either patches in the built template's real VMID or, on
-	// failure, leaves it unset with a clear warning. The sentinel must
-	// never land in the saved config: anything that later reads
-	// srv.Template as a real VMID/name (e.g. launch's resolveTemplate)
-	// would just fail confusingly instead of saying "no template set".
+	// either patches in the built template's real VMID or, on failure,
+	// leaves it unset with a clear warning. The sentinel must never land
+	// in the saved config: anything that later reads srv.Template as a
+	// real VMID/name (e.g. launch's resolveTemplate) would just fail
+	// confusingly instead of saying "no template set".
 	template := in.template
 	if template == createTemplateSentinel {
 		template = ""
@@ -71,66 +94,84 @@ func persistServer(ctx context.Context, p prompter, cfg *config.Config, in persi
 		NodeSSHPassword:      in.sshPassword,
 		NodeSSHKeyPassphrase: in.sshKeyPass,
 	}); err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	p.Printf("configured server %s\n", in.canonical)
+	notices := []notice{infoNotice("configured server " + in.canonical)}
 	if path, perr := config.Path(); perr == nil {
 		home, _ := os.UserHomeDir()
-		p.Printf("config saved to %s\n", displayPath(path, home))
+		notices = append(notices, infoNotice("config saved to "+displayPath(path, home)))
 	}
-	// Starter cloud-init is non-fatal — creds are saved; user can rerun
-	// with --regen-cloud-init.
-	writeInitialCloudInit(p, in.canonical, in.user, in.sshKey)
-
-	if in.template == createTemplateSentinel {
-		if err := offerBuiltTemplate(ctx, p, in, srv); err != nil {
-			p.Errf("warning: building the template failed: %v\n", err)
-			p.Errf("no default template is set — run 'pmox create-template' when ready, then set one with a fresh 'pmox init' (or edit the config file's 'template:' field).\n")
-		}
-	}
-	return nil
+	return srv, notices, nil
 }
 
 // writeInitialCloudInit renders and writes the per-server cloud-init
-// starter on first configure. It reads the SSH pubkey file named by
-// sshKeyPath, calls WriteStarterCloudInit, and prints a human message
-// for each outcome. Errors are warned to stderr but never returned.
+// starter on first configure, asking before regenerating a file that
+// authorizes a different key. Errors are warned to stderr but never
+// returned.
 func writeInitialCloudInit(p prompter, canonicalURL, user, sshKeyPath string) {
+	r := ensureCloudInit(canonicalURL, user, sshKeyPath)
+	printNotices(p, r.notices)
+	if !r.drift {
+		return
+	}
+	// Only offer to regenerate when the selected key isn't already
+	// authorized — so re-running configure with the same key never
+	// nags and never clobbers user edits silently.
+	ans, _ := p.Prompt("Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: ")
+	printNotices(p, r.resolveDrift(strings.EqualFold(strings.TrimSpace(ans), "y")))
+}
+
+// cloudInitResult is the outcome of trying to write the starter
+// cloud-init file. When drift is true the existing file authorizes a
+// different key and the caller must ask whether to regenerate it
+// (resolveDrift).
+type cloudInitResult struct {
+	notices []notice
+	drift   bool
+	path    string
+	user    string
+	pubkey  string
+}
+
+// ensureCloudInit writes the starter cloud-init file unless one exists,
+// without prompting. See cloudInitResult.
+func ensureCloudInit(canonicalURL, user, sshKeyPath string) cloudInitResult {
 	path, err := config.CloudInitPath(canonicalURL)
 	if err != nil {
-		p.Errf("warning: could not resolve cloud-init path: %v\n", err)
-		return
+		return cloudInitResult{notices: []notice{warnNotice(fmt.Sprintf("warning: could not resolve cloud-init path: %v", err))}}
 	}
 	pubkeyContent, err := readSSHKey(sshKeyPath)
 	if err != nil {
-		p.Errf("warning: could not read ssh pubkey %s: %v\n", sshKeyPath, err)
-		return
+		return cloudInitResult{notices: []notice{warnNotice(fmt.Sprintf("warning: could not read ssh pubkey %s: %v", sshKeyPath, err))}}
 	}
 	home, _ := os.UserHomeDir()
+	r := cloudInitResult{path: path, user: user, pubkey: pubkeyContent}
 	switch err := config.EnsureStarterCloudInit(path, user, pubkeyContent); {
 	case err == nil:
-		p.Printf("wrote cloud-init template to %s — edit it to customize packages, users, runcmd\n", displayPath(path, home))
+		r.notices = []notice{infoNotice(fmt.Sprintf("wrote cloud-init template to %s — edit it to customize packages, users, runcmd", displayPath(path, home)))}
 	case errors.Is(err, config.ErrCloudInitKeyDrift):
-		// Only offer to regenerate when the selected key isn't already
-		// authorized — so re-running configure with the same key never
-		// nags and never clobbers user edits silently.
-		p.Printf("cloud-init at %s authorizes a different SSH key than the one you selected.\n", displayPath(path, home))
-		ans, _ := p.Prompt("Regenerate it now with the selected user + key? (existing edits will be lost) [y/N]: ")
-		if !strings.EqualFold(strings.TrimSpace(ans), "y") {
-			p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
-			return
-		}
-		if werr := config.WriteCloudInit(path, user, pubkeyContent); werr != nil {
-			p.Errf("warning: could not regenerate cloud-init: %v\n", werr)
-		} else {
-			p.Printf("regenerated cloud-init at %s — relaunch existing VMs to apply the new key\n", displayPath(path, home))
-		}
+		r.drift = true
+		r.notices = []notice{infoNotice(fmt.Sprintf("cloud-init at %s authorizes a different SSH key than the one you selected.", displayPath(path, home)))}
 	case errors.Is(err, config.ErrCloudInitExists):
-		p.Printf("cloud-init template already exists at %s — not overwriting\n", displayPath(path, home))
+		r.notices = []notice{infoNotice(fmt.Sprintf("cloud-init template already exists at %s — not overwriting", displayPath(path, home)))}
 	default:
-		p.Errf("warning: could not write cloud-init template to %s: %v\n", path, err)
+		r.notices = []notice{warnNotice(fmt.Sprintf("warning: could not write cloud-init template to %s: %v", path, err))}
 	}
+	return r
+}
+
+// resolveDrift applies the user's regenerate decision for a drifted
+// cloud-init file and returns the lines describing what happened.
+func (r cloudInitResult) resolveDrift(regenerate bool) []notice {
+	home, _ := os.UserHomeDir()
+	if !regenerate {
+		return []notice{infoNotice(fmt.Sprintf("cloud-init template already exists at %s — not overwriting", displayPath(r.path, home)))}
+	}
+	if err := config.WriteCloudInit(r.path, r.user, r.pubkey); err != nil {
+		return []notice{warnNotice(fmt.Sprintf("warning: could not regenerate cloud-init: %v", err))}
+	}
+	return []notice{infoNotice(fmt.Sprintf("regenerated cloud-init at %s — relaunch existing VMs to apply the new key", displayPath(r.path, home)))}
 }
 
 // runRegenCloudInit rewrites the per-server cloud-init template from

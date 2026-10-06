@@ -1,0 +1,5 @@
+--- stdout
+Default storage: => typed
+--- stderr
+could not list storage on node pve: api error: 500 Internal Server Error: boom
+  (the API token likely needs Datastore.Audit on /storage)

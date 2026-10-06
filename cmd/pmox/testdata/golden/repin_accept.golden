@@ -1,0 +1,7 @@
+--- stdout
+re-pinning TLS certificate for https://pve.home.lan:8006/api2/json (sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+--- stderr
+TLS certificate for https://pve.home.lan:8006/api2/json CHANGED since it was pinned.
+  pinned: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  now:    sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+This may be a man-in-the-middle attack. Only re-pin if you deliberately replaced the certificate.

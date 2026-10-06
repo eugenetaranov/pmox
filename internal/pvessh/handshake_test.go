@@ -163,3 +163,35 @@ func TestDefaultKnownHostsPath(t *testing.T) {
 		t.Errorf("DefaultKnownHostsPath() = %q, want %q", got, want)
 	}
 }
+
+// TestFetchHostKeyThenAppend covers the split the interactive init
+// wizard uses: fetch (no trust), show the fingerprint, then pin.
+func TestFetchHostKeyThenAppend(t *testing.T) {
+	srv := newTestServer(t)
+	srv.start(t)
+	kh := filepath.Join(t.TempDir(), "known_hosts")
+
+	k, err := FetchHostKey(context.Background(), srv.addr)
+	if err != nil {
+		t.Fatalf("FetchHostKey: %v", err)
+	}
+	if !strings.HasPrefix(k.Fingerprint, "SHA256:") || k.Type == "" {
+		t.Errorf("got type=%q fingerprint=%q, want a type and SHA256 fingerprint", k.Type, k.Fingerprint)
+	}
+	if has, _ := KnownHostsHas(kh, srv.addr); has {
+		t.Fatal("FetchHostKey must not pin anything")
+	}
+	if err := AppendKnownHost(kh, k); err != nil {
+		t.Fatalf("AppendKnownHost: %v", err)
+	}
+	if has, err := KnownHostsHas(kh, srv.addr); err != nil || !has {
+		t.Errorf("KnownHostsHas after AppendKnownHost: has=%v err=%v, want true/nil", has, err)
+	}
+}
+
+func TestAppendKnownHostRejectsUnfetchedKey(t *testing.T) {
+	kh := filepath.Join(t.TempDir(), "known_hosts")
+	if err := AppendKnownHost(kh, HostKey{Host: "h:22"}); err == nil {
+		t.Fatal("AppendKnownHost with a zero HostKey returned nil error")
+	}
+}

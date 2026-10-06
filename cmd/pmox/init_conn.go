@@ -69,31 +69,42 @@ func promptReachableURL(ctx context.Context, p prompter) (string, bool, error) {
 // reachable PVE API, with insecure indicating whether TLS verification
 // had to be skipped.
 func probeURL(ctx context.Context, p prompter, canonical string) (insecure bool, ok bool) {
-	r := setup.ProbeTLS(ctx, probeEndpoint, canonical)
+	insecure, ok, notices := classifyProbe(setup.ProbeTLS(ctx, probeEndpoint, canonical), canonical)
+	printNotices(p, notices)
+	return insecure, ok
+}
+
+// classifyProbe turns a reachability result into the TLS decision, an
+// ok flag, and the user-facing notices to show for it — the pure core
+// shared by the linear prompts (probeURL) and the interactive wizard.
+func classifyProbe(r setup.Reach, canonical string) (insecure, ok bool, notices []notice) {
 	switch r.Status {
 	case pveclient.Reachable:
 		if r.Insecure {
-			warnTLSFallback(p, canonical)
+			return true, true, tlsFallbackNotices(canonical)
 		}
-		return r.Insecure, true
+		return false, true, nil
 	case pveclient.ReachTLSUntrusted:
-		p.Errf("cannot reach %s: %v\n", canonical, r.Err)
-		return false, false
+		return false, false, []notice{warnNotice(fmt.Sprintf("cannot reach %s: %v", canonical, r.Err))}
 	case pveclient.ReachNotPVE:
-		p.Errf("%s responded but does not look like a Proxmox VE API — check the address\n", canonical)
-		return false, false
+		return false, false, []notice{warnNotice(fmt.Sprintf("%s responded but does not look like a Proxmox VE API — check the address", canonical))}
 	default: // ReachUnreachable / ReachUnknown
-		p.Errf("nothing responding at %s — check the address and that Proxmox is running (%v)\n", hostPort(canonical), r.Err)
-		return false, false
+		return false, false, []notice{warnNotice(fmt.Sprintf("nothing responding at %s — check the address and that Proxmox is running (%v)", hostPort(canonical), r.Err))}
 	}
 }
 
 // warnTLSFallback tells the user TLS verification failed for baseURL and
 // that pmox fell back to (and will record) insecure mode.
 func warnTLSFallback(p prompter, baseURL string) {
-	p.Errf("WARNING: TLS verification failed for %s\n", baseURL)
-	p.Errf("         falling back to insecure mode; the certificate will not be verified.\n")
-	p.Errf("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.\n")
+	printNotices(p, tlsFallbackNotices(baseURL))
+}
+
+func tlsFallbackNotices(baseURL string) []notice {
+	return []notice{
+		warnNotice("WARNING: TLS verification failed for " + baseURL),
+		warnNotice("         falling back to insecure mode; the certificate will not be verified."),
+		warnNotice("         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml."),
+	}
 }
 
 // hostPort extracts host:port from a canonical URL for error messages,
@@ -304,6 +315,38 @@ var confirmRepinFn = tui.Confirm
 // accepted is a fingerprint the user already accepted earlier in this run
 // (the form flow loops on errors); it is honored without asking again.
 func resolveInitPin(ctx context.Context, p prompter, cfg *config.Config, canonical string, insecure bool, accepted string) (string, error) {
+	pin, change := checkPin(ctx, cfg, canonical, insecure, accepted)
+	if change == nil {
+		return pin, nil
+	}
+	if !interactiveFn() {
+		return "", change.err(canonical)
+	}
+	printNotices(p, []notice{change.notice(canonical)})
+	ok, err := confirmRepinFn("Trust the new certificate and re-pin it?", false)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", tui.ErrAborted
+	}
+	p.Printf("re-pinning TLS certificate for %s (sha256:%s)\n", canonical, change.newFP)
+	return change.fp, nil
+}
+
+// pinChange describes a presented certificate that differs from the
+// stored pin: fp is the raw fingerprint to enforce (and save) if the
+// user trusts it; oldFP/newFP are the normalized forms for display.
+type pinChange struct {
+	fp, oldFP, newFP string
+}
+
+// checkPin is resolveInitPin's decision core, without any I/O to the
+// user: it returns the pin to enforce, or — when the presented
+// certificate differs from the stored pin and wasn't already accepted
+// this run — a non-nil pinChange the caller must resolve (ask, or fail
+// non-interactively). See resolveInitPin for the rules.
+func checkPin(ctx context.Context, cfg *config.Config, canonical string, insecure bool, accepted string) (string, *pinChange) {
 	pin := storedPinFor(cfg, canonical)
 	if pin == "" || !insecure {
 		return pin, nil
@@ -319,21 +362,21 @@ func resolveInitPin(ctx context.Context, p prompter, cfg *config.Config, canonic
 	if accepted != "" && pveclient.NormalizePin(accepted) == newFP {
 		return fp, nil
 	}
-	if !interactiveFn() {
-		return "", fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, re-run 'pmox init' in an interactive terminal to review and re-pin it, or clear tls_pin_sha256 for this server in the pmox config",
-			pveclient.ErrTLSVerificationFailed, canonical, oldFP, newFP)
-	}
-	p.Errf("TLS certificate for %s CHANGED since it was pinned.\n  pinned: sha256:%s\n  now:    sha256:%s\nThis may be a man-in-the-middle attack. Only re-pin if you deliberately replaced the certificate.\n",
-		canonical, oldFP, newFP)
-	ok, err := confirmRepinFn("Trust the new certificate and re-pin it?", false)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", tui.ErrAborted
-	}
-	p.Printf("re-pinning TLS certificate for %s (sha256:%s)\n", canonical, newFP)
-	return fp, nil
+	return pin, &pinChange{fp: fp, oldFP: oldFP, newFP: newFP}
+}
+
+// err is the non-interactive failure for a changed certificate.
+func (c *pinChange) err(canonical string) error {
+	return fmt.Errorf("%w: TLS certificate for %s CHANGED — pinned sha256:%s, now sha256:%s. This may be a man-in-the-middle attack. If you deliberately replaced the certificate, re-run 'pmox init' in an interactive terminal to review and re-pin it, or clear tls_pin_sha256 for this server in the pmox config",
+		pveclient.ErrTLSVerificationFailed, canonical, c.oldFP, c.newFP)
+}
+
+// notice is the warning shown before asking to re-pin. It is a single
+// multi-line notice (not one per line) to match the original single
+// styled Errf call.
+func (c *pinChange) notice(canonical string) notice {
+	return warnNotice(fmt.Sprintf("TLS certificate for %s CHANGED since it was pinned.\n  pinned: sha256:%s\n  now:    sha256:%s\nThis may be a man-in-the-middle attack. Only re-pin if you deliberately replaced the certificate.",
+		canonical, c.oldFP, c.newFP))
 }
 
 // newInitClient builds the discovery client for a validated connection,

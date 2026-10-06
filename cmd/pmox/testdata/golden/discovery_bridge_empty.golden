@@ -1,0 +1,4 @@
+--- stdout
+Default bridge: => typed
+--- stderr
+no bridges returned for node pve

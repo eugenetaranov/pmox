@@ -1,0 +1,5 @@
+--- stdout
+Default bridge: => typed
+--- stderr
+could not list bridges on node pve: api error: 500 Internal Server Error: boom
+  (the API token likely needs SDN.Audit or Sys.Audit on /nodes/pve)

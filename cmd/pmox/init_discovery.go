@@ -74,24 +74,55 @@ func pickNode(ctx context.Context, p prompter, client *pveclient.Client, current
 	dctx, cancel := discoveryCtx(ctx)
 	defer cancel()
 	nodes, err := client.ListNodes(dctx)
-	if err != nil {
-		p.Errf("could not list nodes: %v\n", err)
-		ans, _ := p.Prompt("Default node: ")
+	return pickFromChoice(p, nodeChoice(nodes, err, current))
+}
+
+// fieldChoice is the pure outcome of one discovery listing: the options
+// to offer (and which to preselect), or — when listing failed or came
+// back empty — a request for manual entry. notices explain failures and
+// are shown before the manual prompt / picker. Shared by the linear
+// pick* helpers and the interactive wizard's Defaults page.
+type fieldChoice struct {
+	title       string // picker title, e.g. "Default node"
+	manualLabel string // free-text label when manual, e.g. "Default template (VMID)"
+	opts        []huh.Option[string]
+	initial     string
+	manual      bool
+	notices     []notice
+}
+
+// pickFromChoice is the linear presentation of a fieldChoice: print its
+// notices, then either prompt for free text or run the (auto-selecting)
+// picker.
+func pickFromChoice(p prompter, c fieldChoice) (string, error) {
+	printNotices(p, c.notices)
+	if c.manual {
+		ans, _ := p.Prompt(c.manualLabel + ": ")
 		return strings.TrimSpace(ans), nil
+	}
+	return pickOneAuto(p, c.title, c.opts, c.initial)
+}
+
+func nodeChoice(nodes []pveclient.Node, err error, current string) fieldChoice {
+	c := fieldChoice{title: "Default node", manualLabel: "Default node"}
+	if err != nil {
+		c.manual = true
+		c.notices = []notice{warnNotice(fmt.Sprintf("could not list nodes: %v", err))}
+		return c
 	}
 	if len(nodes) == 0 {
-		ans, _ := p.Prompt("Default node: ")
-		return strings.TrimSpace(ans), nil
+		c.manual = true
+		return c
 	}
-	opts := make([]huh.Option[string], 0, len(nodes))
 	for _, n := range nodes {
 		label := n.Node
 		if n.Status != "" {
 			label = fmt.Sprintf("%s (%s)", n.Node, n.Status)
 		}
-		opts = append(opts, huh.NewOption(label, n.Node))
+		c.opts = append(c.opts, huh.NewOption(label, n.Node))
 	}
-	return pickOneAuto(p, "Default node", opts, firstNonEmpty(current, nodes[0].Node))
+	c.initial = firstNonEmpty(current, nodes[0].Node)
+	return c
 }
 
 // createTemplateSentinel is pickTemplate's value for "build a new
@@ -110,57 +141,62 @@ func pickTemplate(ctx context.Context, p prompter, client *pveclient.Client, nod
 	dctx, cancel := discoveryCtx(ctx)
 	defer cancel()
 	tmpls, total, err := client.ListTemplates(dctx, node)
-	if err != nil {
-		p.Errf("could not list templates on node %s: %v\n", node, err)
-		ans, _ := p.Prompt("Default template (VMID): ")
-		return strings.TrimSpace(ans), nil
-	}
-
 	// Offering to build one on the spot needs a real terminal — the
 	// build has its own pickers (image, target/snippets storage) and
 	// runs for several minutes. Non-interactively this must stay byte-
 	// for-byte the old behavior: pick among existing templates, or the
 	// manual-VMID prompt when none exist.
-	offerBuild := tui.Interactive()
+	return pickFromChoice(p, templateChoice(tmpls, total, err, node, current, tui.Interactive()))
+}
+
+func templateChoice(tmpls []pveclient.Template, total int, err error, node, current string, offerBuild bool) fieldChoice {
+	c := fieldChoice{title: "Default template", manualLabel: "Default template (VMID)"}
+	if err != nil {
+		c.manual = true
+		c.notices = []notice{warnNotice(fmt.Sprintf("could not list templates on node %s: %v", node, err))}
+		return c
+	}
 
 	if len(tmpls) == 0 {
 		if total == 0 {
-			p.Errf("no VMs visible on node %s — the API token cannot see any VMs.\n", node)
-			p.Errf("  Fix: grant VM.Audit on /vms to the token's user, OR\n")
-			p.Errf("       edit the token in Datacenter → Permissions → API Tokens\n")
-			p.Errf("       and uncheck 'Privilege Separation' so it inherits the user's rights.\n")
-			p.Errf("  See README.md → 'Required permissions' for the full list.\n")
+			c.notices = []notice{
+				warnNotice(fmt.Sprintf("no VMs visible on node %s — the API token cannot see any VMs.", node)),
+				warnNotice("  Fix: grant VM.Audit on /vms to the token's user, OR"),
+				warnNotice("       edit the token in Datacenter → Permissions → API Tokens"),
+				warnNotice("       and uncheck 'Privilege Separation' so it inherits the user's rights."),
+				warnNotice("  See README.md → 'Required permissions' for the full list."),
+			}
 		} else {
-			p.Errf("node %s has %d VMs but none are marked as templates\n", node, total)
-			p.Errf("  Fix: in the PVE web UI, right-click a VM → Convert to template.\n")
+			c.notices = []notice{
+				warnNotice(fmt.Sprintf("node %s has %d VMs but none are marked as templates", node, total)),
+				warnNotice("  Fix: in the PVE web UI, right-click a VM → Convert to template."),
+			}
 		}
 		if !offerBuild {
-			ans, _ := p.Prompt("Default template (VMID): ")
-			return strings.TrimSpace(ans), nil
+			c.manual = true
+			return c
 		}
 	}
 
-	opts := make([]huh.Option[string], 0, len(tmpls)+1)
-	fallback := ""
 	if offerBuild {
-		opts = append(opts, huh.NewOption("+ Build a new Ubuntu template now (pmox create-template)", createTemplateSentinel))
-		fallback = createTemplateSentinel
+		c.opts = append(c.opts, huh.NewOption("+ Build a new Ubuntu template now (pmox create-template)", createTemplateSentinel))
+		c.initial = createTemplateSentinel
 	}
 	haveCurrent := false
 	for _, t := range tmpls {
 		label := fmt.Sprintf("%d  %s", t.VMID, t.Name)
-		opts = append(opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
+		c.opts = append(c.opts, huh.NewOption(label, strconv.Itoa(t.VMID)))
 		if current != "" && strconv.Itoa(t.VMID) == current {
 			haveCurrent = true
 		}
 	}
 	if len(tmpls) > 0 {
-		fallback = strconv.Itoa(tmpls[0].VMID)
+		c.initial = strconv.Itoa(tmpls[0].VMID)
 	}
 	if haveCurrent {
-		fallback = current
+		c.initial = current
 	}
-	return pickOneAuto(p, "Default template", opts, fallback)
+	return c
 }
 
 func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node, current string) (string, error) {
@@ -170,28 +206,34 @@ func pickStorage(ctx context.Context, p prompter, client *pveclient.Client, node
 	dctx, cancel := discoveryCtx(ctx)
 	defer cancel()
 	pools, err := client.ListStorage(dctx, node)
+	return pickFromChoice(p, storageChoice(pools, err, node, current))
+}
+
+func storageChoice(pools []pveclient.Storage, err error, node, current string) fieldChoice {
+	c := fieldChoice{title: "Default storage", manualLabel: "Default storage"}
 	if err != nil {
-		p.Errf("could not list storage on node %s: %v\n", node, err)
-		p.Errf("  (the API token likely needs Datastore.Audit on /storage)\n")
-		ans, _ := p.Prompt("Default storage: ")
-		return strings.TrimSpace(ans), nil
+		c.manual = true
+		c.notices = []notice{
+			warnNotice(fmt.Sprintf("could not list storage on node %s: %v", node, err)),
+			warnNotice("  (the API token likely needs Datastore.Audit on /storage)"),
+		}
+		return c
 	}
 	if len(pools) == 0 {
-		p.Errf("no storage pools returned for node %s\n", node)
-		ans, _ := p.Prompt("Default storage: ")
-		return strings.TrimSpace(ans), nil
+		c.manual = true
+		c.notices = []notice{warnNotice(fmt.Sprintf("no storage pools returned for node %s", node))}
+		return c
 	}
 	// Filter to storages that can actually hold VM disk images.
 	usable := pveclient.FilterStorage(pools, pveclient.Storage.SupportsVMDisks)
 	if len(usable) == 0 {
 		usable = pools
 	}
-	opts := make([]huh.Option[string], 0, len(usable))
 	for _, s := range usable {
-		label := storageLabel(s)
-		opts = append(opts, huh.NewOption(label, s.Storage))
+		c.opts = append(c.opts, huh.NewOption(storageLabel(s), s.Storage))
 	}
-	return pickOneAuto(p, "Default storage", opts, firstNonEmpty(current, usable[0].Storage))
+	c.initial = firstNonEmpty(current, usable[0].Storage)
+	return c
 }
 
 // snippetCapableTypes lists the PVE storage backends that can host the
@@ -251,17 +293,10 @@ func pickSnippetStorage(ctx context.Context, p prompter, client snippetStoragePi
 // UpdateStorageContent. Decline or absence prints the manual remediation
 // and returns "" so credentials still save.
 func offerEnableSnippets(ctx context.Context, p prompter, client snippetStoragePicker, pools []pveclient.Storage) (string, error) {
-	capable := pveclient.FilterStorage(pools, func(s pveclient.Storage) bool { return snippetCapableTypes[s.Type] })
-	if len(capable) == 0 {
+	target, ok := snippetEnableTarget(pools)
+	if !ok {
 		printSnippetManualRemediation(p)
 		return "", nil
-	}
-	target := capable[0]
-	for _, s := range capable {
-		if s.Storage == "local" {
-			target = s
-			break
-		}
 	}
 	ans, err := p.Prompt(fmt.Sprintf("no storage supports snippets. enable snippets on %q? [Y/n]: ", target.Storage))
 	if err != nil {
@@ -273,11 +308,7 @@ func offerEnableSnippets(ctx context.Context, p prompter, client snippetStorageP
 		return "", nil
 	}
 
-	newContent := target.ContentList()
-	if !slices.Contains(newContent, "snippets") {
-		newContent = append(newContent, "snippets")
-	}
-	if err := client.UpdateStorageContent(ctx, target.Storage, newContent); err != nil {
+	if err := client.UpdateStorageContent(ctx, target.Storage, snippetsEnabledContent(target)); err != nil {
 		p.Errf("could not enable snippets on %q: %v\n", target.Storage, err)
 		printSnippetManualRemediation(p)
 		return "", nil
@@ -286,11 +317,45 @@ func offerEnableSnippets(ctx context.Context, p prompter, client snippetStorageP
 	return target.Storage, nil
 }
 
+// snippetEnableTarget picks the directory-shaped storage to offer
+// enabling `snippets` on when none supports it yet — "local" when
+// present, else the first capable one. ok is false when no storage can
+// host snippets at all.
+func snippetEnableTarget(pools []pveclient.Storage) (pveclient.Storage, bool) {
+	capable := pveclient.FilterStorage(pools, func(s pveclient.Storage) bool { return snippetCapableTypes[s.Type] })
+	if len(capable) == 0 {
+		return pveclient.Storage{}, false
+	}
+	target := capable[0]
+	for _, s := range capable {
+		if s.Storage == "local" {
+			target = s
+			break
+		}
+	}
+	return target, true
+}
+
+// snippetsEnabledContent is target's content list with `snippets` added.
+func snippetsEnabledContent(target pveclient.Storage) []string {
+	content := target.ContentList()
+	if !slices.Contains(content, "snippets") {
+		content = append(content, "snippets")
+	}
+	return content
+}
+
 func printSnippetManualRemediation(p prompter) {
-	p.Errf("no snippet storage configured.\n")
-	p.Errf("  Fix: edit /etc/pve/storage.cfg on the PVE host and add 'snippets' to\n")
-	p.Errf("       the content= line of a directory-backed storage, then re-run\n")
-	p.Errf("       'pmox init' to record it.\n")
+	printNotices(p, snippetRemediationNotices())
+}
+
+func snippetRemediationNotices() []notice {
+	return []notice{
+		warnNotice("no snippet storage configured."),
+		warnNotice("  Fix: edit /etc/pve/storage.cfg on the PVE host and add 'snippets' to"),
+		warnNotice("       the content= line of a directory-backed storage, then re-run"),
+		warnNotice("       'pmox init' to record it."),
+	}
 }
 
 func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node, current string) (string, error) {
@@ -300,20 +365,27 @@ func pickBridge(ctx context.Context, p prompter, client *pveclient.Client, node,
 	dctx, cancel := discoveryCtx(ctx)
 	defer cancel()
 	bridges, err := client.ListBridges(dctx, node)
+	return pickFromChoice(p, bridgeChoice(bridges, err, node, current))
+}
+
+func bridgeChoice(bridges []pveclient.Bridge, err error, node, current string) fieldChoice {
+	c := fieldChoice{title: "Default bridge", manualLabel: "Default bridge"}
 	if err != nil {
-		p.Errf("could not list bridges on node %s: %v\n", node, err)
-		p.Errf("  (the API token likely needs SDN.Audit or Sys.Audit on /nodes/%s)\n", node)
-		ans, _ := p.Prompt("Default bridge: ")
-		return strings.TrimSpace(ans), nil
+		c.manual = true
+		c.notices = []notice{
+			warnNotice(fmt.Sprintf("could not list bridges on node %s: %v", node, err)),
+			warnNotice(fmt.Sprintf("  (the API token likely needs SDN.Audit or Sys.Audit on /nodes/%s)", node)),
+		}
+		return c
 	}
 	if len(bridges) == 0 {
-		p.Errf("no bridges returned for node %s\n", node)
-		ans, _ := p.Prompt("Default bridge: ")
-		return strings.TrimSpace(ans), nil
+		c.manual = true
+		c.notices = []notice{warnNotice(fmt.Sprintf("no bridges returned for node %s", node))}
+		return c
 	}
-	opts := make([]huh.Option[string], 0, len(bridges))
 	for _, b := range bridges {
-		opts = append(opts, huh.NewOption(b.Iface, b.Iface))
+		c.opts = append(c.opts, huh.NewOption(b.Iface, b.Iface))
 	}
-	return pickOneAuto(p, "Default bridge", opts, firstNonEmpty(current, bridges[0].Iface))
+	c.initial = firstNonEmpty(current, bridges[0].Iface)
+	return c
 }

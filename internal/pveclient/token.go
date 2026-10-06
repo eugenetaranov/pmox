@@ -104,6 +104,19 @@ func CreateTokenWithOptions(ctx context.Context, baseURL string, insecure bool, 
 	return data.FullTokenID, data.Value, nil
 }
 
+// DeleteTokenWithOptions removes the API token `name` from userid,
+// authenticating with a login ticket (so it works before any API token
+// for this server exists — e.g. replacing a colliding token during
+// 'pmox init').
+func DeleteTokenWithOptions(ctx context.Context, baseURL string, insecure bool, opts Options, t Ticket, userid, name string) error {
+	path := fmt.Sprintf("/access/users/%s/token/%s", url.PathEscape(userid), url.PathEscape(name))
+	headers := http.Header{}
+	headers.Set("Cookie", "PVEAuthCookie="+t.Cookie)
+	headers.Set("CSRFPreventionToken", t.CSRF)
+	_, err := ticketClient(baseURL, insecure, opts).do(ctx, http.MethodDelete, path, nil, nil, headers)
+	return err
+}
+
 // APIToken is one entry from GET /access/users/{userid}/token — an API
 // token's bare name (not the full user@realm!name id) plus its comment.
 type APIToken struct {

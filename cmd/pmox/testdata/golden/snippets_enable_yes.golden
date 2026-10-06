@@ -1,0 +1,4 @@
+--- stdout
+no storage supports snippets. enable snippets on "local"? [Y/n]: enabled snippets on local
+=> local
+--- stderr

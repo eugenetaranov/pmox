@@ -243,3 +243,13 @@ func Login(ctx context.Context, baseURL string, insecure bool, pin, user, passwo
 func (t *TokenIssuer) Create(ctx context.Context, name string) (tokenID, secret string, err error) {
 	return pveclient.CreateTokenWithOptions(ctx, t.baseURL, t.insecure, t.opts, t.ticket, t.user, name)
 }
+
+// Replace deletes the user's existing API token `name` and creates a new
+// one under the same name, returning its full id and secret. Anything
+// still using the old token stops working.
+func (t *TokenIssuer) Replace(ctx context.Context, name string) (tokenID, secret string, err error) {
+	if err := pveclient.DeleteTokenWithOptions(ctx, t.baseURL, t.insecure, t.opts, t.ticket, t.user, name); err != nil {
+		return "", "", fmt.Errorf("delete existing token %s!%s: %w", t.user, name, err)
+	}
+	return t.Create(ctx, name)
+}

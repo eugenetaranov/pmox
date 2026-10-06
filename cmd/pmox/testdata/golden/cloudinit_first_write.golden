@@ -1,0 +1,3 @@
+--- stdout
+wrote cloud-init template to CFG/pmox/cloud-init/pve.home.lan-8006.yaml — edit it to customize packages, users, runcmd
+--- stderr

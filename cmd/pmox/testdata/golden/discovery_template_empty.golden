@@ -1,0 +1,8 @@
+--- stdout
+Default template (VMID): => typed
+--- stderr
+no VMs visible on node pve — the API token cannot see any VMs.
+  Fix: grant VM.Audit on /vms to the token's user, OR
+       edit the token in Datacenter → Permissions → API Tokens
+       and uncheck 'Privilege Separation' so it inherits the user's rights.
+  See README.md → 'Required permissions' for the full list.

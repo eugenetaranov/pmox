@@ -1,0 +1,5 @@
+--- stdout
+--- stderr
+WARNING: TLS verification failed for https://pve.home.lan:8006/api2/json
+         falling back to insecure mode; the certificate will not be verified.
+         to re-enable, set 'insecure: false' in ~/.config/pmox/config.yaml.

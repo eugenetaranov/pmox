@@ -1,0 +1,3 @@
+--- stdout
+--- stderr
+nothing responding at pve.home.lan:8006 — check the address and that Proxmox is running (<nil>)
