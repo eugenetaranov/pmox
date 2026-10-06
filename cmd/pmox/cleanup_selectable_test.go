@@ -331,10 +331,10 @@ func TestResolveSelection(t *testing.T) {
 
 func TestCategoryLabel(t *testing.T) {
 	c := cleanupCategory{key: "snippet", title: "Orphaned snippets"}
-	if got := categoryLabel(c, 3); got != "Orphaned snippets (3)" {
+	if got := categoryLabel(c, 3, ""); got != "Orphaned snippets (3)" {
 		t.Errorf("categoryLabel(c, 3) = %q, want %q", got, "Orphaned snippets (3)")
 	}
-	got := categoryLabel(c, 0)
+	got := categoryLabel(c, 0, "")
 	if !strings.Contains(got, "Orphaned snippets") || !strings.Contains(got, "clean") {
 		t.Errorf("categoryLabel(c, 0) = %q, want it to name the category and say clean", got)
 	}
@@ -631,4 +631,12 @@ func TestTackConfigItems(t *testing.T) {
 			t.Error("tack dir not removed")
 		}
 	})
+}
+
+func TestCategoryLabelUnscanned(t *testing.T) {
+	c, _ := categoryByKey("api-token")
+	got := categoryLabel(c, 0, "no server configured — run 'pmox init'")
+	if !strings.Contains(got, "not checked (no server configured") || strings.Contains(got, "— clean") {
+		t.Errorf("label = %q, want it to say the category was not checked, not clean", got)
+	}
 }

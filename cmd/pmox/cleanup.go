@@ -122,6 +122,11 @@ type cleanupOpts struct {
 	includeTemplates bool
 	includeVMs       bool
 	include          []string
+
+	// unscanned maps a category to why it could not be checked at all
+	// (e.g. no server configured). Filled by runCleanup, not by flags, so
+	// the checklist can say "not checked" instead of a misleading "clean".
+	unscanned map[string]string
 }
 
 // hasSelectionFlags reports whether any non-interactive selection flag
@@ -156,6 +161,10 @@ var cleanupCategories = []cleanupCategory{
 	{"tack-config", "~/.config/pmox/tack (playbooks + roles) (DESTRUCTIVE)", true},
 }
 
+// remoteCleanupCategories are the categories found by scanning a
+// configured Proxmox cluster (as opposed to local files).
+var remoteCleanupCategories = []string{"snippet", "template", "vm", "api-token"}
+
 func categoryByKey(k string) (cleanupCategory, bool) {
 	for _, c := range cleanupCategories {
 		if c.key == k {
@@ -171,7 +180,10 @@ func categoryByKey(k string) (cleanupCategory, bool) {
 // nothing found is dimmed and says so instead of showing a count, and
 // is left out of Selected() by the caller — visible, but not something
 // there's anything to act on.
-func categoryLabel(c cleanupCategory, count int) string {
+func categoryLabel(c cleanupCategory, count int, unscanned string) string {
+	if count == 0 && unscanned != "" {
+		return tui.Muted(fmt.Sprintf("%s — not checked (%s)", c.title, unscanned))
+	}
 	if count == 0 {
 		return tui.Muted(fmt.Sprintf("%s — clean", c.title))
 	}
@@ -276,7 +288,7 @@ func resolveSelection(available []string, items []cleanupItem, o cleanupOpts, in
 		}
 		opts := make([]huh.Option[string], 0, len(ordered))
 		for _, c := range ordered {
-			opts = append(opts, huh.NewOption(categoryLabel(c, counts[c.key]), c.key).Selected(sel[c.key]))
+			opts = append(opts, huh.NewOption(categoryLabel(c, counts[c.key], o.unscanned[c.key]), c.key).Selected(sel[c.key]))
 		}
 		chosen, err := selectCategoriesFn("Select what to clean", opts)
 		if err != nil {
@@ -392,6 +404,19 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	items = append(items, sshKeyItems(cfg)...)
 	items = append(items, contextItems(cfg)...)
 	items = append(items, tackConfigItems()...)
+
+	// Server-side categories can only be checked against a reachable,
+	// configured cluster; say so rather than reporting them "clean".
+	if len(reachableURLs) == 0 {
+		reason := "no configured server reachable"
+		if len(cfg.Servers) == 0 {
+			reason = "no server configured — run 'pmox init'"
+		}
+		o.unscanned = map[string]string{}
+		for _, k := range remoteCleanupCategories {
+			o.unscanned[k] = reason
+		}
+	}
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
