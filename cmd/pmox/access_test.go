@@ -216,7 +216,7 @@ func TestAccessListShowsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"bob", "carol", "web1", "in sync", "OUT OF SYNC", "pmox access sync db1"} {
+	for _, want := range []string{"bob", "carol", "web1", "up to date", "OUT OF SYNC", "pmox access sync db1", "SHARED WITH"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output missing %q:\n%s", want, out)
 		}
@@ -342,7 +342,7 @@ func TestKeyListShowsEveryone(t *testing.T) {
 func TestAccessShowAndListAlias(t *testing.T) {
 	setupAccessEnv(t)
 	for _, verb := range []string{"show", "list"} {
-		if out, err := runCmd(t, "access", verb); err != nil || !strings.Contains(out, "People:") {
+		if out, err := runCmd(t, "access", verb); err != nil || !strings.Contains(out, "People") || !strings.Contains(out, "SHARED WITH") {
 			t.Errorf("access %s: %v\n%s", verb, err, out)
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"sync"
 
 	"github.com/charmbracelet/huh"
@@ -424,69 +425,79 @@ func runAccessList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintln(w, "People:")
 	published := map[string]accessreg.PublishedKey{}
-	for _, k := range keys {
-		published[k.Name] = k
-	}
 	names := map[string]bool{}
 	for _, k := range keys {
+		published[k.Name] = k
 		names[k.Name] = true
 	}
 	for n := range acc.People {
 		names[n] = true
-	}
-	if len(names) == 0 {
-		fmt.Fprintln(w, "  (nobody yet — people publish their key with 'pmox key publish')")
 	}
 	sorted := make([]string, 0, len(names))
 	for n := range names {
 		sorted = append(sorted, n)
 	}
 	sort.Strings(sorted)
-	for _, n := range sorted {
-		k, ok := published[n]
-		keyInfo := "NOT PUBLISHED"
-		if ok {
-			keyInfo = k.Fingerprint
+
+	fmt.Fprintln(w, "People")
+	if len(sorted) == 0 {
+		fmt.Fprintln(w, "  nobody yet — people publish their key with 'pmox key publish'")
+	} else {
+		tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(tw, "  PERSON\tKEY\tSHARED VMS")
+		for _, n := range sorted {
+			keyInfo := "not published"
+			if k, ok := published[n]; ok {
+				keyInfo = k.Fingerprint
+			}
+			shared := grantSummary(acc.People[n], vms)
+			if shared == "none" {
+				shared = fmt.Sprintf("none yet — pmox access grant <vm> --to %s", n)
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\n", n, keyInfo, shared)
 		}
-		fmt.Fprintf(w, "  %-12s %-52s %s\n", n, keyInfo, grantSummary(acc.People[n], vms))
+		_ = tw.Flush()
 	}
 	for _, e := range badKeys {
 		fmt.Fprintln(w, tui.Warnf("  unreadable key file: "+e.Error()))
 	}
 
-	fmt.Fprintln(w, "\nVMs:")
-	for _, r := range vms {
-		want, _ := acc.KeysFor(r.VMID, keys)
-		wantNames := keyNames(want)
-		status := "stopped (not checked)"
-		if r.IsRunning() {
-			_, have, rerr := guestkeys.Read(ctx, env.agent, guestkeys.Target{Node: r.Node, VMID: r.VMID, User: guestUserFor(env, r.VMID)})
-			switch {
-			case rerr != nil:
-				status = "could not read: " + rerr.Error()
-			case strings.Join(have, "\n") == strings.Join(want, "\n"):
-				status = "in sync"
-			default:
-				status = "OUT OF SYNC (has: " + strings.Join(keyNames(have), ", ") + ") — run 'pmox access sync " + r.Name + "'"
-				if len(have) == 0 {
-					status = "OUT OF SYNC (has none) — run 'pmox access sync " + r.Name + "'"
+	fmt.Fprintln(w, "\nVMs")
+	if len(vms) == 0 {
+		fmt.Fprintln(w, "  no pmox VMs")
+	} else {
+		tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(tw, "  VM\tVMID\tSHARED WITH\tON THE VM")
+		for _, r := range vms {
+			want, _ := acc.KeysFor(r.VMID, keys)
+			status := "not checked (stopped)"
+			if r.IsRunning() {
+				_, have, rerr := guestkeys.Read(ctx, env.agent, guestkeys.Target{Node: r.Node, VMID: r.VMID, User: guestUserFor(env, r.VMID)})
+				switch {
+				case rerr != nil:
+					status = "could not read: " + rerr.Error()
+				case strings.Join(have, "\n") == strings.Join(want, "\n"):
+					status = "up to date"
+				default:
+					status = "OUT OF SYNC — run 'pmox access sync " + r.Name + "'"
 				}
 			}
+			who := strings.Join(keyNames(want), ", ")
+			if who == "" {
+				who = "nobody"
+			}
+			fmt.Fprintf(tw, "  %s\t%d\t%s\t%s\n", r.Name, r.VMID, who, status)
 		}
-		who := strings.Join(wantNames, ", ")
-		if who == "" {
-			who = "—"
-		}
-		fmt.Fprintf(w, "  %-20s %-6d %-30s %s\n", r.Name, r.VMID, who, status)
+		_ = tw.Flush()
 	}
+	fmt.Fprintln(w, tui.Subtitle("\nShared access is on top of each VM's own launch key: whoever launched a VM can always reach it."))
 	return nil
 }
 
 func grantSummary(g *accessreg.Grant, vms []pveclient.Resource) string {
-	if g == nil {
-		return "no access"
+	if g == nil || (!g.AllVMs && len(g.VMs) == 0) {
+		return "none"
 	}
 	if g.AllVMs {
 		return "all pmox VMs"

@@ -316,7 +316,7 @@ func runKeyList(cmd *cobra.Command, f *keyFlags) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tFINGERPRINT\tFROM\tPUBLISHED\tACCESS")
+	fmt.Fprintln(tw, "NAME\tFINGERPRINT\tFROM\tPUBLISHED\tSHARED VMS")
 	for _, r := range rows {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Name, r.Fingerprint, r.Host, r.Published, r.Access)
 	}
@@ -327,7 +327,7 @@ func runKeyList(cmd *cobra.Command, f *keyFlags) error {
 func accessByID(g *accessreg.Grant) string {
 	switch {
 	case g == nil || (!g.AllVMs && len(g.VMs) == 0):
-		return "no access"
+		return "none"
 	case g.AllVMs:
 		return "all pmox VMs"
 	}
