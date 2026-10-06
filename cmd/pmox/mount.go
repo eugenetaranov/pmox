@@ -136,6 +136,20 @@ Subcommands: 'pmox mount create' (same as above), 'pmox mount list'
 (running background mounts), 'pmox mount delete' (stop them; also
 'pmox umount'). A local directory literally named create, list, ls,
 delete or rm must be given as ./<name>.`
+	// Bare 'pmox mount' behaves like every other noun: the verb palette
+	// on a terminal, help + exit 2 otherwise. With arguments it is
+	// 'mount create'.
+	create := g.RunE
+	g.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return create(cmd, args)
+		}
+		if !tui.Interactive() {
+			_ = cmd.Help()
+			return &errGroupHelp{group: "mount"}
+		}
+		return runGroupMenu(cmd)
+	}
 	g.AddCommand(
 		withShort(rename(newMountCmd(), "create"), "Start syncing a local directory to a VM"),
 		newMountListCmd(),

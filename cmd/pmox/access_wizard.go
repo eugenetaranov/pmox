@@ -20,7 +20,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tui/wizard"
 )
 
-// The interactive 'pmox access': People › VMs › Review, then a hidden
+// The interactive 'pmox access setup': People › VMs › Review, then a hidden
 // apply step that writes access.yaml and syncs the affected VMs.
 
 const allVMsValue = "*"

@@ -23,18 +23,13 @@ type keyFlags struct {
 }
 
 func newKeyCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "key",
-		Short: "Publish your SSH key for VM sharing",
-		Long: `Manage your entry in the cluster's access registry
+	return nounGroup("key", "Publish your SSH key for VM sharing", `Manage your entry in the cluster's access registry
 (/etc/pve/pmox/keys on the Proxmox cluster).
 
 Publishing puts your SSH PUBLIC key on the cluster under your local
 username. A cluster admin can then give you access to VMs with
 'pmox access'. Private keys and API tokens never leave your machine.`,
-	}
-	cmd.AddCommand(newKeyPublishCmd(), newKeyUnpublishCmd(), newKeyShowCmd())
-	return cmd
+		newKeyPublishCmd(), newKeyUnpublishCmd(), newKeyShowCmd())
 }
 
 func newKeyPublishCmd() *cobra.Command {

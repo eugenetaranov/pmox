@@ -220,10 +220,7 @@ type accessFlags struct {
 }
 
 func newAccessCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "access",
-		Short: "Share VMs with other people",
-		Long: `Decide who can SSH into which pmox VMs.
+	return nounGroup("access", "Share VMs with other people", `Decide who can SSH into which pmox VMs.
 
 People publish their SSH public key once with 'pmox key publish'. A
 cluster admin then grants them VMs; pmox writes their keys into a
@@ -231,12 +228,17 @@ managed block of each VM's ~/.ssh/authorized_keys through the QEMU guest
 agent. The desired state lives on the cluster in /etc/pve/pmox, so
 every workstation sees the same grants.
 
-Run without a subcommand on a terminal for an interactive setup.`,
-		Args: cobra.NoArgs,
-		RunE: runAccessInteractive,
+'pmox access setup' picks people and VMs interactively.`,
+		newAccessSetupCmd(), newAccessGrantCmd(), newAccessRevokeCmd(), newAccessListCmd(), newAccessSyncCmd())
+}
+
+func newAccessSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Choose people and their VMs interactively",
+		Args:  cobra.NoArgs,
+		RunE:  runAccessInteractive,
 	}
-	cmd.AddCommand(newAccessGrantCmd(), newAccessRevokeCmd(), newAccessListCmd(), newAccessSyncCmd())
-	return cmd
 }
 
 func newAccessGrantCmd() *cobra.Command {
@@ -493,7 +495,7 @@ func grantSummary(g *accessreg.Grant, vms []pveclient.Resource) string {
 // runAccessInteractive is filled in with the wizard (access_wizard.go).
 func runAccessInteractive(cmd *cobra.Command, _ []string) error {
 	if !tui.Interactive() {
-		return fmt.Errorf("%w: 'pmox access' needs a terminal; use 'pmox access grant|revoke|list|sync' in scripts", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: 'pmox access setup' needs a terminal; use 'pmox access grant|revoke|list|sync' in scripts", exitcode.ErrUserInput)
 	}
 	return runAccessWizard(cmd)
 }

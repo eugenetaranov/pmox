@@ -200,3 +200,23 @@ func TestMountOldShapeRoutesToMount(t *testing.T) {
 		t.Errorf("old mount shape rejected: %v", err)
 	}
 }
+
+// Every noun behaves the same when run bare in a script: help + exit 2.
+// (On a terminal the same path opens the verb palette.)
+func TestEveryNounIsConsistentWhenBare(t *testing.T) {
+	for _, c := range rootCmd.Commands() {
+		if c.GroupID != groupResources {
+			continue
+		}
+		t.Run(c.Name(), func(t *testing.T) {
+			stdout, _, err := execRoot(t, c.Name(), "--no-input")
+			var gh *errGroupHelp
+			if !errors.As(err, &gh) || exitcode.From(err) != exitcode.ExitUserError {
+				t.Fatalf("pmox %s: err = %v (exit %d), want help + exit 2", c.Name(), err, exitcode.From(err))
+			}
+			if !strings.Contains(stdout, "Usage:") {
+				t.Errorf("pmox %s printed no help", c.Name())
+			}
+		})
+	}
+}
