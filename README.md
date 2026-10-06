@@ -141,6 +141,8 @@ just for readability.
 | `mount` | Watch a local dir and continuously rsync it to a VM | `pmox mount ./src web1:/opt/app` |
 | `umount` | Stop background-mode mounts for a VM | `pmox umount web1` |
 | `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox ssh-config web1` |
+| `key` | Publish your SSH public key to the cluster's access registry (`publish`/`unpublish`/`show`) | `pmox key publish` |
+| `access` | Share VMs with other people: interactive setup, or `grant`/`revoke`/`list`/`sync` | `pmox access grant web1 --to bob` |
 
 ### Setup & diagnostics
 
@@ -173,6 +175,67 @@ or `--output json`. Force non-interactive behavior anywhere with
 argument to pass instead of prompting.
 
 Run `pmox <command> --help` for the full flag set of any command.
+
+## Sharing VMs between users
+
+Each VM authorizes the SSH key of whoever launched it. To let another
+person in, for example a second account on the same workstation, use
+the **access registry**. It lives on the Proxmox cluster, in
+`/etc/pve/pmox/`, so every node and every workstation sees the same
+state. Only **public** keys ever go there. Private keys and API tokens
+stay with their owner.
+
+1. **Each person publishes their key once**, from their own account,
+   after their own `pmox init`:
+
+   ```
+   bob$ pmox key publish
+   ✓ published bob (SHA256:3f…) to pve → /etc/pve/pmox/keys/bob.pub
+   ```
+
+   The name defaults to the local username. Use `--name` to override it.
+   With several servers configured, pmox asks which clusters to publish
+   to; `--context` or `--all-contexts` skip the question.
+
+2. **A cluster admin grants access**, interactively or from scripts:
+
+   ```
+   alice$ pmox access                         # People › VMs › Review, full-screen
+   alice$ pmox access grant web1 db1 --to bob
+   alice$ pmox access grant --all-vms --to carol   # every pmox VM, including future ones
+   alice$ pmox access revoke web1 --to bob
+   alice$ pmox access list                    # who can reach what, and whether each VM matches
+   ```
+
+3. **Bob connects as usual**: `pmox shell web1`.
+
+pmox enforces grants by keeping a marked block in the VM user's
+`~/.ssh/authorized_keys`:
+
+```
+# pmox-access begin (managed by pmox - edits inside this block are overwritten)
+…
+# pmox-access end
+```
+
+It writes that block through the QEMU guest agent's file API.
+Everything outside the block, including the key the VM was launched
+with, is left alone.
+
+- **Stopped VMs** are reported as pending. `pmox access sync` brings
+  them up to date later.
+- **New VMs** get the keys of everyone with all-VM access as soon as
+  `pmox launch` or `pmox clone` finishes.
+- **A rejected key:** when a VM doesn't accept your key, `shell`,
+  `exec`, `cp`, `sync`, `mount` and `apply` say whether you still need
+  to publish, need to be granted, or just need a sync. They exit with
+  code 10.
+- **Privileges:** the token needs guest-agent file access on the VMs
+  being shared (see [docs/pve-setup.md](docs/pve-setup.md)), plus node
+  SSH as root to reach `/etc/pve`.
+- **Checks and cleanup:** `pmox doctor` reports both, plus any VMs
+  whose keys drifted from the registry. `pmox cleanup` removes grants
+  for deleted VMs.
 
 ## Cleaning up leftovers
 
@@ -512,6 +575,8 @@ pmox maps typed errors to a small, stable set of exit codes:
 | 6 | `ExitUnauthorized` | 401 from the PVE API (bad token or privilege) |
 | 7 | `ExitTimeout` | deadline exceeded (wait-IP, wait-SSH, task polling) |
 | 8 | `ExitHook` | `--strict-hooks` and the hook failed |
+| 9 | `ExitWarnings` | `pmox doctor --strict`: checks passed, but with warnings |
+| 10 | `ExitSSHAuth` | a VM rejected your SSH key (see [Sharing VMs between users](#sharing-vms-between-users)) |
 
 Scripts that wrap pmox can branch on these reliably; see
 `internal/exitcode/exitcode.go` for the canonical definitions.

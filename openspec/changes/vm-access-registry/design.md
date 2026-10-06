@@ -81,10 +81,15 @@ copied cluster-wide with no extra work.
     shared, and its contents are visible through the storage API.
   - PVE user comment fields. Rejected as a hack, size-limited, and it
     needs `User.Modify`.
-- **Verify first (task 1.1):** that pmxcfs accepts arbitrary files
-  under `/etc/pve/pmox` from root over SFTP, including rename. The
-  fallback is a root-owned `/var/lib/pmox` on each node, with a warning
-  that it isn't replicated.
+- **Verified (task 1.1, PVE on `p0`, root over SFTP):**
+  - creating directories under `/etc/pve`;
+  - writing new files;
+  - atomic replace via a dot-temp plus rename;
+  - a 66 KB `access.yaml`;
+  - listing, removing files, and removing empty directories.
+
+  pmxcfs needs no chmod and rejects nothing here. The fallback
+  directory is not needed.
 
 ### D2. Identity is the local username
 
@@ -102,7 +107,7 @@ usernames on two machines.
 
 ```
 <launch key from cloud-init>
-# pmox-access begin (managed by pmox — edits inside this block are overwritten)
+# pmox-access begin (managed by pmox - edits inside this block are overwritten)
 ssh-ed25519 AAAA… pmox-access:bob
 ssh-ed25519 AAAA… pmox-access:carol
 # pmox-access end
@@ -132,6 +137,17 @@ StrictModes. This doesn't happen on pmox-launched VMs.
   users' full-replace custom cloud-init.
 - *Guest-agent exec.* It needs `VM.GuestAgent.Unrestricted`, which is
   root-equivalent and which the security review rejected.
+
+**Verified (task 1.2, PVE 9.1.1, Ubuntu 26.04 guest from a pmox
+template):**
+
+- `agent/file-read` returns `/etc/passwd` and `authorized_keys`
+  decoded.
+- `agent/file-write` with plain content round-trips byte for byte.
+- After the write, `~/.ssh/authorized_keys` is still `ubuntu:ubuntu
+  0600` and `~/.ssh` is `0700`.
+- sshd accepts a key that sits only in the managed block. A login with
+  it succeeded.
 
 **Privileges:**
 

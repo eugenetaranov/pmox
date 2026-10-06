@@ -66,6 +66,20 @@ pveum acl modify / -token 'pmox@pve!pmox' -role PmoxRole
 Adjust the token ID and role scope as needed. Datastore privileges
 only need to apply to the storage pools you actually use.
 
+**Optional: sharing VMs between people (`pmox access`).** Updating a
+VM's shared SSH keys goes through the QEMU guest agent's file API. It
+needs these privileges on the VMs being shared:
+
+| PVE version | Privileges                                           |
+| ----------- | ---------------------------------------------------- |
+| 9.x         | `VM.GuestAgent.FileRead`, `VM.GuestAgent.FileWrite` |
+| 8.x         | `VM.Monitor`                                         |
+
+pmox never uses guest-agent command execution
+(`VM.GuestAgent.Unrestricted`). The shared registry in `/etc/pve/pmox`
+is reached over node SSH, which must log in as `root` to write there.
+People who only connect to VMs, and never grant access, need neither.
+
 ## 3. Node SSH access
 
 Proxmox's HTTP upload endpoint hard-codes a rejection of

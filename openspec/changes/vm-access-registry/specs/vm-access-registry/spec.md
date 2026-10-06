@@ -12,7 +12,7 @@
 #### Scenario: Several configured servers
 - **WHEN** `pmox key publish` runs on a terminal with more than one server configured
 - **THEN** it asks which servers to publish to before writing anything
-- **AND** `--context <name>` (repeatable) selects them without asking
+- **AND** `--context <name>` (one server) or `--all-contexts` selects them without asking
 
 #### Scenario: Name already taken by a different key
 - **WHEN** a different key is already published under the same name
