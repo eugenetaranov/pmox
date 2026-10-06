@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/huh"
@@ -37,5 +38,18 @@ func TestSelectOne_TrivialOptionsNeverPrompt(t *testing.T) {
 	got, err = SelectOne("t", []huh.Option[string]{huh.NewOption("only", "only")}, "fb")
 	if err != nil || got != "only" {
 		t.Errorf("single opt: got (%q, %v), want (only, nil)", got, err)
+	}
+}
+
+func TestWarnfDoesNotPadMultilineText(t *testing.T) {
+	long := strings.Repeat("x", 120)
+	got := Warnf("warning: " + long + "\nshort\n")
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasSuffix(l, " ") {
+			t.Fatalf("line padded with trailing spaces: %q", l)
+		}
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Error("trailing newline lost")
 	}
 }

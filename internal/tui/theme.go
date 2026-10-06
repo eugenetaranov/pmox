@@ -55,18 +55,31 @@ func Steps(active string, steps ...string) string {
 // Subtitle renders a short line of muted text, e.g. a one-line description
 // under the wizard's phase tabs.
 func Subtitle(text string) string {
-	return lipgloss.NewStyle().Foreground(subtle).Render(text)
+	return renderLines(lipgloss.NewStyle().Foreground(subtle), text)
 }
 
 // Muted dims text with the same subtle color Subtitle uses — for a
 // picker option that's present but has nothing to act on (still
 // listed, just visually deprioritized against options that do).
 func Muted(text string) string {
-	return lipgloss.NewStyle().Foreground(subtle).Render(text)
+	return renderLines(lipgloss.NewStyle().Foreground(subtle), text)
 }
 
 // Warnf renders a warning/error line (e.g. stderr output) in a color that
 // stands out from normal text, so it isn't missed among plain prompt output.
 func Warnf(text string) string {
-	return lipgloss.NewStyle().Foreground(warn).Render(text)
+	return renderLines(lipgloss.NewStyle().Foreground(warn), text)
+}
+
+// renderLines styles each line of text separately. lipgloss's Render pads
+// every line of a multi-line string to the longest one, which turns a
+// long error followed by a newline into a screen-wide run of spaces.
+func renderLines(st lipgloss.Style, text string) string {
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = st.Render(l)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
