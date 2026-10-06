@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,11 +30,17 @@ type fakePVE struct {
 	failDownload bool
 	failConvert  bool
 	pveVersion   string
+	// mismatches is how many download tasks fail checksum verification
+	// before one succeeds.
+	mismatches int32
+	downloads  int32
 }
 
 func init() {
 	// Speed up waitStopped polling in tests.
 	pollInterval = 50 * time.Millisecond
+	// Never touch the network to resolve image redirects.
+	resolveFinalURLFn = func(_ context.Context, raw string) string { return raw }
 }
 
 func newFakePVE(t *testing.T) *fakePVE {
@@ -76,6 +83,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"data":{"version":"%s","release":"","repoid":""}}`, f.pveVersion)
 	case r.Method == "GET" && p == "/nodes/pve/storage":
 		fmt.Fprint(w, `{"data":[{"storage":"local","type":"dir","content":"iso,vztmpl,images","active":1,"enabled":1}]}`)
+	case r.Method == "GET" && p == "/nodes/pve/storage/local/content":
+		fmt.Fprint(w, `{"data":[
+			{"volid":"local:import/ubuntu-noble-cloudimg-amd64.qcow2"},
+			{"volid":"local:import/ubuntu-noble-20200101-cloudimg-amd64.qcow2"},
+			{"volid":"local:import/ubuntu-jammy-20200101-cloudimg-amd64.qcow2"},
+			{"volid":"local:import/someone-elses.qcow2"}]}`)
+	case r.Method == "DELETE" && strings.HasPrefix(p, "/nodes/pve/storage/local/content/"):
+		fmt.Fprint(w, `{"data":null}`)
 	case r.Method == "GET" && strings.HasPrefix(p, "/storage/"):
 		fmt.Fprint(w, `{"data":{"path":"/var/lib/vz"}}`)
 	case r.Method == "GET" && p == "/cluster/resources":
@@ -86,8 +101,16 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, `{"errors":{"url":"fetch failed"}}`)
 			return
 		}
+		if atomic.AddInt32(&f.downloads, 1) <= atomic.LoadInt32(&f.mismatches) {
+			fmt.Fprint(w, `{"data":"UPID:pve:download-bad"}`)
+			return
+		}
 		fmt.Fprint(w, `{"data":"UPID:pve:download"}`)
 	case r.Method == "GET" && strings.Contains(p, "/tasks/") && strings.HasSuffix(p, "/status"):
+		if strings.Contains(p, "UPID:pve:download-bad") {
+			fmt.Fprint(w, `{"data":{"status":"stopped","exitstatus":"checksum mismatch: got 'aa' != expect 'bb', aborting"}}`)
+			return
+		}
 		if strings.Contains(p, "UPID:pve:download") && f.failDownload {
 			fmt.Fprint(w, `{"data":{"status":"stopped","exitstatus":"fetch failed"}}`)
 			return
@@ -262,9 +285,106 @@ func TestRun_ConvertFailureLeavesVM(t *testing.T) {
 	if !strings.Contains(err.Error(), "pmox delete") {
 		t.Errorf("err = %v, want cleanup hint", err)
 	}
+	// The half-built VM must be left for inspection (image pruning is a
+	// different, unrelated delete).
 	for _, p := range f.paths() {
-		if strings.HasPrefix(p, "DELETE ") {
-			t.Errorf("unexpected DELETE: %q", p)
+		if strings.HasPrefix(p, "DELETE /nodes/pve/qemu") {
+			t.Errorf("unexpected VM delete: %q", p)
 		}
+	}
+}
+
+func countPrefix(paths []string, prefix string) int {
+	n := 0
+	for _, p := range paths {
+		if strings.HasPrefix(p, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestRun_ChecksumMismatchDeletesStaleFileAndRetries(t *testing.T) {
+	f := newFakePVE(t)
+	f.mismatches = 1
+	if _, err := Run(context.Background(), baseOpts(f)); err != nil {
+		t.Fatalf("Run: %v (a stale existing file should be replaced)", err)
+	}
+	if f.downloads != 2 {
+		t.Errorf("downloads = %d, want 2", f.downloads)
+	}
+	paths := f.paths()
+	first := -1
+	for i, p := range paths {
+		if strings.HasPrefix(p, "DELETE /nodes/pve/storage/local/content/local:import/ubuntu-") {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		t.Fatalf("stale image never deleted before retrying: %v", paths)
+	}
+}
+
+func TestRun_ChecksumMismatchTwiceExplains(t *testing.T) {
+	f := newFakePVE(t)
+	f.mismatches = 2
+	_, err := Run(context.Background(), baseOpts(f))
+	if err == nil || !strings.Contains(err.Error(), "fresh download still does not match") {
+		t.Fatalf("err = %v, want the fresh-download explanation", err)
+	}
+	if f.downloads != 2 {
+		t.Errorf("downloads = %d, want exactly one retry", f.downloads)
+	}
+	if countPrefix(f.paths(), "POST /nodes/pve/qemu") != 0 {
+		t.Error("CreateVM called after a failed download")
+	}
+}
+
+func TestRun_PrunesSupersededBuildsOnly(t *testing.T) {
+	f := newFakePVE(t)
+	if _, err := Run(context.Background(), baseOpts(f)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var deleted []string
+	for _, p := range f.paths() {
+		if strings.HasPrefix(p, "DELETE /nodes/pve/storage/local/content/") {
+			deleted = append(deleted, p[strings.LastIndex(p, "/")+1:])
+		}
+	}
+	for _, want := range []string{"ubuntu-noble-cloudimg-amd64.qcow2", "ubuntu-noble-20200101-cloudimg-amd64.qcow2"} {
+		if !slices.Contains(deleted, want) {
+			t.Errorf("superseded %s not pruned; deleted=%v", want, deleted)
+		}
+	}
+	for _, keep := range []string{"ubuntu-jammy-20200101-cloudimg-amd64.qcow2", "someone-elses.qcow2"} {
+		if slices.Contains(deleted, keep) {
+			t.Errorf("pruned unrelated %s", keep)
+		}
+	}
+}
+
+func TestImageFilenameIncludesBuild(t *testing.T) {
+	got := imageFilename(ImageEntry{Codename: "Questing Quokka", VersionDate: "20260927"})
+	if got != "ubuntu-questing-20260927-cloudimg-amd64.qcow2" {
+		t.Errorf("got %q", got)
+	}
+	if !isSupersededImage("ubuntu-questing-cloudimg-amd64.qcow2", "questing", got) ||
+		isSupersededImage(got, "questing", got) ||
+		isSupersededImage("ubuntu-questing-latest-cloudimg-amd64.qcow2", "questing", got) {
+		t.Error("isSupersededImage misclassifies")
+	}
+}
+
+func TestResolveFinalURLFollowsRedirect(t *testing.T) {
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer final.Close()
+	redir := httptest.NewServer(http.RedirectHandler(final.URL+"/img.img", http.StatusFound))
+	defer redir.Close()
+	if got := resolveFinalURL(context.Background(), redir.URL+"/server/img.img"); got != final.URL+"/img.img" {
+		t.Errorf("got %q, want the redirect target", got)
+	}
+	if got := resolveFinalURL(context.Background(), "http://127.0.0.1:1/unreachable"); got != "http://127.0.0.1:1/unreachable" {
+		t.Errorf("unreachable: got %q, want the input unchanged", got)
 	}
 }

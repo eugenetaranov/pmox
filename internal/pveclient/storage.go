@@ -44,6 +44,15 @@ func (c *Client) DeleteSnippet(ctx context.Context, node, storage, filename stri
 	return err
 }
 
+// DeleteImportFile removes <storage>:import/<filename> (e.g. a
+// downloaded cloud image) from node.
+func (c *Client) DeleteImportFile(ctx context.Context, node, storage, filename string) error {
+	st := url.PathEscape(storage)
+	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s:import/%s", url.PathEscape(node), st, st, url.PathEscape(filename))
+	_, err := c.request(ctx, "DELETE", path, nil)
+	return err
+}
+
 // ListStorageContent fetches the list of files present in a given
 // content category via GET /nodes/{node}/storage/{storage}/content?content=<filter>.
 func (c *Client) ListStorageContent(ctx context.Context, node, storage, contentFilter string) ([]StorageContent, error) {

@@ -7,7 +7,9 @@ package template
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -153,25 +155,47 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// cephfs/glusterfs), so we always route it through the snippets
 	// storage — which is already dir-capable by construction. The final
 	// VM disk still lands on targetStorage via cross-storage import-from.
-	imgFilename := stableImageFilename(img)
+	imgFilename := imageFilename(img)
+	// Canonical's catalogue paths (/server/releases/...) now answer with
+	// a redirect; hand PVE the final URL so its downloader never depends
+	// on following it.
+	imgURL := resolveFinalURLFn(ctx, img.URL)
 	downloadParams := map[string]string{
-		"url":                img.URL,
+		"url":                imgURL,
 		"content":            "import",
 		"filename":           imgFilename,
 		"checksum":           img.SHA256,
 		"checksum-algorithm": "sha256",
 	}
+	download := func() error {
+		upid, err := opts.Client.DownloadURL(ctx, opts.Node, snippetsStorage, downloadParams)
+		if err != nil {
+			return err
+		}
+		return opts.Client.WaitTask(ctx, opts.Node, upid, downloadTimeout)
+	}
 	opts.pStart(fmt.Sprintf("Downloading %s to %s (up to %s)", imgFilename, snippetsStorage, downloadTimeout))
-	upid, err := opts.Client.DownloadURL(ctx, opts.Node, snippetsStorage, downloadParams)
-	if err != nil {
+	err = download()
+	if isChecksumMismatch(err) {
+		// When a file of that name already exists, PVE only checksums it
+		// and never re-downloads — so a leftover partial or older file
+		// fails forever. Remove it and download fresh, once.
 		opts.pDone(err)
-		return nil, fmt.Errorf("download %s: %w", img.URL, err)
+		opts.pStart(fmt.Sprintf("Checksum mismatch — removing %s and downloading again", imgFilename))
+		if derr := opts.Client.DeleteImportFile(ctx, opts.Node, snippetsStorage, imgFilename); derr != nil && !errors.Is(derr, pveclient.ErrNotFound) {
+			opts.pDone(derr)
+			return nil, fmt.Errorf("remove mismatched %s:import/%s: %w", snippetsStorage, imgFilename, derr)
+		}
+		err = download()
 	}
-	err = opts.Client.WaitTask(ctx, opts.Node, upid, downloadTimeout)
 	opts.pDone(err)
-	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", img.URL, err)
+	if isChecksumMismatch(err) {
+		return nil, fmt.Errorf("download %s: a fresh download still does not match Ubuntu's published SHA-256 — the mirror may be serving a corrupt or stale copy; try again later or pick another release: %w", imgURL, err)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("download %s: %w", imgURL, err)
+	}
+	pruneOldImages(ctx, opts, snippetsStorage, img, imgFilename)
 
 	// Phase 8 — create the VM with import-from pointing at the
 	// just-downloaded image.
@@ -255,16 +279,27 @@ func checkVersion(ctx context.Context, c *pveclient.Client) error {
 	return nil
 }
 
-// stableImageFilename builds a reproducible, PVE-friendly filename
-// for the downloaded cloud image. Using a per-release stable name
-// means repeated runs of the same release share one download and
-// avoid storage bloat. Ubuntu's simplestreams `release_codename`
-// is sometimes two words ("questing quokka"), so we keep only the
-// first token. The `.qcow2` extension is required: PVE 9's
-// `content=import` storage plugin rejects anything outside
-// {ova,ovf,qcow2,raw,vmdk}, and Ubuntu cloud images are qcow2 under
-// the hood regardless of the upstream `.img` name.
-func stableImageFilename(img ImageEntry) string {
+// imageFilename builds a reproducible, PVE-friendly filename for the
+// downloaded cloud image: one per release *build*
+// (ubuntu-<codename>-<YYYYMMDD>-cloudimg-amd64.qcow2), so repeated runs
+// of the same build share one download while a re-published build never
+// collides with an older file — PVE checksums an existing file instead
+// of downloading, so a shared per-release name failed forever once
+// Ubuntu shipped a new build. Ubuntu's simplestreams `release_codename`
+// is sometimes two words ("questing quokka"), so we keep only the first
+// token. The `.qcow2` extension is required: PVE 9's `content=import`
+// storage plugin rejects anything outside {ova,ovf,qcow2,raw,vmdk}, and
+// Ubuntu cloud images are qcow2 under the hood regardless of the
+// upstream `.img` name.
+func imageFilename(img ImageEntry) string {
+	codename := imageCodename(img)
+	if img.VersionDate == "" {
+		return fmt.Sprintf("ubuntu-%s-cloudimg-amd64.qcow2", codename)
+	}
+	return fmt.Sprintf("ubuntu-%s-%s-cloudimg-amd64.qcow2", codename, img.VersionDate)
+}
+
+func imageCodename(img ImageEntry) string {
 	codename := strings.ToLower(img.Codename)
 	if i := strings.IndexAny(codename, " \t"); i >= 0 {
 		codename = codename[:i]
@@ -272,7 +307,47 @@ func stableImageFilename(img ImageEntry) string {
 	if codename == "" {
 		codename = "ubuntu"
 	}
-	return fmt.Sprintf("ubuntu-%s-cloudimg-amd64.qcow2", codename)
+	return codename
+}
+
+// isSupersededImage reports whether name is a pmox-downloaded image of
+// the same release as keep but a different build — including the
+// undated name older pmox versions used.
+func isSupersededImage(name, codename, keep string) bool {
+	if name == keep {
+		return false
+	}
+	if name == fmt.Sprintf("ubuntu-%s-cloudimg-amd64.qcow2", codename) {
+		return true
+	}
+	prefix, suffix := fmt.Sprintf("ubuntu-%s-", codename), "-cloudimg-amd64.qcow2"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	date := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if len(date) != 8 {
+		return false
+	}
+	_, err := strconv.Atoi(date)
+	return err == nil
+}
+
+// pruneOldImages best-effort removes older builds of the same release
+// from the import storage once a newer one is downloaded, so per-build
+// filenames don't accumulate. Failures are ignored: a leftover file only
+// costs disk space.
+func pruneOldImages(ctx context.Context, opts Options, storage string, img ImageEntry, keep string) {
+	items, err := opts.Client.ListStorageContent(ctx, opts.Node, storage, "import")
+	if err != nil {
+		return
+	}
+	codename := imageCodename(img)
+	for _, it := range items {
+		name := it.Volid[strings.LastIndex(it.Volid, "/")+1:]
+		if isSupersededImage(name, codename, keep) {
+			_ = opts.Client.DeleteImportFile(ctx, opts.Node, storage, name)
+		}
+	}
 }
 
 // buildCreateKV constructs the POST /qemu body used to create the
@@ -341,4 +416,34 @@ func waitStopped(ctx context.Context, c *pveclient.Client, node string, vmid int
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// isChecksumMismatch reports whether a PVE download task failed its
+// checksum verification.
+func isChecksumMismatch(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "checksum mismatch")
+}
+
+// resolveFinalURLFn is a seam so tests never touch the network.
+var resolveFinalURLFn = resolveFinalURL
+
+// resolveFinalURL follows redirects with a HEAD request and returns the
+// URL that finally answered; on any failure it returns raw unchanged and
+// leaves redirect handling to PVE.
+func resolveFinalURL(ctx context.Context, raw string) string {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, raw, nil)
+	if err != nil {
+		return raw
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return raw
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 400 || resp.Request == nil || resp.Request.URL == nil {
+		return raw
+	}
+	return resp.Request.URL.String()
 }
