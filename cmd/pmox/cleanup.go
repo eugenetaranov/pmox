@@ -68,7 +68,7 @@ func newCleanupCmd() *cobra.Command {
   api-token     server-side "pmox*" API tokens not used by any config entry
   template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
   vm            pmox-tagged VMs abandoned mid-launch (DESTRUCTIVE — deletes VMs)
-  context       configured server contexts (DESTRUCTIVE — like 'pmox config delete-context')
+  context       configured server contexts (DESTRUCTIVE — like 'pmox context delete')
   tack-config   the whole ~/.config/pmox/tack/ dir, playbooks and roles (DESTRUCTIVE)
 
 Dry-run by default. On a terminal it shows a checklist of every
@@ -100,7 +100,7 @@ the same opt-in, review-before-removing treatment as template/vm.
 
 Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
 are not covered here; they are cleared at removal time by
-'pmox init --remove' / 'pmox config delete-context'.`,
+'pmox context delete' / 'pmox context delete'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCleanup(cmd, cleanupOpts{
@@ -670,7 +670,7 @@ func sshKeyItems(cfg *config.Config) []cleanupItem {
 // for deliberate removal. Unlike every other category, these aren't
 // orphaned leftovers — they're pmox's active configuration — so this
 // exists purely so a full teardown has one place to do it; removal
-// (setup.RemoveServer) is exactly what 'pmox config delete-context'
+// (setup.RemoveServer) is exactly what 'pmox context delete'
 // already does: drop the config entry and clear its keychain secret.
 func contextItems(cfg *config.Config) []cleanupItem {
 	items := make([]cleanupItem, 0, len(cfg.Servers))

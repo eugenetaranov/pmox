@@ -323,7 +323,7 @@ func TestRun_MissingCloudInitFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing-file error")
 	}
-	if !strings.Contains(err.Error(), "pmox init --regen-cloud-init") {
+	if !strings.Contains(err.Error(), "pmox config cloud-init --regenerate") {
 		t.Errorf("err = %v, want regen hint", err)
 	}
 	if len(f.orderedPaths()) != 0 {

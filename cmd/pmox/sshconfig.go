@@ -35,7 +35,7 @@ func newSSHConfigCmd() *cobra.Command {
 block by default, or the full ssh command with --command.
 
 The config block can be appended to ~/.ssh/config, used directly with
-'ssh -F <(pmox ssh-config web1) <name>', or consumed by VS Code
+'ssh -F <(pmox vm ssh-config web1) <name>', or consumed by VS Code
 Remote-SSH, rsync, and Ansible. Use --output json for a structured form.
 
 The VM must be running — ssh-config never starts it. The default login
@@ -43,9 +43,9 @@ user is the cloud-init user ("pmox") and the identity key is derived
 from the configured SSH public key; override with --user / --identity.
 
 Examples:
-  pmox ssh-config web1
-  pmox ssh-config web1 --command
-  pmox ssh-config web1 --output json | jq -r .hostname`,
+  pmox vm ssh-config web1
+  pmox vm ssh-config web1 --command
+  pmox vm ssh-config web1 --output json | jq -r .hostname`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSSHConfig(cmd, args, f, asCommand)

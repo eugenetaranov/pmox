@@ -8,7 +8,7 @@
 pmox does not run on the Proxmox host. It runs on your laptop,
 talks to PVE over HTTPS for VM lifecycle, and over SSH/SFTP for
 cloud-init snippet upload. One command builds a template
-(`pmox create-template`); another launches a cloud-init-ready VM
+(`pmox template create`); another launches a cloud-init-ready VM
 and waits for it to be reachable (`pmox launch`). The rest of the
 command set — `shell`, `exec`, `cp`, `sync`, `mount`, `umount`,
 `list`, `info`, `start`, `stop`, `delete`, `clone` — exists so you
@@ -40,7 +40,7 @@ pmox needs three things on the cluster:
 3. A cloud-init-ready template with `qemu-guest-agent` installed and
    `agent: 1` set
 
-`pmox create-template` sets up item 3 for you. See
+`pmox template create` sets up item 3 for you. See
 [docs/pve-setup.md](./docs/pve-setup.md) for the full walkthrough
 including required privileges, SSH mode tradeoffs, and the most
 common first-launch errors.
@@ -49,7 +49,7 @@ common first-launch errors.
 
 ```
 pmox init                    # walks through API + SSH + defaults
-pmox create-template              # optional: bake an Ubuntu template
+pmox template create              # optional: bake an Ubuntu template
 pmox launch web1                  # clone, cloud-init, wait for SSH
 pmox shell web1                   # interactive SSH session
 pmox delete web1                  # stop + destroy + snippet cleanup
@@ -97,7 +97,7 @@ quit). Discovery steps with a single option (node/storage/bridge) are
 chosen automatically. The template step is the exception: on a
 terminal it always offers **"Build a new Ubuntu template now"**
 alongside any existing templates, even when there's only one — picking
-it runs the full `pmox create-template` build right there (once node
+it runs the full `pmox template create` build right there (once node
 SSH is set up, a few steps later) and sets the result as the default,
 instead of always requiring you to have one ready beforehand. At the
 SSH-key step you can **generate a new dedicated bootstrap key**, pick
@@ -113,46 +113,77 @@ the keyring (or the file fallback).
 
 ## Commands
 
-`pmox --help` groups these into the same three sections shown below.
-Every command is invoked flat — e.g. `pmox launch web1` — grouping is
-just for readability.
+Commands are grouped by what they act on: `pmox <noun> <verb>`, e.g.
+`pmox vm list` or `pmox template create`. The ones you type every day
+are also available directly at the top level. `pmox list` is exactly
+`pmox vm list`, with the same flags, output and exit codes. Running a
+noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 
-### VM lifecycle
+### Shortcuts (daily commands)
+
+| Command | Same as | Example |
+| --- | --- | --- |
+| `init` | first-run setup wizard | `pmox init` |
+| `launch` | `vm launch` | `pmox launch web1` |
+| `shell` | `vm shell` | `pmox shell web1` |
+| `list`, `ls` | `vm list` | `pmox ls` |
+| `info` | `vm info` | `pmox info web1` |
+| `start` / `stop` | `vm start` / `vm stop` | `pmox stop web1 web2` |
+| `delete`, `rm` | `vm delete` | `pmox rm web1` |
+| `exec` | `vm exec` | `pmox exec web1 -- uname -a` |
+| `cp` / `sync` | `vm cp` / `vm sync` | `pmox sync ./src/ web1:/opt/app/` |
+| `apply` | `vm apply` | `pmox apply web1` |
+| `mount` / `umount` | `mount create` / `mount delete` | `pmox mount ./src web1:/opt/app` |
+
+### `pmox vm`: VMs
+
+| Verb | Summary | Example |
+| --- | --- | --- |
+| `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox vm launch web1` |
+| `clone` | Clone an existing VM/template into a new VM (source optional → picker) | `pmox vm clone web1 web2` |
+| `list`, `ls` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox vm list` |
+| `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox vm info web1` |
+| `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
+| `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox vm stop web1 web2` |
+| `delete`, `rm` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox vm delete web1` |
+| `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox vm shell web1` |
+| `exec` | Run one command on a VM over SSH | `pmox vm exec web1 -- uname -a` |
+| `cp` | scp-based file copy to or from a VM | `pmox vm cp ./app.tar web1:/tmp/` |
+| `sync` | rsync-based sync to or from a VM | `pmox vm sync ./src/ web1:/opt/app/` |
+| `apply` | Run a tack playbook against a VM (reuses pmox's SSH) | `pmox vm apply web1` |
+| `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox vm ssh-config web1` |
+
+### Other resources
 
 | Command | Summary | Example |
 | --- | --- | --- |
-| `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox launch web1` |
-| `clone` | Clone an existing VM/template into a new VM (source optional → picker) | `pmox clone web1 web2` |
-| `start` | Start a VM and wait for the guest agent to report an IP | `pmox start web1` |
-| `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox stop web1 web2` |
-| `delete` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox delete web1 web2` |
-| `list` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox list` |
-| `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox info web1` |
+| `template create` / `list` | Build an Ubuntu cloud-image template (9000–9099) / list templates | `pmox template create` |
+| `context list` / `use` / `current` / `rename` / `delete` | Switch between configured Proxmox servers | `pmox context use prod` |
+| `config edit` / `path` / `cloud-init` | Edit a context; config file path; show or `--regenerate` the cloud-init template | `pmox config edit prod` |
+| `mount create` / `list` / `delete` | Continuous rsync of a local dir to a VM; list or stop background mounts | `pmox mount list` |
+| `key publish` / `unpublish` / `show` | Publish your SSH public key to the cluster's access registry | `pmox key publish` |
+| `access` / `grant` / `revoke` / `list` / `sync` | Share VMs with other people (interactive without a subcommand) | `pmox access grant web1 --to bob` |
 
-### Access & files
-
-| Command | Summary | Example |
-| --- | --- | --- |
-| `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox shell web1` |
-| `exec` | Run one command on a VM over SSH | `pmox exec web1 -- uname -a` |
-| `apply` | Run a tack playbook against a VM (reuses pmox's SSH) | `pmox apply web1` |
-| `cp` | scp-based file copy to or from a VM | `pmox cp ./app.tar web1:/tmp/` |
-| `sync` | rsync-based sync to or from a VM | `pmox sync ./src/ web1:/opt/app/` |
-| `mount` | Watch a local dir and continuously rsync it to a VM | `pmox mount ./src web1:/opt/app` |
-| `umount` | Stop background-mode mounts for a VM | `pmox umount web1` |
-| `ssh-config` | Print SSH connection details (config block or `--command`) | `pmox ssh-config web1` |
-| `key` | Publish your SSH public key to the cluster's access registry (`publish`/`unpublish`/`show`) | `pmox key publish` |
-| `access` | Share VMs with other people: interactive setup, or `grant`/`revoke`/`list`/`sync` | `pmox access grant web1 --to bob` |
-
-### Setup & diagnostics
+### Maintenance
 
 | Command | Summary | Example |
 | --- | --- | --- |
-| `init` | Interactive setup: API token, node SSH, defaults, cloud-init starter | `pmox init` |
-| `config` | Manage contexts (servers) kubectl-style (`get-contexts`/`use-context`/`current-context`/`rename-context`/`edit`/`delete-context`) | `pmox config use-context prod` |
-| `create-template` | Build an Ubuntu cloud-image template in the 9000–9099 range | `pmox create-template` |
 | `doctor` | Validate config + Proxmox connectivity; report if pmox is ready | `pmox doctor` |
 | `cleanup` | Report/remove pmox leftovers: orphaned snippets + stale local state | `pmox cleanup --apply` |
+
+### Renamed commands
+
+These old forms still work, but print a one-line note on stderr. Their
+output and exit codes are unchanged. They will be removed after at
+least two more minor releases:
+
+| Old | New |
+| --- | --- |
+| `pmox create-template` | `pmox template create` |
+| `pmox config get-contexts` / `use-context` / `current-context` / `rename-context` / `delete-context` | `pmox context list` / `use` / `current` / `rename` / `delete` |
+| `pmox init --list` / `--remove <url>` | `pmox context list` / `delete <name>` |
+| `pmox init --regen-cloud-init` | `pmox config cloud-init --regenerate` |
+| `pmox ssh-config`, `pmox clone` | `pmox vm ssh-config`, `pmox vm clone` |
 
 ### Interactive selection
 
@@ -166,7 +197,7 @@ shows an **arrow-key picker** when several do:
 - `clone <new-name>` — omit the source to pick it, or omit both source and new name and pmox asks for each in turn.
 - `exec [name|vmid]` — omit the remote command after `--` and pmox asks for it.
 - `mount` / `umount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, or for `mount`, omit both arguments and pmox asks for the local path and the remote target.
-- `config use-context` — omit the name to pick a context.
+- `context use` — omit the name to pick a context.
 
 Pickers are strictly non-obtrusive: an explicit arg always skips them,
 they only appear on a terminal, and they never draw in scripts, pipes,
@@ -225,7 +256,7 @@ with, is left alone.
 - **Stopped VMs** are reported as pending. `pmox access sync` brings
   them up to date later.
 - **New VMs** get the keys of everyone with all-VM access as soon as
-  `pmox launch` or `pmox clone` finishes.
+  `pmox launch` or `pmox vm clone` finishes.
 - **A rejected key:** when a VM doesn't accept your key, `shell`,
   `exec`, `cp`, `sync`, `mount` and `apply` say whether you still need
   to publish, need to be granted, or just need a sync. They exit with
@@ -251,7 +282,7 @@ scans every configured context, in selectable categories:
 - **known-host** — stale guest `known_hosts` pins (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped);
 - **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates` (or `--include template`).
 - **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include-vms` (or `--include vm`); review the listed VMs before removing.
-- **context** — a configured server context, exactly what `pmox config delete-context` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
+- **context** — a configured server context, exactly what `pmox context delete` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
 - **tack-config** — the entire `~/.config/pmox/tack/` directory: every playbook and role, hand-edited or scaffolded. Also active configuration, not cruft; opt-in only via the checklist or `--include tack-config`.
 
 On a terminal, `pmox cleanup` shows a **checklist of every category it
@@ -301,7 +332,7 @@ pmox doctor --output json | jq '.checks[] | select(.status=="fail")'
 ```
 
 Currently fixable: rebuilding or converting a broken/missing template,
-and enabling the guest agent. Rebuilding reuses `pmox create-template`'s
+and enabling the guest agent. Rebuilding reuses `pmox template create`'s
 own image/storage pickers, so it's only ever offered on a real
 terminal, even with `-y`. Without a terminal and without `-y`, nothing
 is ever offered or changed — doctor just reports, plus a one-line note
@@ -319,7 +350,7 @@ Add `--verbose` to also list passing checks.
 ## Cloud-init
 
 pmox uploads a cloud-init file as a Proxmox `snippets` volume on
-every `pmox launch` / `pmox clone` and points the new VM's
+every `pmox launch` / `pmox vm clone` and points the new VM's
 `cicustom` at it. The file on disk is the single source of truth
 for what ships to the VM — there is no built-in cloud-init mode.
 
@@ -363,7 +394,7 @@ resolved independently. `pmox init` picks (or offers to enable
 VM's `cicustom` value, so cleanup always targets the right pool.
 
 **Rotating the SSH key.** Edit `ssh_pubkey:` in `config.yaml` (or
-re-run `pmox init`), then run `pmox init --regen-cloud-init`
+re-run `pmox init`), then run `pmox config cloud-init --regenerate`
 to rewrite the cloud-init file with the new key.
 
 ## Post-create hooks
@@ -496,7 +527,7 @@ The file fallback is plaintext protected only by file permissions —
 Additional useful invocations:
 
 ```
-pmox init --regen-cloud-init    # rewrite the per-server cloud-init
+pmox config cloud-init --regenerate    # rewrite the per-server cloud-init
 ```
 
 `--regen-cloud-init` also lets you **pick a different SSH key** (it
@@ -515,12 +546,12 @@ short name. When you have more than one, switch between them instead of
 passing `--server` every time:
 
 ```
-pmox config get-contexts             # table of contexts; current marked *
-pmox config use-context prod         # switch the current context
-pmox config current-context          # print the current context
-pmox config rename-context 192.168.0.185 prod
+pmox context list             # table of contexts; current marked *
+pmox context use prod         # switch the current context
+pmox context current          # print the current context
+pmox context rename 192.168.0.185 prod
 pmox config edit prod                # change its defaults/access, no re-auth
-pmox config delete-context lab       # forget a context + its secrets
+pmox context delete lab       # forget a context + its secrets
 pmox config path                     # print the config file location
 ```
 
@@ -543,8 +574,8 @@ when more than one is configured.
 
 Each command resolves its target in this order: `--server` (name or URL)
 → `--context` (name) → `PMOX_SERVER` → `PMOX_CONTEXT` → the current
-context (`use-context`) → the only configured context → an interactive
-picker. (`pmox init --list` / `--remove` still work.)
+context (`pmox context use`) → the only configured context → an interactive
+picker. (`pmox context list` / `--remove` still work.)
 
 ## Environment variables
 
@@ -601,7 +632,7 @@ disable privilege separation on the token. See
 ### `pmox launch` times out waiting for an IP
 
 The template was built without `qemu-guest-agent`, or the VM has
-`agent: 0`. Rebuild the template with `pmox create-template` or fix
+`agent: 0`. Rebuild the template with `pmox template create` or fix
 the template by hand per
 [docs/pve-setup.md](./docs/pve-setup.md#4-template-preparation).
 

@@ -70,7 +70,7 @@ the problem is actually gone, instead of being told to re-run
 'pmox doctor' yourself. Pass -y (or PMOX_ASSUME_YES=1) to apply fixes
 without asking; that works without a terminal too (e.g. in CI), except
 for a fix that itself needs one (like rebuilding a template, which
-reuses 'pmox create-template's own image/storage pickers) — that one
+reuses 'pmox template create's own image/storage pickers) — that one
 is only ever offered on a real terminal. Pass --no-fix to see only the
 report. Without a terminal and without -y, nothing is ever offered or
 changed — same as a plain report.
@@ -390,7 +390,7 @@ func doctorConfigDefaults(cl *doctor.Checklist, srv *config.Server) {
 	if srv.Template != "" {
 		cl.Pass("config.default_template", "config", "default template: "+srv.Template)
 	} else {
-		cl.Fail("config.default_template", "config", "no default template configured", "run 'pmox create-template', then set it via 'pmox init'", exitcode.ExitNotFound)
+		cl.Fail("config.default_template", "config", "no default template configured", "run 'pmox template create', then set it via 'pmox init'", exitcode.ExitNotFound)
 	}
 	if srv.Storage != "" {
 		cl.Pass("config.default_storage", "config", "default storage: "+srv.Storage)
@@ -406,11 +406,11 @@ func doctorConfigDefaults(cl *doctor.Checklist, srv *config.Server) {
 func doctorCloudInit(cl *doctor.Checklist, serverURL string) {
 	path, err := config.CloudInitPath(serverURL)
 	if err != nil {
-		cl.Fail("config.cloud_init", "config", "could not resolve cloud-init path: "+err.Error(), "run 'pmox init --regen-cloud-init'", exitcode.ExitUserError)
+		cl.Fail("config.cloud_init", "config", "could not resolve cloud-init path: "+err.Error(), "run 'pmox config cloud-init --regenerate'", exitcode.ExitUserError)
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
-		cl.Fail("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox init --regen-cloud-init'", exitcode.ExitUserError)
+		cl.Fail("config.cloud_init", "config", "cloud-init file missing: "+path, "run 'pmox config cloud-init --regenerate'", exitcode.ExitUserError)
 		return
 	}
 	cl.Pass("config.cloud_init", "config", "cloud-init file present")
@@ -455,7 +455,7 @@ func doctorCloudInitKey(cl *doctor.Checklist, serverURL, sshPubkeyPath string) {
 	}
 	cl.Warn("config.cloud_init_key", "config",
 		"cloud-init authorizes a different key than ssh_pubkey — new VMs won't accept your configured key",
-		"run 'pmox init --regen-cloud-init' (then relaunch existing VMs), or point ssh_pubkey at the key the VMs already have")
+		"run 'pmox config cloud-init --regenerate' (then relaunch existing VMs), or point ssh_pubkey at the key the VMs already have")
 }
 
 func doctorTLSMode(ctx context.Context, cl *doctor.Checklist, resolved *server.Resolved, strict bool) {
@@ -680,13 +680,13 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 	// branches below (not found by name/id, or gone from the node) —
 	// rebuilding a fresh one and setting it as the new default resolves
 	// any of them the same way.
-	rebuildPrompt := "Run 'pmox create-template' now to build a fresh template " +
+	rebuildPrompt := "Run 'pmox template create' now to build a fresh template " +
 		"(downloads an Ubuntu image and bakes a VM — can take several " +
 		"minutes), and set it as the new default?"
 	rebuildFix := doctor.Fix{
 		Prompt: rebuildPrompt,
 		Run:    func(ctx context.Context) error { return fixRebuildTemplate(ctx, cmd, cfg, resolved, client) },
-		// Shells into 'pmox create-template's own image/storage
+		// Shells into 'pmox template create's own image/storage
 		// pickers, exactly like create-template itself requires a real
 		// TTY for — must never run via -y alone non-interactively, or
 		// it would hang or misbehave.
@@ -695,7 +695,7 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 
 	id, _, err := resolveTemplate(ctx, client, node, template)
 	if err != nil {
-		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
+		cl.Fail("template.resolves", "template", "template '"+template+"' not found on node '"+node+"'", "run 'pmox template create', or fix 'template' in config", exitcode.From(err))
 		cl.WithFix(rebuildFix)
 		return
 	}
@@ -706,11 +706,11 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 	tcfg, err := client.GetConfig(ctx, node, id)
 	if err != nil {
 		if errors.Is(err, pveclient.ErrNotFound) {
-			cl.Fail("template.resolves", "template", "template '"+template+"' (vmid "+fmt.Sprint(id)+") not found on node '"+node+"'", "run 'pmox create-template', or fix 'template' in config", exitcode.ExitNotFound)
+			cl.Fail("template.resolves", "template", "template '"+template+"' (vmid "+fmt.Sprint(id)+") not found on node '"+node+"'", "run 'pmox template create', or fix 'template' in config", exitcode.ExitNotFound)
 			cl.WithFix(rebuildFix)
 			return
 		}
-		cl.Fail("template.resolves", "template", "could not read template config: "+err.Error(), "run 'pmox create-template', or fix 'template' in config", exitcode.From(err))
+		cl.Fail("template.resolves", "template", "could not read template config: "+err.Error(), "run 'pmox template create', or fix 'template' in config", exitcode.From(err))
 		cl.WithFix(rebuildFix)
 		return
 	}
@@ -743,7 +743,7 @@ func doctorTemplate(ctx context.Context, cmd *cobra.Command, cl *doctor.Checklis
 }
 
 // fixRebuildTemplate runs the same interactive image/storage pickers as
-// 'pmox create-template', reusing the client/node/bridge doctor already
+// 'pmox template create', reusing the client/node/bridge doctor already
 // resolved, then records the freshly built template as the server's new
 // default (config.Server.Template) and saves it — closing the loop so
 // 'pmox doctor' and 'pmox launch' both work again without a manual edit.
@@ -812,7 +812,7 @@ func doctorNodeSSH(ctx context.Context, cl *doctor.Checklist, resolved *server.R
 		return
 	}
 	if !pinned {
-		cl.Fail("ssh.known_host", "ssh", "no pinned host key for "+host, "doctor won't prompt — run 'pmox init' (or 'pmox create-template') once to pin the node host key", exitcode.ExitUserError)
+		cl.Fail("ssh.known_host", "ssh", "no pinned host key for "+host, "doctor won't prompt — run 'pmox init' (or 'pmox template create') once to pin the node host key", exitcode.ExitUserError)
 		return
 	}
 	cl.Pass("ssh.known_host", "ssh", "node host key is pinned")

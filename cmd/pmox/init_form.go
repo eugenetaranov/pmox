@@ -78,7 +78,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 func runEditForm(ctx context.Context, p prompter, cfg *config.Config, canonical string) error {
 	srv, ok := cfg.Servers[canonical]
 	if !ok {
-		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, canonical)
+		return fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, canonical)
 	}
 	conn, err := establishEditConnectionFn(ctx, p, cfg, canonical)
 	if err != nil {
@@ -125,7 +125,7 @@ var errOverwriteDeclined = errors.New("overwrite declined")
 func establishEditConnection(ctx context.Context, p prompter, cfg *config.Config, canonical string) (resolvedConn, error) {
 	srv, ok := cfg.Servers[canonical]
 	if !ok {
-		return resolvedConn{}, fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, canonical)
+		return resolvedConn{}, fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, canonical)
 	}
 	secret, err := credstore.Get(canonical)
 	if err != nil {

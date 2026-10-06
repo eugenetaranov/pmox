@@ -36,7 +36,7 @@ type Fix struct {
 	Run func(ctx context.Context) error
 	// RequiresTTY marks a fix that itself needs an interactive terminal
 	// — e.g. it shells into its own picker flow (like
-	// 'pmox create-template's image/storage prompts). Such a fix must
+	// 'pmox template create's image/storage prompts). Such a fix must
 	// never run via -y/PMOX_ASSUME_YES alone without a real TTY,
 	// regardless of how the outer "run this? [y/N]" was satisfied, or
 	// it would hang or misbehave non-interactively.

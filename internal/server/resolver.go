@@ -7,7 +7,7 @@
 //  2. --context <name> flag
 //  3. PMOX_SERVER env var        (context name or URL)
 //  4. PMOX_CONTEXT env var       (context name)
-//  5. current context            (set via `pmox config use-context`)
+//  5. current context            (set via `pmox context use`)
 //  6. exactly one configured server  (obvious default)
 //  7. interactive picker             (TTY only; Options.Pick)
 //  8. error                          (non-TTY + ambiguous)
@@ -182,7 +182,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(url, srv, "PMOX_CONTEXT env var")
 	}
 
-	// Rung 5: current context (pmox config use-context). A stale current
+	// Rung 5: current context (pmox context use). A stale current
 	// context (naming a server that no longer exists) is ignored so the
 	// ladder falls through rather than hard-failing.
 	if cur := opts.Cfg.CurrentContext; cur != "" {
@@ -224,7 +224,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 	}
 
 	// Rung 8: non-TTY ambiguity
-	return nil, fmt.Errorf("%w: multiple contexts configured; pick one with --context/--server, PMOX_CONTEXT/PMOX_SERVER, or set one with 'pmox config use-context'\n%s",
+	return nil, fmt.Errorf("%w: multiple contexts configured; pick one with --context/--server, PMOX_CONTEXT/PMOX_SERVER, or set one with 'pmox context use'\n%s",
 		exitcode.ErrUserInput, candidateList(contextLabels(opts.Cfg)))
 }
 

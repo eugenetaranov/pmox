@@ -11,15 +11,9 @@ import (
 )
 
 func TestRunInitModesAreMutuallyExclusive(t *testing.T) {
-	origList, origRemove, origRegen := configureList, configureRemove, configureRegenCloudCI
-	t.Cleanup(func() {
-		configureList, configureRemove, configureRegenCloudCI = origList, origRemove, origRegen
-	})
-	configureList, configureRemove, configureRegenCloudCI = true, "https://pve.lan:8006", false
-
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	err := runInit(cmd, nil)
+	err := runInit(cmd, &initFlags{list: true, remove: "https://pve.lan:8006"})
 	if !errors.Is(err, exitcode.ErrUserInput) {
 		t.Fatalf("err = %v, want ErrUserInput", err)
 	}

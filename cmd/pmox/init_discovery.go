@@ -179,7 +179,7 @@ func templateChoice(tmpls []pveclient.Template, total int, err error, node, curr
 	}
 
 	if offerBuild {
-		c.opts = append(c.opts, huh.NewOption("+ Build a new Ubuntu template now (pmox create-template)", createTemplateSentinel))
+		c.opts = append(c.opts, huh.NewOption("+ Build a new Ubuntu template now (pmox template create)", createTemplateSentinel))
 		c.initial = createTemplateSentinel
 	}
 	haveCurrent := false

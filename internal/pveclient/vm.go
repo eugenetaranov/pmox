@@ -161,7 +161,7 @@ func (c *Client) GetConfig(ctx context.Context, node string, vmid int) (map[stri
 // ipconfig0, ...); vmid is added to the form automatically. Returns
 // the UPID of the asynchronous create task.
 //
-// Used by `pmox create-template` to create the template-build VM
+// Used by `pmox template create` to create the template-build VM
 // with a `scsi0=<storage>:0,import-from=<src-storage>:import/<file>`
 // disk spec — the import-from parameter (PVE 8.0+) turns a one-step
 // API call into the equivalent of `qm create` + `qm importdisk`.

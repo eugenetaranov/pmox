@@ -30,15 +30,15 @@ back to the configured defaults, same as launch.
 Cloud-init user-data comes from
 ~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
 writes on first run. Edit that file to customize the new VM, or run
-'pmox init --regen-cloud-init' to rewrite it.
+'pmox config cloud-init --regenerate' to rewrite it.
 
 --storage and --snippet-storage are independent: the first targets
 the new VM's disk, the second targets the cloud-init snippet upload
 (must support 'snippets'). --snippet-storage falls back to the
 configured snippet_storage, then to --storage with a warning.
 
-On a terminal, 'pmox clone' alone prompts for the source VM (the
-shared picker) and the new name; 'pmox clone web1' skips straight to
+On a terminal, 'pmox vm clone' alone prompts for the source VM (the
+shared picker) and the new name; 'pmox vm clone web1' skips straight to
 the new-name prompt.`,
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -78,7 +78,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	// call; non-interactively this is still a hard, immediate error.
 	if newName == "" {
 		if !tui.Interactive() || outputMode == "json" {
-			return fmt.Errorf("%w: missing new VM name — usage: pmox clone [source-name|vmid] <new-name> (example: pmox clone web1 web2)", exitcode.ErrUserInput)
+			return fmt.Errorf("%w: missing new VM name — usage: pmox vm clone [source-name|vmid] <new-name> (example: pmox vm clone web1 web2)", exitcode.ErrUserInput)
 		}
 		if newName, err = promptRequired(newStdPrompter(ctx), "New VM name: ", "a new VM name is required"); err != nil {
 			return err

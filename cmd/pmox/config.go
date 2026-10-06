@@ -13,41 +13,69 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
-// newConfigCmd is the `pmox config` group: kubectl-style management of
-// contexts (configured servers) and the current context. First-time
-// interactive setup stays under `pmox init`; this group is mostly the
-// scriptable surface for listing, switching, renaming, and removing
-// contexts, plus one interactive exception — `edit`, for changing an
-// already-configured context without redoing connection/token setup.
+// newConfigCmd is the `pmox config` group: editing what's configured.
+// Context management moved to 'pmox context'; the old kubectl-style
+// '*-context' verbs stay here as deprecated forms for the deprecation
+// window.
 func newConfigCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage contexts (configured servers) and the current context",
-		Long: `Manage pmox's contexts and which one commands target by default,
-kubectl-style. A context is a configured server (URL + token + defaults +
-node SSH), addressed by a short name.
+	g := nounGroup("config", "Edit configuration and the cloud-init template", `Edit pmox's configuration.
 
-First-time interactive setup lives in 'pmox init'. Use this group to
-list, switch, rename, remove, or edit contexts. Set a current context
-so multi-server setups don't need --context (or --server) every time.
+First-time setup lives in 'pmox init'; switching between servers in
+'pmox context'.
 
 Examples:
-  pmox config get-contexts
-  pmox config use-context prod
-  pmox config current-context
-  pmox config rename-context 192.168.0.185 prod
   pmox config edit prod
-  pmox config delete-context lab`,
-	}
-	cmd.AddCommand(
-		newGetContextsCmd(),
-		newUseContextCmd(),
-		newCurrentContextCmd(),
-		newRenameContextCmd(),
+  pmox config path
+  pmox config cloud-init --regenerate`,
 		newEditContextCmd(),
-		newDeleteContextCmd(),
 		newConfigPathCmd(),
+		newConfigCloudInitCmd(),
 	)
+	g.AddCommand(
+		deprecated(newGetContextsCmd(), "pmox context list"),
+		deprecated(newUseContextCmd(), "pmox context use"),
+		deprecated(newCurrentContextCmd(), "pmox context current"),
+		deprecated(newRenameContextCmd(), "pmox context rename"),
+		deprecated(newDeleteContextCmd(), "pmox context delete"),
+	)
+	return g
+}
+
+// newConfigCloudInitCmd shows, or with --regenerate rewrites, the
+// per-server cloud-init template (formerly 'pmox init --regen-cloud-init').
+func newConfigCloudInitCmd() *cobra.Command {
+	var regenerate bool
+	cmd := &cobra.Command{
+		Use:   "cloud-init",
+		Short: "Show or regenerate the per-server cloud-init template",
+		Long: `Print the path of the current server's cloud-init template. With
+--regenerate, rewrite it from the stored user and SSH public key (on a
+terminal you can pick a different key first); existing edits are lost,
+so it asks before overwriting.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if regenerate {
+				return runRegenCloudInit(newStdPrompter(cmd.Context()))
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			urls := cfg.ServerURLs()
+			if len(urls) == 0 {
+				return fmt.Errorf("%w: no server configured; run 'pmox init'", exitcode.ErrNotFound)
+			}
+			for _, u := range urls {
+				p, err := config.CloudInitPath(u)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", contextLabelFor(cfg, u), p)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&regenerate, "regenerate", false, "rewrite the template from the stored user and SSH key")
 	return cmd
 }
 
@@ -100,7 +128,7 @@ func runGetContexts(cmd *cobra.Command) error {
 	}
 	_ = tw.Flush()
 	if cfg.CurrentContext == "" && len(contexts) > 1 {
-		fmt.Fprintln(w, "\nNo current context — set one with 'pmox config use-context <name>'.")
+		fmt.Fprintln(w, "\nNo current context — set one with 'pmox context use <name>'.")
 	}
 	return nil
 }
@@ -137,7 +165,7 @@ func runUseContext(cmd *cobra.Command, name string) error {
 	}
 	c, ok := cfg.ContextByName(name)
 	if !ok {
-		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, name)
+		return fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, name)
 	}
 	// Materialize the (possibly host-derived) name onto the server so the
 	// current-context reference stays stable if other servers change.
@@ -179,7 +207,7 @@ func runCurrentContext(cmd *cobra.Command) error {
 	case 1:
 		fmt.Fprintf(w, "%s (only context; used automatically)\n", contexts[0].Name)
 	default:
-		fmt.Fprintf(w, "no current context set (%d configured) — run 'pmox config use-context <name>'\n", len(contexts))
+		fmt.Fprintf(w, "no current context set (%d configured) — run 'pmox context use <name>'\n", len(contexts))
 	}
 	return nil
 }
@@ -188,7 +216,7 @@ func newRenameContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "rename-context <old-name> <new-name>",
 		Short: "Give a context a new name",
-		Args:  exactArgs(2, "pmox config rename-context <old-name> <new-name>", "pmox config rename-context 192.168.0.185 prod"),
+		Args:  exactArgs(2, "pmox context rename <old-name> <new-name>", "pmox context rename 192.168.0.185 prod"),
 		RunE:  func(cmd *cobra.Command, args []string) error { return runRenameContext(cmd, args[0], args[1]) },
 	}
 }
@@ -204,7 +232,7 @@ func runRenameContext(cmd *cobra.Command, oldName, newName string) error {
 	}
 	c, ok := cfg.ContextByName(oldName)
 	if !ok {
-		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, oldName)
+		return fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, oldName)
 	}
 	if newName != c.Name {
 		if _, exists := cfg.ContextByName(newName); exists {
@@ -227,7 +255,7 @@ func newDeleteContextCmd() *cobra.Command {
 		Use:     "delete-context <name>",
 		Aliases: []string{"remove", "rm"},
 		Short:   "Remove a context (server) and its stored secrets",
-		Args:    exactArgs(1, "pmox config delete-context <name>", "pmox config delete-context lab"),
+		Args:    exactArgs(1, "pmox context delete <name>", "pmox context delete lab"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cfg, err := config.Load()
@@ -236,7 +264,7 @@ func newDeleteContextCmd() *cobra.Command {
 			}
 			c, ok := cfg.ContextByName(args[0])
 			if !ok {
-				return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, args[0])
+				return fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, args[0])
 			}
 			return runRemove(newStdPrompter(ctx), c.URL)
 		},
@@ -287,7 +315,7 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 	}
 	c, ok := cfg.ContextByName(name)
 	if !ok {
-		return fmt.Errorf("%w: no context named %q (see 'pmox config get-contexts')", exitcode.ErrNotFound, name)
+		return fmt.Errorf("%w: no context named %q (see 'pmox context list')", exitcode.ErrNotFound, name)
 	}
 	ctx := cmd.Context()
 	return runEditForm(ctx, newStdPrompter(ctx), cfg, c.URL)

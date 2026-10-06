@@ -112,18 +112,15 @@ func runRootMenu(cmd *cobra.Command) error {
 	return root.ExecuteContext(cmd.Context())
 }
 
-// rootMenuOptions lists root's runnable subcommands in the same order
-// they appear under `pmox --help`: grouped (lifecycle, then access, then
-// setup — see addGrouped), then ungrouped commands (version) last.
-// cobra keeps Commands() sorted alphabetically by name, so each group's
-// commands come out alphabetically too, matching --help exactly. The
-// hidden 'configure' shim and cobra's own 'help'/'completion' commands
-// are noise in a picker and are skipped.
+// rootMenuOptions lists root's commands in the same order as
+// `pmox --help`: Get started, Common, Resources (noun groups — picking
+// one opens that group's own picker), then Maintenance. Hidden and
+// deprecated commands, and cobra's help/completion, are skipped.
 func rootMenuOptions(root *cobra.Command) []huh.Option[string] {
-	groupOrder := []string{groupLifecycle, groupAccess, groupSetup, ""}
+	groupOrder := []string{groupStart, groupCommon, groupResources, groupMaintenance, ""}
 	byGroup := make(map[string][]*cobra.Command, len(groupOrder))
 	for _, c := range root.Commands() {
-		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+		if !c.IsAvailableCommand() || c.Name() == "help" || c.Name() == "completion" {
 			continue
 		}
 		byGroup[c.GroupID] = append(byGroup[c.GroupID], c)
@@ -131,18 +128,24 @@ func rootMenuOptions(root *cobra.Command) []huh.Option[string] {
 	var opts []huh.Option[string]
 	for _, g := range groupOrder {
 		for _, c := range byGroup[g] {
-			opts = append(opts, huh.NewOption(fmt.Sprintf("%-15s %s", c.Name(), c.Short), c.Name()))
+			label := c.Short
+			if g == groupResources {
+				label += "  ›"
+			}
+			opts = append(opts, huh.NewOption(fmt.Sprintf("%-15s %s", c.Name(), label), c.Name()))
 		}
 	}
 	return opts
 }
 
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print the pmox version",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("pmox version %s (commit: %s, built: %s)\n", version, commit, date)
-	},
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the pmox version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("pmox version %s (commit: %s, built: %s)\n", version, commit, date)
+		},
+	}
 }
 
 func init() {
@@ -157,34 +160,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sshInsecure, "ssh-insecure", envBool("PMOX_SSH_INSECURE"), "Skip SSH host-key verification (env: PMOX_SSH_INSECURE)")
 	rootCmd.PersistentFlags().BoolVar(&noInput, "no-input", false, "Never prompt; error instead of showing an interactive picker (env: PMOX_NO_INPUT)")
 
-	// Group commands so `pmox --help` reads as labeled sections instead of
-	// one flat wall. Grouping is help-presentation only — every command is
-	// still invoked exactly as before (e.g. `pmox launch web1`).
-	rootCmd.AddGroup(
-		&cobra.Group{ID: groupLifecycle, Title: "VM lifecycle:"},
-		&cobra.Group{ID: groupAccess, Title: "Access & files:"},
-		&cobra.Group{ID: groupSetup, Title: "Setup & diagnostics:"},
-	)
-
-	addGrouped(groupLifecycle,
-		newLaunchCmd(), newCloneCmd(), newStartCmd(), newStopCmd(),
-		newDeleteCmd(), newListCmd(), newInfoCmd(),
-	)
-	addGrouped(groupAccess,
-		newShellCmd(), newExecCmd(), newApplyCmd(), newCpCmd(), newSyncCmd(),
-		newMountCmd(), newUmountCmd(), newSSHConfigCmd(), newKeyCmd(), newAccessCmd(),
-	)
-	// initCmd is declared in init.go; register + group it here so
-	// all command registration lives in one place.
-	addGrouped(groupSetup, initCmd, newConfigCmd(), newCreateTemplateCmd(), newDoctorCmd(), newCleanupCmd())
-
-	// version stays ungrouped and lands under cobra's "Additional Commands"
-	// alongside the built-in help/completion.
-	rootCmd.AddCommand(versionCmd)
-
-	// 'configure' was renamed to 'init'. Keep a hidden stub that points
-	// users at the new name instead of cobra's generic "unknown command".
-	rootCmd.AddCommand(deprecatedConfigureCmd())
+	registerCommands(rootCmd)
 }
 
 // deprecatedConfigureCmd is a hidden placeholder for the old 'configure'
@@ -197,22 +173,6 @@ func deprecatedConfigureCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return fmt.Errorf("%w: 'pmox configure' was renamed to 'pmox init'", exitcode.ErrUserInput)
 		},
-	}
-}
-
-const (
-	groupLifecycle = "lifecycle"
-	groupAccess    = "access"
-	groupSetup     = "setup"
-)
-
-// addGrouped assigns a help GroupID to each command and registers it on
-// the root. GroupID affects only how `--help` is sectioned, not how the
-// command is invoked.
-func addGrouped(group string, cmds ...*cobra.Command) {
-	for _, c := range cmds {
-		c.GroupID = group
-		rootCmd.AddCommand(c)
 	}
 }
 

@@ -83,7 +83,7 @@ The cloud-init user-data is read from
 ~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
 writes on first run. Edit that file to customize packages, users,
 runcmd, or anything else cloud-init supports. To regenerate a fresh
-default, run 'pmox init --regen-cloud-init'.
+default, run 'pmox config cloud-init --regenerate'.
 
 The VM disk and the cloud-init snippet may live on different storage
 pools. --storage targets the disk; --snippet-storage targets the

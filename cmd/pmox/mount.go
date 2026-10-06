@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -120,6 +121,77 @@ when it has no <name|vmid>: prefix, same as when typed explicitly).`,
 	cmd.Flags().BoolVar(&f.noDelete, "no-delete", false, "disable --delete from rsync")
 	cmd.Flags().StringArrayVarP(&f.excludes, "exclude", "x", nil, "rsync exclude pattern (replaces defaults; repeatable)")
 	return cmd
+}
+
+// newMountGroupCmd is the 'pmox mount' noun. It is itself the old
+// 'pmox mount <local> <vm>:<path>' command (so that shape keeps working
+// as shorthand for 'mount create'), with create / list / delete verbs.
+// A local directory literally named like a verb needs the ./ form.
+func newMountGroupCmd() *cobra.Command {
+	g := newMountCmd()
+	g.Short = "Continuously sync a local directory to a VM (create, list, delete)"
+	g.Long += `
+
+Subcommands: 'pmox mount create' (same as above), 'pmox mount list'
+(running background mounts), 'pmox mount delete' (stop them; also
+'pmox umount'). A local directory literally named create, list, ls,
+delete or rm must be given as ./<name>.`
+	g.AddCommand(
+		rename(newMountCmd(), "create"),
+		newMountListCmd(),
+		rename(newUmountCmd(), "delete", "rm"),
+	)
+	return g
+}
+
+// newMountListCmd lists running background mounts.
+func newMountListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List running background mounts",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dir, err := mount.StateDir()
+			if err != nil {
+				return err
+			}
+			recs, err := mount.List(dir)
+			if err != nil {
+				return err
+			}
+			type row struct {
+				VM         string `json:"vm"`
+				RemotePath string `json:"remote_path"`
+				LocalPath  string `json:"local_path"`
+				PID        int    `json:"pid"`
+				Running    bool   `json:"running"`
+				Log        string `json:"log"`
+			}
+			rows := []row{}
+			for _, r := range recs {
+				rows = append(rows, row{r.VMName, r.RemotePath, r.LocalPath, r.PID, r.Live(), r.LogPath})
+			}
+			w := cmd.OutOrStdout()
+			if outputMode == "json" {
+				return printJSON(w, rows)
+			}
+			if len(rows) == 0 {
+				fmt.Fprintln(w, "no background mounts")
+				return nil
+			}
+			tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+			fmt.Fprintln(tw, "VM\tREMOTE\tLOCAL\tPID\tSTATE")
+			for _, r := range rows {
+				state := "running"
+				if !r.Running {
+					state = "stale (run 'pmox mount delete' to clear)"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", r.VM, r.RemotePath, r.LocalPath, r.PID, state)
+			}
+			return tw.Flush()
+		},
+	}
 }
 
 func newUmountCmd() *cobra.Command {

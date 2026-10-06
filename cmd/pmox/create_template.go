@@ -65,7 +65,7 @@ func runCreateTemplate(cmd *cobra.Command, f *createTemplateFlags) error {
 	// Enforce interactive TTY — the flow has picker prompts that
 	// cannot be driven from a pipe or file.
 	if !isTTYFunc(os.Stdin.Fd()) {
-		return fmt.Errorf("%w: interactive TTY required for pmox create-template", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: interactive TTY required for pmox template create", exitcode.ErrUserInput)
 	}
 
 	client, resolved, err := buildClient(ctx, cmd)
@@ -162,7 +162,7 @@ func runCreateTemplateWithClient(ctx context.Context, cmd *cobra.Command, client
 var templateRunFn = template.Run
 
 // buildTemplateOptions assembles the template.Options shared by
-// 'pmox create-template' and 'pmox doctor --fix's template-rebuild fix:
+// 'pmox template create' and 'pmox doctor --fix's template-rebuild fix:
 // interactive pickers for image/target storage/snippets storage, wired
 // to the given client/node/bridge/wait/upload.
 func buildTemplateOptions(cmd *cobra.Command, client *pveclient.Client, node, bridge string, wait time.Duration, upload func(context.Context, string, string, []byte) error) template.Options {

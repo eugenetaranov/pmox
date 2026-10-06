@@ -12,20 +12,25 @@ import (
 	"github.com/eugenetaranov/pmox/internal/setup"
 )
 
-var (
-	configureList         bool
-	configureRemove       string
-	configureRegenCloudCI bool
-)
+// initFlags holds 'pmox init's flags. --list / --remove /
+// --regen-cloud-init are deprecated modes kept working for the
+// deprecation window (see 'pmox context' and 'pmox config cloud-init').
+type initFlags struct {
+	list       bool
+	remove     string
+	regenCloud bool
+}
 
-var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize pmox: configure a Proxmox VE server",
-	Long: `Interactively configure credentials and defaults for a Proxmox VE server.
+func newInitCmd() *cobra.Command {
+	f := &initFlags{}
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Set up a Proxmox connection (interactive wizard)",
+		Long: `Interactively configure credentials and defaults for a Proxmox VE server.
 
 Walks through API URL, token, credential validation against /version, and
 auto-discovery of node, template, storage, snippet storage, and bridge,
-then collects SSH credentials for the PVE node (used by 'pmox create-template'
+then collects SSH credentials for the PVE node (used by 'pmox template create'
 to upload cloud-init snippets via SFTP) and validates them with a live
 handshake. Snippet storage is picked separately from VM disk storage —
 if no storage on the cluster has the 'snippets' content type, configure
@@ -46,24 +51,26 @@ Prompts:
   Node SSH secret   password or key passphrase, stored in the OS keyring.
                     First-time connections prompt to pin the host key into
                     ~/.config/pmox/known_hosts (bypass with --ssh-insecure).`,
-	RunE: runInit,
+		RunE: func(cmd *cobra.Command, args []string) error { return runInit(cmd, f) },
+	}
+	cmd.Flags().BoolVar(&f.list, "list", false, "List configured server URLs")
+	cmd.Flags().StringVar(&f.remove, "remove", "", "Remove a configured server by URL")
+	cmd.Flags().BoolVar(&f.regenCloud, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
+	// Deprecated modes: hidden from help, still working, with a note on
+	// stderr (see runInit).
+	for _, name := range []string{"list", "remove", "regen-cloud-init"} {
+		_ = cmd.Flags().MarkHidden(name)
+	}
+	return cmd
 }
 
-func init() {
-	initCmd.Flags().BoolVar(&configureList, "list", false, "List configured server URLs")
-	initCmd.Flags().StringVar(&configureRemove, "remove", "", "Remove a configured server by URL")
-	initCmd.Flags().BoolVar(&configureRegenCloudCI, "regen-cloud-init", false, "Rewrite the per-server cloud-init template with stored user+pubkey")
-	// Registration (and help grouping) happens in main.go's init so all
-	// command wiring lives in one place.
-}
-
-func runInit(cmd *cobra.Command, args []string) error {
+func runInit(cmd *cobra.Command, f *initFlags) error {
 	ctx := cmd.Context()
 	// Checked here rather than with cobra's MarkFlagsMutuallyExclusive:
 	// cobra validates flag groups before RunE, so its error can't carry
 	// exitcode.ErrUserInput.
 	modes := 0
-	for _, set := range []bool{configureList, configureRemove != "", configureRegenCloudCI} {
+	for _, set := range []bool{f.list, f.remove != "", f.regenCloud} {
 		if set {
 			modes++
 		}
@@ -71,13 +78,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if modes > 1 {
 		return fmt.Errorf("%w: --list, --remove, and --regen-cloud-init are mutually exclusive", exitcode.ErrUserInput)
 	}
-	if configureList {
+	deprecatedNote := func(old, replacement string) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: 'pmox init %s' is deprecated and will be removed — use '%s'\n", old, replacement)
+	}
+	if f.list {
+		deprecatedNote("--list", "pmox context list")
 		return runList(newStdPrompter(ctx))
 	}
-	if configureRemove != "" {
-		return runRemove(newStdPrompter(ctx), configureRemove)
+	if f.remove != "" {
+		deprecatedNote("--remove", "pmox context delete <name>")
+		return runRemove(newStdPrompter(ctx), f.remove)
 	}
-	if configureRegenCloudCI {
+	if f.regenCloud {
+		deprecatedNote("--regen-cloud-init", "pmox config cloud-init --regenerate")
 		return runRegenCloudInit(newStdPrompter(ctx))
 	}
 	return runInteractive(ctx, newStdPrompter(ctx))

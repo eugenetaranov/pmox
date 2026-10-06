@@ -1,4 +1,4 @@
-// Package template implements `pmox create-template`: the
+// Package template implements `pmox template create`: the
 // simplestreams catalogue fetch, interactive picker plumbing,
 // cloud-init bake snippet, VMID allocation in the 9000–9099 range,
 // and the top-to-bottom state machine that turns an Ubuntu cloud

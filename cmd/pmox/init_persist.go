@@ -53,7 +53,7 @@ func persistServer(ctx context.Context, p prompter, cfg *config.Config, in persi
 	if in.template == createTemplateSentinel {
 		if err := offerBuiltTemplate(ctx, p, in, srv); err != nil {
 			p.Errf("warning: building the template failed: %v\n", err)
-			p.Errf("no default template is set — run 'pmox create-template' when ready, then set one with a fresh 'pmox init' (or edit the config file's 'template:' field).\n")
+			p.Errf("no default template is set — run 'pmox template create' when ready, then set one with a fresh 'pmox init' (or edit the config file's 'template:' field).\n")
 		}
 	}
 	return nil

@@ -2,7 +2,7 @@
 
 pmox talks to a Proxmox VE cluster via the PVE HTTP API (for VM
 operations) and via SSH/SFTP (for cloud-init snippet upload, used by
-`pmox create-template` and every `pmox launch` / `pmox clone`). This
+`pmox template create` and every `pmox launch` / `pmox vm clone`). This
 page walks through preparing a PVE host so that `pmox init`
 succeeds on the first try.
 
@@ -53,7 +53,7 @@ grant it the following privileges:
 | `VM.PowerMgmt`            | `/vms`                      | start and stop VMs                                           |
 | `Datastore.Audit`         | `/storage`                  | list storage pools                                           |
 | `Datastore.AllocateSpace` | `/storage/<pool>`           | allocate a disk on the target pool                           |
-| `Datastore.Allocate`      | `/storage/<pool>`           | `pmox create-template` enabling `snippets` content on a pool |
+| `Datastore.Allocate`      | `/storage/<pool>`           | `pmox template create` enabling `snippets` content on a pool |
 | `SDN.Use`                 | `/sdn/zones/localnetwork`   | attach NICs to bridges                                       |
 
 Create the role and assign it:
@@ -124,7 +124,7 @@ pmox needs three things:
    pmox delivers the per-server cloud-init file; without it, the
    `cicustom` volume points at nothing.
 
-The easiest path is to let `pmox create-template` do all three for
+The easiest path is to let `pmox template create` do all three for
 you — it downloads an Ubuntu cloud image, bakes `qemu-guest-agent`
 in via a one-shot cloud-init run, and converts the result into a
 template in the 9000–9099 VMID range. Requires PVE 8.0+ and an
