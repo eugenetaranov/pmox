@@ -83,6 +83,9 @@ type Options struct {
 	// tests can run without a live SSH endpoint. Production code
 	// leaves it nil.
 	WaitForSSHFn func(ctx context.Context, ip string, timeout time.Duration) error
+
+	// WaitForBootFn is a test seam over vmwait.WaitForBoot (nil = real).
+	WaitForBootFn func(ctx context.Context, node string, vmid int, timeout time.Duration) error
 	// PollInterval overrides vmwait.DefaultPollInterval for the
 	// wait-IP / wait-SSH phases. Test seam; production leaves it zero.
 	PollInterval time.Duration
@@ -257,6 +260,23 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		opts.pDone(err)
 		if err != nil {
 			return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
+		}
+
+		// Phase 8b — sshd answers before systemd lets anyone log in
+		// (/run/nologin: "System is booting up…"); wait for boot to
+		// finish so the first 'pmox shell' just works. Best-effort.
+		opts.pStart("Waiting for boot to finish")
+		bootFn := opts.WaitForBootFn
+		if bootFn == nil {
+			bootFn = func(ctx context.Context, node string, vmid int, timeout time.Duration) error {
+				_, err := vmwait.WaitForBoot(ctx, opts.Client, node, vmid, timeout, waitOpts...)
+				return err
+			}
+		}
+		berr := bootFn(ctx, opts.Node, vmid, min(time.Until(overallDeadline), 3*time.Minute))
+		opts.pDone(nil)
+		if berr != nil && opts.Stderr != nil {
+			fmt.Fprintf(opts.Stderr, "warning: vm %d is still booting; logins may be refused for a little longer\n", vmid)
 		}
 	}
 

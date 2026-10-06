@@ -157,6 +157,7 @@ func baseOpts(t *testing.T, c *pveclient.Client) (Options, *stubUpload) {
 		Storage:        "local-lvm",
 		SnippetStorage: "local-lvm",
 		Wait:           5 * time.Second,
+		WaitForBootFn:  func(context.Context, string, int, time.Duration) error { return nil },
 		NoWaitSSH:      true,
 		CloudInitPath:  writeCI(t),
 		UploadSnippet:  stub.fn,
@@ -648,5 +649,20 @@ func TestRun_HookUsesOptionWriters(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "hook-err") {
 		t.Errorf("stderr = %q, want hook-err", stderr.String())
+	}
+}
+
+func TestRun_WaitsForBootAfterSSH(t *testing.T) {
+	f := newLaunchFake(t)
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	var order []string
+	opts.WaitForSSHFn = func(context.Context, string, time.Duration) error { order = append(order, "ssh"); return nil }
+	opts.WaitForBootFn = func(context.Context, string, int, time.Duration) error { order = append(order, "boot"); return nil }
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Join(order, ",") != "ssh,boot" {
+		t.Errorf("order = %v, want ssh then boot", order)
 	}
 }

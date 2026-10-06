@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -249,6 +250,8 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 		return nil, err
 	}
 
+	waitForLoginsFn(ctx, cmd.ErrOrStderr(), client, ref)
+
 	user, key, note, err := resolveGuestIdentity(serverURL, ref.VMID, f.user, f.identity, srv)
 	if err != nil {
 		return nil, err
@@ -384,5 +387,22 @@ func guestHostKeyOpts() []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=" + path,
+	}
+}
+
+// waitForLoginsFn is a seam: tests never touch a guest agent.
+var waitForLoginsFn = waitForLogins
+
+// waitForLogins holds an SSH command back while the VM is still booting
+// (systemd's /run/nologin makes sshd refuse logins with "System is
+// booting up"), with a note so the pause isn't mysterious. Best-effort:
+// a guest whose agent can't answer is connected to right away.
+func waitForLogins(ctx context.Context, stderr io.Writer, client *pveclient.Client, ref *vm.Ref) {
+	if _, _, err := client.AgentFileRead(ctx, ref.Node, ref.VMID, "/run/nologin"); err != nil {
+		return // gone (booted) or can't tell
+	}
+	fmt.Fprintf(stderr, "%s is still booting — waiting for logins to open…\n", ref.Name)
+	if _, err := vmwait.WaitForBoot(ctx, client, ref.Node, ref.VMID, 2*time.Minute); err != nil {
+		fmt.Fprintf(stderr, "%s\n", tui.Warnf(fmt.Sprintf("warning: %s is still booting; trying anyway", ref.Name)))
 	}
 }

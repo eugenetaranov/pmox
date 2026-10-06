@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"sync"
+	"text/tabwriter"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
