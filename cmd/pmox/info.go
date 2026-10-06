@@ -14,7 +14,7 @@ import (
 func newInfoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info [name|vmid]",
-		Short: "Show detailed information about a single VM",
+		Short: "Show details of a VM",
 		Long: `Print the configured and runtime state of a single VM: cpu, memory,
 primary disk, status, uptime, tags, and guest-agent-reported network
 interfaces. Use --output json for machine-readable output.

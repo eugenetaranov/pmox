@@ -88,6 +88,15 @@ the node's SSH host key, enabling snippets) appear as dialogs. **Esc**
 goes back a page, **Ctrl-C** quits without saving. Piped, `--no-input`
 and CI runs fall back to plain prompts.
 
+Already set up? `pmox init` won't start over. It asks whether to change
+a configured server (`pmox config edit`), add another one
+(`pmox context add`) or remove one (`pmox context delete`).
+
+`pmox launch` on a terminal with no default template settles one before
+asking anything else. It offers the cluster's templates, or builds a new
+one right away if there are none (Ctrl-C cancels), and saves the choice
+as the default.
+
 The URL prompt is forgiving — type a bare IP (`10.0.0.5`), a hostname
 (`pve.lan`), `host:port`, or paste the web-UI address; the scheme
 (`https`) and port (`8006`) are filled in for you. configure probes the
@@ -123,7 +132,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 
 | Command | Same as | Example |
 | --- | --- | --- |
-| `init` | first-run setup wizard | `pmox init` |
+| `init` | first-run setup wizard (on a configured machine: edit, add or remove a server) | `pmox init` |
 | `launch` | `vm launch` | `pmox launch web1` |
 | `shell` | `vm shell` | `pmox shell web1` |
 | `list`, `ls` | `vm list` | `pmox ls` |
@@ -158,7 +167,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | Command | Summary | Example |
 | --- | --- | --- |
 | `template create` / `list` | Build an Ubuntu cloud-image template (9000–9099) / list templates | `pmox template create` |
-| `context list` / `use` / `current` / `rename` / `delete` | Switch between configured Proxmox servers | `pmox context use prod` |
+| `context list` / `add` / `use` / `current` / `rename` / `delete` | Add and switch between Proxmox servers | `pmox context add` |
 | `config edit` / `path` / `cloud-init` | Edit a context; config file path; show or `--regenerate` the cloud-init template | `pmox config edit prod` |
 | `mount create` / `list` / `delete` | Continuous rsync of a local dir to a VM; list or stop background mounts | `pmox mount list` |
 | `key publish` / `unpublish` / `show` | Publish your SSH public key to the cluster's access registry | `pmox key publish` |

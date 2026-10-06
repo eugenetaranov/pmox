@@ -164,7 +164,7 @@ func newCpCmd() *cobra.Command {
 	var recursive bool
 	cmd := &cobra.Command{
 		Use:   "cp <source> <destination>",
-		Short: "Copy files between local host and a VM via scp",
+		Short: "Copy files to or from a VM",
 		Long: `Copy files between the local host and a pmox-managed VM using scp.
 Exactly one of source or destination must use <name>:<path> syntax
 to identify the remote side.
@@ -241,7 +241,7 @@ func newSyncCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
 		Use:   "sync <source> <destination>",
-		Short: "Sync files between local host and a VM via rsync",
+		Short: "Sync a directory to or from a VM",
 		Long: `Synchronize files between the local host and a pmox-managed VM using
 rsync over SSH. Exactly one of source or destination must use
 <name>:<path> syntax to identify the remote side.

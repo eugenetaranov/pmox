@@ -25,7 +25,7 @@ type keyFlags struct {
 func newKeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "key",
-		Short: "Publish your SSH public key so others can grant you VM access",
+		Short: "Publish your SSH key for VM sharing",
 		Long: `Manage your entry in the cluster's access registry
 (/etc/pve/pmox/keys on the Proxmox cluster).
 
@@ -41,7 +41,7 @@ func newKeyPublishCmd() *cobra.Command {
 	f := &keyFlags{}
 	cmd := &cobra.Command{
 		Use:   "publish",
-		Short: "Publish your public key to the cluster's access registry",
+		Short: "Publish your public key to the cluster",
 		Example: `  pmox key publish                      # as your local username
   pmox key publish --name bob --all-contexts`,
 		Args: cobra.NoArgs,
@@ -57,7 +57,7 @@ func newKeyUnpublishCmd() *cobra.Command {
 	f := &keyFlags{}
 	cmd := &cobra.Command{
 		Use:   "unpublish",
-		Short: "Remove your public key from the cluster's access registry",
+		Short: "Remove your published key",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runKeyUnpublish(cmd, f) },
 	}
@@ -70,7 +70,7 @@ func newKeyShowCmd() *cobra.Command {
 	f := &keyFlags{}
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Show your public key and where it is published",
+		Short: "Show your key and where it is published",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runKeyShow(cmd, f) },
 	}

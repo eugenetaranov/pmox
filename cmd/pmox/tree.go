@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -38,6 +37,12 @@ func rename(c *cobra.Command, name string, aliases ...string) *cobra.Command {
 		c.Use = name
 	}
 	c.Aliases = aliases
+	return c
+}
+
+// withShort replaces c's one-line summary.
+func withShort(c *cobra.Command, short string) *cobra.Command {
+	c.Short = short
 	return c
 }
 
@@ -87,9 +92,6 @@ func (e *errGroupHelp) Error() string { return fmt.Sprintf("'pmox %s' needs a su
 func (e *errGroupHelp) ExitCode() int { return exitcode.ExitUserError }
 func (e *errGroupHelp) SelfReported() {}
 
-// groupPickerFn is a seam over the group verb picker.
-var groupPickerFn = tui.Select
-
 // nounGroup builds a noun group: on a terminal, running it bare shows a
 // picker of its verbs and runs the chosen one; otherwise it prints help
 // and exits 2.
@@ -111,27 +113,13 @@ func nounGroup(name, short, long string, subs ...*cobra.Command) *cobra.Command 
 	return g
 }
 
-// runGroupMenu lets the user pick one of group's verbs and runs it as if
-// typed with no further arguments.
+// runGroupMenu opens the command palette at group (e.g. "pmox › vm").
 func runGroupMenu(group *cobra.Command) error {
-	var opts []huh.Option[string]
-	for _, c := range group.Commands() {
-		if !c.IsAvailableCommand() {
-			continue
-		}
-		opts = append(opts, huh.NewOption(fmt.Sprintf("%-12s %s", c.Name(), c.Short), c.Name()))
-	}
-	chosen, err := groupPickerFn(fmt.Sprintf("pmox %s — what would you like to do?", group.Name()), opts)
-	if err != nil {
-		return err
-	}
-	root := group.Root()
-	root.SetArgs(append(strings.Fields(group.CommandPath())[1:], chosen))
-	return root.ExecuteContext(group.Context())
+	return runPalette(group, strings.Fields(group.CommandPath())[1:])
 }
 
 func newVMCmd() *cobra.Command {
-	g := nounGroup("vm", "Manage VMs: launch, list, start/stop, shell, files, …", `Manage pmox VMs on the current context's cluster.
+	g := nounGroup("vm", "All VM commands", `Manage pmox VMs on the current context's cluster.
 
 The most common verbs are also available at the top level:
 pmox launch, list, info, start, stop, delete, shell, exec, cp, sync, apply.`)
@@ -156,23 +144,25 @@ pmox launch, list, info, start, stop, delete, shell, exec, cp, sync, apply.`)
 }
 
 func newTemplateCmd() *cobra.Command {
-	return nounGroup("template", "Create and list VM templates", `Build and list the Proxmox templates pmox launches VMs from.`,
+	return nounGroup("template", "Build and list templates", `Build and list the Proxmox templates pmox launches VMs from.`,
 		rename(newCreateTemplateCmd(), "create"),
 		newTemplateListCmd(),
 	)
 }
 
 func newContextCmd() *cobra.Command {
-	return nounGroup("context", "Switch between configured Proxmox servers", `A context is a configured server (URL, token, defaults, node SSH)
+	return nounGroup("context", "Switch between Proxmox servers", `A context is a configured server (URL, token, defaults, node SSH)
 addressed by a short name. Set the current one so commands don't need
---context every time. Add a new one with 'pmox init'.
+--context every time.
 
 Examples:
   pmox context list
+  pmox context add
   pmox context use prod
   pmox context rename 192.168.0.185 prod
   pmox context delete lab`,
 		rename(newGetContextsCmd(), "list", "ls"),
+		newContextAddCmd(),
 		rename(newUseContextCmd(), "use"),
 		rename(newCurrentContextCmd(), "current"),
 		rename(newRenameContextCmd(), "rename"),

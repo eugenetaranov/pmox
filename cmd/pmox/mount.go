@@ -76,7 +76,7 @@ func newMountCmd() *cobra.Command {
 	f := &mountFlags{}
 	cmd := &cobra.Command{
 		Use:   "mount <local_path> [<name|vmid>:]<remote_path>",
-		Short: "Watch a local directory and continuously sync to a VM",
+		Short: "Keep a local directory synced to a VM",
 		Long: `Watch a local directory for filesystem changes and continuously
 synchronize them to a pmox-managed VM using rsync over SSH.
 
@@ -129,7 +129,7 @@ when it has no <name|vmid>: prefix, same as when typed explicitly).`,
 // A local directory literally named like a verb needs the ./ form.
 func newMountGroupCmd() *cobra.Command {
 	g := newMountCmd()
-	g.Short = "Continuously sync a local directory to a VM (create, list, delete)"
+	g.Short = "Keep local directories synced to VMs"
 	g.Long += `
 
 Subcommands: 'pmox mount create' (same as above), 'pmox mount list'
@@ -137,7 +137,7 @@ Subcommands: 'pmox mount create' (same as above), 'pmox mount list'
 'pmox umount'). A local directory literally named create, list, ls,
 delete or rm must be given as ./<name>.`
 	g.AddCommand(
-		rename(newMountCmd(), "create"),
+		withShort(rename(newMountCmd(), "create"), "Start syncing a local directory to a VM"),
 		newMountListCmd(),
 		rename(newUmountCmd(), "delete", "rm"),
 	)
@@ -149,7 +149,7 @@ func newMountListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List running background mounts",
+		Short:   "List background mounts",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := mount.StateDir()
@@ -198,7 +198,7 @@ func newUmountCmd() *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
 		Use:   "umount [<name|vmid>:<remote_path>]",
-		Short: "Stop running daemon-mode mounts",
+		Short: "Stop background mounts",
 		Long: `Stop running daemon-mode mounts by finding their PID files and
 sending SIGTERM to each process.
 

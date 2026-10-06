@@ -135,13 +135,13 @@ func TestRootRunE_NonInteractiveShowsHelp(t *testing.T) {
 }
 
 func TestRootMenuOptions(t *testing.T) {
-	opts := rootMenuOptions(rootCmd)
-	if len(opts) == 0 {
+	menu := paletteMenu(rootCmd)
+	if len(menu.Items) == 0 {
 		t.Fatal("no menu options")
 	}
-	names := make([]string, len(opts))
-	for i, o := range opts {
-		names[i] = o.Value
+	names := make([]string, len(menu.Items))
+	for i, it := range menu.Items {
+		names[i] = it.Key
 	}
 
 	for _, excluded := range []string{"configure", "help", "completion"} {

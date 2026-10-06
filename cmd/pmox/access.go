@@ -222,7 +222,7 @@ type accessFlags struct {
 func newAccessCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
-		Short: "Share VMs with other people (grant, revoke, list, sync)",
+		Short: "Share VMs with other people",
 		Long: `Decide who can SSH into which pmox VMs.
 
 People publish their SSH public key once with 'pmox key publish'. A
@@ -341,7 +341,7 @@ func newAccessSyncCmd() *cobra.Command {
 	f := &accessFlags{}
 	cmd := &cobra.Command{
 		Use:   "sync [vm...]",
-		Short: "Bring VMs' shared keys in line with the registry (default: all pmox VMs)",
+		Short: "Update VMs to match the access registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			env, err := openAccessEnv(ctx, cmd)
@@ -376,7 +376,7 @@ func newAccessSyncCmd() *cobra.Command {
 func newAccessListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list [vm]",
-		Short: "Show who may reach which VMs, and whether each VM matches",
+		Short: "Show who can reach which VMs",
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runAccessList,
 	}

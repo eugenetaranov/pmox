@@ -8,7 +8,7 @@ pmox SHALL organize commands into singular noun groups:
 |---|---|
 | `vm` | `launch`, `clone`, `list`/`ls`, `info`, `start`, `stop`, `delete`/`rm`, `shell`, `exec`, `cp`, `sync`, `apply`, `ssh-config` |
 | `template` | `create`, `list`/`ls` |
-| `context` | `list`/`ls`, `use`, `current`, `rename`, `delete`/`rm` |
+| `context` | `list`/`ls`, `add`, `use`, `current`, `rename`, `delete`/`rm` |
 | `config` | `edit`, `path`, `cloud-init` |
 | `mount` | `create`, `list`/`ls`, `delete`/`rm` |
 | `key` | `publish`, `unpublish`, `show` |

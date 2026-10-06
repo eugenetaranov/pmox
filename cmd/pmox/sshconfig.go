@@ -30,7 +30,7 @@ func newSSHConfigCmd() *cobra.Command {
 	var asCommand bool
 	cmd := &cobra.Command{
 		Use:   "ssh-config [name|vmid]",
-		Short: "Print SSH connection details for a VM",
+		Short: "Print SSH config for a VM",
 		Long: `Print how to connect to a pmox VM over SSH — an OpenSSH config
 block by default, or the full ssh command with --command.
 

@@ -37,7 +37,7 @@ func newApplyCmd() *cobra.Command {
 	f := &applyFlags{}
 	cmd := &cobra.Command{
 		Use:   "apply [name|vmid] [profile]",
-		Short: "Apply a tack playbook to a VM",
+		Short: "Run a tack playbook on a VM",
 		Long: `Run a tack playbook (github.com/tackhq/tack) against a pmox VM,
 reusing the SSH user and key pmox already knows.
 

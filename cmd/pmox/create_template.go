@@ -35,7 +35,7 @@ func newCreateTemplateCmd() *cobra.Command {
 	f := &createTemplateFlags{}
 	cmd := &cobra.Command{
 		Use:   "create-template",
-		Short: "Build an Ubuntu cloud-image Proxmox template",
+		Short: "Build an Ubuntu template",
 		Long: `Interactively build a Proxmox template from an Ubuntu cloud image.
 
 Fetches the latest Ubuntu images from Canonical's simplestreams feed,

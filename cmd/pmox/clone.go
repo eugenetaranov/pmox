@@ -18,7 +18,7 @@ func newCloneCmd() *cobra.Command {
 	f := &launchFlags{}
 	cmd := &cobra.Command{
 		Use:   "clone [source-name|vmid] <new-name>",
-		Short: "Clone an existing VM into a new VM",
+		Short: "Clone a VM into a new one",
 		Long: `Clone an existing VM (template or regular VM) into a new VM. This is
 conceptually 'pmox launch', except the template is the resolved
 source VM instead of the configured template.

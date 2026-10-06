@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -96,52 +95,17 @@ Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
 	},
 }
 
-// runRootMenu shows a top-level command picker (arrow keys, or type to
-// filter) and, once one is chosen, runs it exactly as if it had been
-// typed with no further arguments — so each command's own interactive
-// prompting (a VM picker, launch's name/sizing prompts, etc.) takes over
-// from there.
+// runRootMenu opens the command palette at the root; the chosen command
+// runs exactly as if typed with no further arguments, so its own
+// interactive prompting takes over from there.
 func runRootMenu(cmd *cobra.Command) error {
-	root := cmd.Root()
-	opts := rootMenuOptions(root)
-	chosen, err := tui.Select("What would you like to do?", opts)
-	if err != nil {
-		return err
-	}
-	root.SetArgs([]string{chosen})
-	return root.ExecuteContext(cmd.Context())
-}
-
-// rootMenuOptions lists root's commands in the same order as
-// `pmox --help`: Get started, Common, Resources (noun groups — picking
-// one opens that group's own picker), then Maintenance. Hidden and
-// deprecated commands, and cobra's help/completion, are skipped.
-func rootMenuOptions(root *cobra.Command) []huh.Option[string] {
-	groupOrder := []string{groupStart, groupCommon, groupResources, groupMaintenance, ""}
-	byGroup := make(map[string][]*cobra.Command, len(groupOrder))
-	for _, c := range root.Commands() {
-		if !c.IsAvailableCommand() || c.Name() == "help" || c.Name() == "completion" {
-			continue
-		}
-		byGroup[c.GroupID] = append(byGroup[c.GroupID], c)
-	}
-	var opts []huh.Option[string]
-	for _, g := range groupOrder {
-		for _, c := range byGroup[g] {
-			label := c.Short
-			if g == groupResources {
-				label += "  ›"
-			}
-			opts = append(opts, huh.NewOption(fmt.Sprintf("%-15s %s", c.Name(), label), c.Name()))
-		}
-	}
-	return opts
+	return runPalette(cmd, nil)
 }
 
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the pmox version",
+		Short: "Show the pmox version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("pmox version %s (commit: %s, built: %s)\n", version, commit, date)
 		},

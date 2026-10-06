@@ -25,7 +25,7 @@ func newInitCmd() *cobra.Command {
 	f := &initFlags{}
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Set up a Proxmox connection (interactive wizard)",
+		Short: "Set up a Proxmox connection",
 		Long: `Interactively configure credentials and defaults for a Proxmox VE server.
 
 Walks through API URL, token, credential validation against /version, and
@@ -93,7 +93,17 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		deprecatedNote("--regen-cloud-init", "pmox config cloud-init --regenerate")
 		return runRegenCloudInit(newStdPrompter(ctx))
 	}
-	return runInteractive(ctx, newStdPrompter(ctx))
+	p := newStdPrompter(ctx)
+	if interactiveFn() {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if len(cfg.Servers) > 0 {
+			return runInitConfigured(ctx, p, cfg)
+		}
+	}
+	return runInteractive(ctx, p)
 }
 
 func runList(p prompter) error {

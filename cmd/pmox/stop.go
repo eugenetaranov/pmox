@@ -22,7 +22,7 @@ func newStopCmd() *cobra.Command {
 	f := &stopFlags{}
 	cmd := &cobra.Command{
 		Use:   "stop [name|vmid ...]",
-		Short: "Gracefully shut down VMs (or hard-stop with --force)",
+		Short: "Stop VMs",
 		Long: `Stop one or more VMs on the resolved Proxmox cluster. Default is ACPI
 graceful shutdown via POST /status/shutdown. --force sends a hard
 power-off via /status/stop — use it when the guest is unresponsive.

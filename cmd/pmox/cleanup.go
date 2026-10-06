@@ -54,7 +54,7 @@ func newCleanupCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "cleanup",
-		Short: "Remove pmox leftovers: orphaned snippets, local state, and templates",
+		Short: "Remove pmox leftovers",
 		Long: `Reclaim cruft pmox can leave behind, in selectable categories:
 
   snippet       cloud-init snippets on the cluster whose VM is gone

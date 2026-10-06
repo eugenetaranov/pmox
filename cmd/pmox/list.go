@@ -22,7 +22,7 @@ func newListCmd() *cobra.Command {
 	f := &listFlags{}
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List VMs on the resolved Proxmox cluster",
+		Short: "List VMs",
 		Long: `List VMs on the resolved Proxmox cluster. By default only VMs tagged
 'pmox' are shown — pass --all to include every VM.
 

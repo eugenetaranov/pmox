@@ -18,7 +18,7 @@ import (
 // '*-context' verbs stay here as deprecated forms for the deprecation
 // window.
 func newConfigCmd() *cobra.Command {
-	g := nounGroup("config", "Edit configuration and the cloud-init template", `Edit pmox's configuration.
+	g := nounGroup("config", "Edit configuration", `Edit pmox's configuration.
 
 First-time setup lives in 'pmox init'; switching between servers in
 'pmox context'.
@@ -47,7 +47,7 @@ func newConfigCloudInitCmd() *cobra.Command {
 	var regenerate bool
 	cmd := &cobra.Command{
 		Use:   "cloud-init",
-		Short: "Show or regenerate the per-server cloud-init template",
+		Short: "Show or regenerate the cloud-init template",
 		Long: `Print the path of the current server's cloud-init template. With
 --regenerate, rewrite it from the stored user and SSH public key (on a
 terminal you can pick a different key first); existing edits are lost,
@@ -83,7 +83,7 @@ func newGetContextsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "get-contexts",
 		Aliases: []string{"list", "ls"},
-		Short:   "List contexts (the current one is marked *)",
+		Short:   "List configured servers",
 		Args:    cobra.NoArgs,
 		RunE:    func(cmd *cobra.Command, _ []string) error { return runGetContexts(cmd) },
 	}
@@ -137,7 +137,7 @@ func newUseContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "use-context [name]",
 		Aliases: []string{"use"},
-		Short:   "Set the current context that commands target",
+		Short:   "Choose the server commands target",
 		Long: `Set the current context. With no argument, pick one interactively
 from the configured contexts (on a terminal).`,
 		Args: cobra.MaximumNArgs(1),
@@ -254,7 +254,7 @@ func newDeleteContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete-context <name>",
 		Aliases: []string{"remove", "rm"},
-		Short:   "Remove a context (server) and its stored secrets",
+		Short:   "Forget a server and its secrets",
 		Args:    exactArgs(1, "pmox context delete <name>", "pmox context delete lab"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -274,7 +274,7 @@ func newDeleteContextCmd() *cobra.Command {
 func newEditContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit [context]",
-		Short: "Interactively edit an already-configured context",
+		Short: "Change a configured server's settings",
 		Long: `Reopens the 'pmox init' wizard for an already-configured context,
 landing straight on the Review screen instead of redoing the whole
 connection/token setup. The stored token is reused as-is; reachability
@@ -354,7 +354,7 @@ func pickContext(cfg *config.Config) (string, error) {
 func newConfigPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
-		Short: "Print the path to the pmox config file",
+		Short: "Print the config file path",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := config.Path()

@@ -64,7 +64,7 @@ func newLaunchCmd() *cobra.Command {
 	f := &launchFlags{}
 	cmd := &cobra.Command{
 		Use:   "launch [name]",
-		Short: "Launch a VM from a configured Proxmox template",
+		Short: "Launch a new VM",
 		Long: `Launch a new VM on the resolved Proxmox cluster from a cloud-init-
 enabled template. Clones the template, tags the new VM, resizes its
 disk, uploads the per-server cloud-init snippet, starts the VM, waits
@@ -221,23 +221,10 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 
-	// On a terminal, fill in whatever wasn't given on the command line
-	// (name, --cpu, --mem, --disk) by asking, instead of a missing name
-	// being a hard error and unset sizing flags silently defaulting.
-	// --output json (or no terminal — scripts, CI) keeps the exact old
-	// behavior: a missing name is still an error, checked here since
-	// name is no longer validated by Args.
-	if tui.Interactive() && outputMode != "json" {
-		p := newStdPrompter(ctx)
-		if name == "" {
-			if name, err = promptLaunchName(p); err != nil {
-				return err
-			}
-		}
-		if err := promptLaunchSizing(cmd, p, f); err != nil {
-			return err
-		}
-	} else if name == "" {
+	interactive := tui.Interactive() && outputMode != "json"
+	// --output json (or no terminal — scripts, CI): a missing name is an
+	// error, before any network call.
+	if !interactive && name == "" {
 		return fmt.Errorf("%w: missing VM name — usage: pmox launch <name> (example: pmox launch web1)", exitcode.ErrUserInput)
 	}
 
@@ -251,6 +238,32 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 
 	if err := resolved.RequireNodeSSH("launch"); err != nil {
 		return err
+	}
+
+	// Settle the template before asking anything else, so a missing one
+	// never wastes the name/sizing answers.
+	if f.template == "" && resolved.Server.Template == "" {
+		if !interactive {
+			return fmt.Errorf("%w: no template configured; pass --template, or build one with 'pmox template create'", exitcode.ErrNotFound)
+		}
+		if err := ensureLaunchTemplateFn(cmd, client, resolved); err != nil {
+			return err
+		}
+	}
+
+	// On a terminal, fill in whatever wasn't given on the command line
+	// (name, --cpu, --mem, --disk) by asking, instead of a missing name
+	// being a hard error and unset sizing flags silently defaulting.
+	if interactive {
+		p := newStdPrompter(ctx)
+		if name == "" {
+			if name, err = promptLaunchName(p); err != nil {
+				return err
+			}
+		}
+		if err := promptLaunchSizing(cmd, p, f); err != nil {
+			return err
+		}
 	}
 
 	opts, err := resolveLaunchOptions(ctx, client, name, f, resolved, cmd.ErrOrStderr())
@@ -388,7 +401,7 @@ func resolveLaunchOptions(ctx context.Context, client *pveclient.Client, name st
 
 	templateStr := firstNonEmpty(f.template, srv.Template)
 	if templateStr == "" {
-		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template or run 'pmox init'", exitcode.ErrNotFound)
+		return launch.Options{}, fmt.Errorf("%w: no template configured; pass --template, or build one with 'pmox template create'", exitcode.ErrNotFound)
 	}
 	templateID, _, err := resolveTemplate(ctx, client, node, templateStr)
 	if err != nil {

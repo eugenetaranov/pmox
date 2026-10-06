@@ -58,7 +58,7 @@ func newDoctorCmd() *cobra.Command {
 	f := &doctorFlags{}
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Validate configuration and Proxmox connectivity",
+		Short: "Check that pmox is ready to use",
 		Long: `Run checks that validate your pmox configuration, Proxmox API and
 SSH connectivity, storage and template readiness, and local tooling,
 then report whether the tool is ready to launch VMs.

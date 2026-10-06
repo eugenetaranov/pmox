@@ -44,7 +44,7 @@ func newShellCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
 		Use:   "shell [name|vmid]",
-		Short: "Open an interactive SSH session to a VM",
+		Short: "Open a shell on a VM",
 		Long: `Open an interactive SSH shell on a pmox-managed VM. The argument
 may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If
 omitted, pmox auto-selects the only pmox VM when one exists, or
@@ -69,7 +69,7 @@ func newExecCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
 		Use:   "exec [name|vmid] -- <command> [args...]",
-		Short: "Run a command on a VM over SSH",
+		Short: "Run a command on a VM",
 		Long: `Run a single command on a pmox-managed VM over SSH and return its
 output and exit code. The -- separator is required between the VM
 argument and the remote command.

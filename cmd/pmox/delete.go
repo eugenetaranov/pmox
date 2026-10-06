@@ -39,7 +39,7 @@ func newDeleteCmd() *cobra.Command {
 	f := &deleteFlags{}
 	cmd := &cobra.Command{
 		Use:   "delete [name|vmid ...]",
-		Short: "Stop and destroy pmox-launched VMs",
+		Short: "Delete VMs",
 		Long: `Delete one or more VMs on the resolved Proxmox cluster. Each argument
 may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If none are
 given, pmox auto-selects the only pmox VM when one exists, or shows a
