@@ -1,0 +1,9 @@
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="{{ .devbox_zsh_theme }}"
+plugins=({{ .devbox_zsh_plugins }})
+source "$ZSH/oh-my-zsh.sh"
+
+export EDITOR=vim
+
+# powerlevel10k: run `p10k configure` to generate ~/.p10k.zsh, then it loads here.
+[ -f ~/.p10k.zsh ] && source ~/.p10k.zsh

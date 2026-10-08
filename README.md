@@ -406,6 +406,35 @@ VM's `cicustom` value, so cleanup always targets the right pool.
 re-run `pmox init`), then run `pmox config cloud-init --regenerate`
 to rewrite the cloud-init file with the new key.
 
+## Setting up the VM from inside: devbox-setup
+
+Every VM pmox launches gets `devbox-setup`, an interactive installer you run
+on the VM itself. It's the alternative to provisioning from outside with
+tack. Run `pmox shell web1`, then `sudo devbox-setup`, and tick what you want:
+
+- **Base:** CLI tools (git, gh, ripgrep, fzf, delta, neovim, tmux, zellij, …),
+  zsh + oh-my-zsh + powerlevel10k, Docker, Podman, Tailscale.
+- **Languages** (via [mise](https://mise.jdx.dev) unless noted): Go, Python + uv,
+  Node + pnpm, TypeScript, Bun, Deno, Java + Maven + Gradle, Kotlin, Rust,
+  Ruby, PHP + Composer (apt), C/C++ (apt), Zig, .NET, Task, plus any other
+  mise tool you name.
+- **Cloud and infra CLIs:** AWS, Google Cloud, Azure, DigitalOcean, Terraform,
+  OpenTofu, kubectl, kubectx/kubens, Helm, k9s.
+- **AI:** Claude Code, Codex CLI, Gemini CLI, omp, and the MCPJungle gateway
+  with MCP servers in Docker (Jira, AWS, Jenkins, context7, …).
+  It asks for each server's keys and stores them in `~/.mcp/<name>/env`.
+- **Accounts:** git identity, an SSH key, GitHub CLI login with the key
+  added to your account.
+
+Re-run it any time: your previous choices come back ticked.
+`sudo devbox-setup --yes` re-applies them without asking. Choices are saved
+in `/var/lib/devbox-setup/answers`, without secrets.
+
+The script is embedded in pmox and added to the VM's cloud-init at launch.
+Your cloud-init file is not changed, and nothing is downloaded at boot. To turn
+it off for a server, set `devbox_setup: false` under that server in
+`config.yaml`.
+
 ## Post-create hooks
 
 Once `pmox launch` has an IP and SSH is reachable, you can hand off

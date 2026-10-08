@@ -51,6 +51,19 @@ tasks:
           go run ./internal/tools/doccheck
         fi
 
+  bootstrap:sync:
+    desc: Refresh devbox-setup's assets from a tack-roles checkout (TACK_ROLES=path)
+    vars:
+      TACK_ROLES: '{{.TACK_ROLES | default "../../tack-roles"}}'
+      DST: internal/bootstrap/assets
+    cmds:
+      - rm -rf {{.DST}} && mkdir -p {{.DST}}/mcp-catalog
+      - cp {{.TACK_ROLES}}/roles/ai-tools/files/mcp-sync {{.DST}}/mcp-sync
+      - cp {{.TACK_ROLES}}/roles/ai-tools/files/mcp-catalog/*.spec {{.DST}}/mcp-catalog/
+      - cp {{.TACK_ROLES}}/roles/devbox/templates/zshrc.j2 {{.DST}}/zshrc.tmpl
+      - cp {{.TACK_ROLES}}/roles/devbox/templates/vimrc.j2 {{.DST}}/vimrc
+      - git -C {{.TACK_ROLES}} log -1 --format='tack-roles %H %cs' > {{.DST}}/SOURCE
+
   clean:
     desc: Remove build artifacts
     cmds:

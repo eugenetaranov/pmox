@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/bootstrap"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/progress"
@@ -58,6 +59,9 @@ type Options struct {
 	Wait          time.Duration
 	NoWaitSSH     bool
 	CloudInitPath string
+	// DevboxSetup adds the devbox-setup installer (internal/bootstrap) to
+	// the uploaded user-data. The user's cloud-init file is not changed.
+	DevboxSetup bool
 	// Hook is an optional post-SSH-ready hook (--post-create, --tack,
 	// --ansible). Nil means no hook phase.
 	Hook hook.Hook
@@ -143,6 +147,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
+	}
+	if opts.DevboxSetup {
+		cloudInitBytes = withDevboxSetup(cloudInitBytes, opts.CloudInitPath, opts.Stderr)
 	}
 
 	// Phase 1 — allocate VMID.
@@ -351,4 +358,21 @@ func bridgedNet0(ctx context.Context, opts Options, vmid int) (string, error) {
 		return "", nil
 	}
 	return next, nil
+}
+
+// withDevboxSetup returns userData with the devbox-setup installer added.
+// It never fails a launch: when the file can't take it, it warns and
+// returns userData unchanged.
+func withDevboxSetup(userData []byte, path string, stderr io.Writer) []byte {
+	out, err := bootstrap.Inject(userData)
+	if err == nil && len(out) > snippet.MaxBytes {
+		err = fmt.Errorf("user-data would be %d bytes, over the %d KiB snippet limit", len(out), snippet.MaxBytes/1024)
+	}
+	if err != nil {
+		if stderr != nil {
+			fmt.Fprintf(stderr, "warning: devbox-setup not added to the VM (%s: %v)\n", path, err)
+		}
+		return userData
+	}
+	return out
 }

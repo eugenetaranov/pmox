@@ -283,6 +283,9 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	recordVMIdentity(cmd.ErrOrStderr(), resolved.URL, r.VMID, opts.CloudInitPath)
 	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, resolved.URL, r.VMID, opts.Node, name)
 	fmt.Fprintf(cmd.OutOrStdout(), "launched %s (vmid=%d, ip=%s)\n", name, r.VMID, r.IP)
+	if opts.DevboxSetup {
+		fmt.Fprintf(cmd.ErrOrStderr(), "next: pmox shell %s, then 'sudo devbox-setup' to pick tools, languages and AI setup\n", name)
+	}
 	return nil
 }
 
@@ -467,6 +470,7 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 		Wait:           wait,
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
+		DevboxSetup:    srv.DevboxSetupEnabled(),
 		Stderr:         stderr,
 	}, nil
 }

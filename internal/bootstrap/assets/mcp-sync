@@ -1,0 +1,137 @@
+#!/bin/sh
+# mcp-sync — register MCP servers into the local MCPJungle gateway.
+#
+#   mcp-sync [name ...]    enable these servers (saved to ~/.mcp/servers), then sync
+#   mcp-sync               sync the saved list plus every ~/.mcp/<name>/spec
+#
+# Each server gets ~/.mcp/<name>/ (mode 700) holding its credentials in `env`
+# (KEY=value lines, no quotes). Docker servers read that file at start; it is
+# also mounted read-only at /mcp for servers that need extra files (e.g. AWS
+# config). A server is registered once its required keys are filled in, and
+# re-registered when its generated config changes. Servers dropped from the
+# list are deregistered.
+set -eu
+
+MCP_DIR="${MCP_DIR:-$HOME/.mcp}"
+CATALOG="${MCP_CATALOG:-/usr/local/share/mcp-catalog}"
+REGISTRY="${MCPJUNGLE_REGISTRY:-http://127.0.0.1:8080}"
+
+umask 077
+mkdir -p "$MCP_DIR"
+chmod 700 "$MCP_DIR"
+
+if [ $# -gt 0 ]; then
+  printf '%s\n' "$@" > "$MCP_DIR/servers"
+fi
+
+# envget KEY FILE — value of the last KEY=... line (comments ignored).
+envget() { sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1; }
+
+spec_for() {
+  if [ -f "$MCP_DIR/$1/spec" ]; then echo "$MCP_DIR/$1/spec"
+  elif [ -f "$CATALOG/$1.spec" ]; then echo "$CATALOG/$1.spec"
+  fi
+}
+
+enabled() {
+  { [ -f "$MCP_DIR/servers" ] && grep -v '^[[:space:]]*\(#\|$\)' "$MCP_DIR/servers"
+    for s in "$MCP_DIR"/*/spec; do [ -f "$s" ] && basename "$(dirname "$s")"; done
+  } | sort -u
+}
+
+# render NAME — print the MCPJungle JSON config for NAME (spec vars in scope).
+render() {
+  dir="$MCP_DIR/$1"
+  case "$KIND" in
+    docker)
+      # shellcheck disable=SC2086 # DOCKER_ARGS is intentionally word-split
+      set -- run -i --rm --env-file "$dir/env" -v "$dir:/mcp:ro" ${DOCKER_ARGS:-} "$IMAGE"
+      printf '%s\n' "$@" | jq -Rn --arg name "$NAME" --arg desc "${DESCRIPTION:-}" \
+        '{name: $name, description: $desc, transport: "stdio", command: "docker", args: [inputs], session_mode: "stateful"}' ;;
+    http)
+      url="${URL:-}"
+      [ -n "${URL_VAR:-}" ] && url="$(envget "$URL_VAR" "$dir/env" | sed 's:/*$::')${URL_SUFFIX:-}"
+      case "${AUTH:-none}" in
+        basic)
+          cred=$(printf '%s:%s' "$(envget "$AUTH_USER_VAR" "$dir/env")" "$(envget "$AUTH_TOKEN_VAR" "$dir/env")" | base64 | tr -d '\n')
+          jq -n --arg name "$NAME" --arg desc "${DESCRIPTION:-}" --arg url "$url" --arg auth "Basic $cred" \
+            '{name: $name, description: $desc, transport: "streamable_http", url: $url, headers: {Authorization: $auth}}' ;;
+        bearer)
+          jq -n --arg name "$NAME" --arg desc "${DESCRIPTION:-}" --arg url "$url" --arg tok "$(envget "$AUTH_TOKEN_VAR" "$dir/env")" \
+            '{name: $name, description: $desc, transport: "streamable_http", url: $url, bearer_token: $tok}' ;;
+        *)
+          jq -n --arg name "$NAME" --arg desc "${DESCRIPTION:-}" --arg url "$url" \
+            '{name: $name, description: $desc, transport: "streamable_http", url: $url}' ;;
+      esac ;;
+    *) echo "unknown KIND '$KIND'" >&2; return 1 ;;
+  esac
+}
+
+failed=0
+want=$(enabled)
+live=$(mcpjungle --registry "$REGISTRY" list servers 2>/dev/null) || {
+  echo "cannot reach the MCPJungle gateway at $REGISTRY" >&2; exit 1; }
+live=$(echo "$live" | sed -n 's/^[0-9][0-9]*\. //p')
+
+for NAME in $want; do
+  spec=$(spec_for "$NAME")
+  if [ -z "$spec" ]; then
+    echo "$NAME: no spec (not in $CATALOG and no $MCP_DIR/$NAME/spec) — skipped"
+    continue
+  fi
+  KIND= IMAGE= DOCKER_ARGS= REQUIRED= URL= URL_VAR= URL_SUFFIX= AUTH= AUTH_USER_VAR= AUTH_TOKEN_VAR= DESCRIPTION=
+  unset -f skeleton 2>/dev/null || true
+  # shellcheck disable=SC1090
+  . "$spec"
+
+  dir="$MCP_DIR/$NAME"
+  mkdir -p "$dir"; chmod 700 "$dir"
+  if [ ! -f "$dir/env" ]; then
+    if command -v skeleton >/dev/null 2>&1; then skeleton > "$dir/env"; else : > "$dir/env"; fi
+    chmod 600 "$dir/env"
+  fi
+
+  missing=
+  for key in $REQUIRED; do
+    [ -n "$(envget "$key" "$dir/env")" ] || missing="$missing $key"
+  done
+  if [ -n "$missing" ]; then
+    echo "$NAME: waiting for credentials — fill in$missing in $dir/env, then run mcp-sync"
+    continue
+  fi
+
+  render "$NAME" > "$dir/.config.json.new"
+  if [ -f "$dir/.registered.json" ] && cmp -s "$dir/.config.json.new" "$dir/.registered.json" \
+     && echo "$live" | grep -qx "$NAME"; then
+    rm -f "$dir/.config.json.new"
+    echo "$NAME: up to date"
+    continue
+  fi
+  if [ "$KIND" = docker ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "$NAME: pulling $IMAGE"
+    docker pull -q "$IMAGE" >/dev/null || { echo "$NAME: docker pull failed"; failed=1; continue; }
+  fi
+  out=$(mcpjungle --registry "$REGISTRY" register --force -c "$dir/.config.json.new" 2>&1) && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    mv "$dir/.config.json.new" "$dir/.registered.json"
+    echo "$NAME: registered"
+  else
+    rm -f "$dir/.config.json.new" "$dir/.registered.json"
+    echo "$NAME: registration failed (check $dir/env):"
+    echo "$out" | grep -v '^TIP:' | grep -v '^$' | sed 's/^/  /'
+    failed=1
+  fi
+done
+
+# Deregister servers that were synced before but are no longer enabled.
+for reg in "$MCP_DIR"/*/.registered.json; do
+  [ -f "$reg" ] || continue
+  NAME=$(basename "$(dirname "$reg")")
+  if ! echo "$want" | grep -qx "$NAME"; then
+    mcpjungle --registry "$REGISTRY" deregister "$NAME" >/dev/null 2>&1 || true
+    rm -f "$reg"
+    echo "$NAME: deregistered (credentials kept in $MCP_DIR/$NAME)"
+  fi
+done
+
+exit "$failed"

@@ -1,6 +1,12 @@
 package launch
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/eugenetaranov/pmox/internal/bootstrap"
+)
 
 func TestBuildCustomKV(t *testing.T) {
 	opts := Options{
@@ -87,5 +93,23 @@ func TestSetNet0Bridge(t *testing.T) {
 				t.Errorf("setNet0Bridge(%q, %q) = %q, want %q", tc.net0, tc.bridge, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWithDevboxSetup(t *testing.T) {
+	var warn bytes.Buffer
+	in := []byte("#cloud-config\npackages: [curl]\n")
+	out := withDevboxSetup(in, "ci.yaml", &warn)
+	if !bytes.Contains(out, []byte(bootstrap.ScriptPath)) || warn.Len() != 0 {
+		t.Errorf("not injected (warn %q):\n%s", warn.String(), out)
+	}
+
+	warn.Reset()
+	bad := []byte("#cloud-config\nwrite_files: nope\n")
+	if got := withDevboxSetup(bad, "ci.yaml", &warn); !bytes.Equal(got, bad) {
+		t.Errorf("user-data changed on failure:\n%s", got)
+	}
+	if !strings.Contains(warn.String(), "devbox-setup not added") {
+		t.Errorf("warning = %q", warn.String())
 	}
 }

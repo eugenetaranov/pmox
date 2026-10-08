@@ -44,7 +44,14 @@ type Server struct {
 	// On later connects a mismatch is treated as a possible MITM. Only
 	// meaningful when Insecure is true.
 	TLSPinSHA256 string `yaml:"tls_pin_sha256,omitempty"`
+
+	// DevboxSetup controls whether launched VMs get the devbox-setup
+	// installer in their cloud-init. Nil (unset) means yes.
+	DevboxSetup *bool `yaml:"devbox_setup,omitempty"`
 }
+
+// DevboxSetupEnabled reports whether launched VMs get devbox-setup.
+func (s *Server) DevboxSetupEnabled() bool { return s.DevboxSetup == nil || *s.DevboxSetup }
 
 // NodeSSHAuth is the node-SSH authentication mode persisted in config.
 type NodeSSHAuth string

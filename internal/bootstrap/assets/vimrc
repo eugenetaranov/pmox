@@ -1,0 +1,66 @@
+" Managed by the tack-roles `devbox` role.
+" A lightweight, comfortable vim setup -- deliberately NOT an IDE
+" (no LSP / completion engines / debuggers).
+
+" --- Sane defaults ---
+set nocompatible
+syntax on
+filetype plugin indent on
+
+set number
+set encoding=utf-8
+set expandtab
+set shiftwidth=4
+set tabstop=4
+set softtabstop=4
+set smartindent
+set autoindent
+set incsearch
+set hlsearch
+set ignorecase
+set smartcase
+set mouse=a
+set clipboard=unnamedplus
+set hidden
+set wildmenu
+set laststatus=2
+set scrolloff=4
+set nowrap
+set signcolumn=yes
+if has('termguicolors')
+  set termguicolors
+endif
+
+let mapleader = " "
+
+" --- Plugins (vim-plug) ---
+call plug#begin('~/.vim/plugged')
+
+Plug 'tpope/vim-sensible'
+Plug 'preservim/nerdtree'
+Plug 'tpope/vim-fugitive'
+Plug 'airblade/vim-gitgutter'
+Plug 'tpope/vim-commentary'
+Plug 'tpope/vim-surround'
+Plug 'junegunn/fzf'
+Plug 'junegunn/fzf.vim'
+Plug 'itchyny/lightline.vim'
+Plug 'editorconfig/editorconfig-vim'
+Plug 'sheerun/vim-polyglot'
+Plug 'morhetz/gruvbox'
+
+call plug#end()
+
+" --- Plugin config / mappings ---
+nnoremap <leader>n :NERDTreeToggle<CR>
+nnoremap <leader>f :Files<CR>
+nnoremap <leader>b :Buffers<CR>
+nnoremap <leader>/ :Rg<CR>
+nnoremap <leader><space> :nohlsearch<CR>
+
+" lightline shows the mode, so drop the redundant -- INSERT -- line.
+set noshowmode
+
+" Colorscheme (silent on first run before plugins are installed).
+set background=dark
+silent! colorscheme gruvbox
