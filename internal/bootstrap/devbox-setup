@@ -192,6 +192,9 @@ ensure_gum() {
 header() { gum style --bold --foreground 212 "$*"; }
 faint()  { gum style --faint "$*"; }
 
+# gum 2 multi-selects toggle with x or tab (not space).
+TOGGLE_HINT="x/tab toggles · enter continues"
+
 # --- MCP catalog helpers -------------------------------------------------------
 
 catalog_dir() { if [ -d "$CATALOG" ]; then echo "$CATALOG"; else echo "$SHARE/mcp-catalog"; fi; }
@@ -246,7 +249,7 @@ ask() {
       case "$prev" in *" $id "*) sel+=(--selected "$(label_of "$id")") ;; esac
     done
     picks="$picks $(gum choose --no-limit --height 16 --label-delimiter '|' \
-      --header "$i/${#SCREENS[@]} $title — space toggles, enter continues" \
+      --header "$i/${#SCREENS[@]} $title — $TOGGLE_HINT" \
       "${sel[@]}" "${opts[@]}" | tr '\n' ' ')"
     if [ "$screen" = lang ]; then
       A_MISE_EXTRA=$(gum input --width 80 --header "Other mise tools (optional, e.g. 'elixir@latest lua@5.4')" \
@@ -290,7 +293,7 @@ ask_mcp() {
     mopts+=("$n — $desc|$n")
     case " ${A_MCP_SERVERS:-context7 sequential-thinking} " in *" $n "*) msel+=(--selected "$n — $desc") ;; esac
   done
-  A_MCP_SERVERS=$(gum choose --no-limit --label-delimiter '|' --header "MCP servers" \
+  A_MCP_SERVERS=$(gum choose --no-limit --label-delimiter '|' --header "MCP servers — $TOGGLE_HINT" \
     "${msel[@]}" "${mopts[@]}" | tr '\n' ' ')
   A_MCP_SERVERS=$(echo $A_MCP_SERVERS)
 
@@ -329,7 +332,7 @@ ask_mcp_keys() {
       for key in "${optional[@]}"; do [ -n "$(envget "$key" "$envf")" ] && osel+=(--selected "$key"); done
       # Not via <(…): a process substitution can't read the terminal.
       local chosen
-      chosen=$(gum choose --no-limit --header "Optional settings for $n (enter to skip)" \
+      chosen=$(gum choose --no-limit --header "Optional settings for $n — $TOGGLE_HINT (or just enter to skip)" \
         "${osel[@]}" "${optional[@]}" || true)
       for opt in $chosen; do active+=("$opt"); done
     fi
