@@ -66,10 +66,7 @@ CATALOG_ROWS=(
   "doctl|cloud|DigitalOcean doctl|mise|doctl@latest|"
   "terraform|cloud|Terraform|mise|terraform@latest|"
   "opentofu|cloud|OpenTofu|mise|opentofu@latest|"
-  "kubectl|cloud|kubectl|mise|kubectl@latest|"
-  "kubectx|cloud|kubectx · kubens|mise|kubectx@latest kubens@latest|"
-  "helm|cloud|Helm|mise|helm@latest|"
-  "k9s|cloud|k9s|mise|k9s@latest|"
+  "k8s|cloud|Kubernetes — kubectl · kubectx · kubens · helm · k9s|mise|kubectl@latest kubectx@latest kubens@latest helm@latest k9s@latest|"
 
   "claude|ai|Claude Code|fn||"
   "codex|ai|OpenAI Codex CLI|mise|codex@latest|"
@@ -138,6 +135,12 @@ ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_CLAUD
 load_answers() {
   # shellcheck disable=SC1090
   [ -r "$ANSWERS" ] && . "$ANSWERS"
+  # v0.29 had the Kubernetes tools as separate entries.
+  local id out= k8s=
+  for id in $A_PICKS; do
+    case "$id" in kubectl|kubectx|helm|k9s) k8s=" k8s" ;; *) out="$out $id" ;; esac
+  done
+  A_PICKS=$(echo $out$k8s)
   return 0
 }
 save_answers() {
@@ -298,7 +301,8 @@ ask_mcp() {
   A_MCP_SERVERS=$(echo $A_MCP_SERVERS)
 
   if picked claude || have claude; then
-    if gum confirm "Point $A_USER's Claude Code at the gateway?" \
+    faint "This runs 'claude mcp add' for $A_USER so Claude Code can use every MCP server registered in MCPJungle."
+    if gum confirm "Add the MCPJungle gateway to $A_USER's Claude Code?" \
          --default="$( [ "${A_WIRE_CLAUDE:-yes}" = yes ] && echo true || echo false)"; then
       A_WIRE_CLAUDE=yes
     else

@@ -419,7 +419,7 @@ tack. Run `pmox shell web1`, then `sudo devbox-setup`, and tick what you want:
   Ruby, PHP + Composer (apt), C/C++ (apt), Zig, .NET, Task, plus any other
   mise tool you name.
 - **Cloud and infra CLIs:** AWS, Google Cloud, Azure, DigitalOcean, Terraform,
-  OpenTofu, kubectl, kubectx/kubens, Helm, k9s.
+  OpenTofu, and Kubernetes (kubectl, kubectx/kubens, Helm, k9s).
 - **AI:** Claude Code, Codex CLI, Gemini CLI, omp, and the MCPJungle gateway
   with MCP servers in Docker (Jira, AWS, Jenkins, context7, …).
   It asks for each server's keys and stores them in `~/.mcp/<name>/env`.
