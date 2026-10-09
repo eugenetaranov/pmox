@@ -98,45 +98,54 @@ class Picker:
 
         tab_id = self.tabs[self.tab]["id"]
         items = self.tab_items()
-        detail_h = 4
-        list_top, list_h = 4, max(1, h - 4 - detail_h - 2)
+        list_top, list_h = 4, max(1, h - 4 - 2)
         cur = min(self.cursor[tab_id], max(0, len(items) - 1))
         self.cursor[tab_id] = cur
+
+        # Rows wrap instead of being cut: the label and the source each wrap
+        # within their column, and a row is as tall as the longer of the two.
+        label_w = min(42, max([len(i["label"]) for i in items] + [10]) + 2, max(14, (w - 7) // 2))
+        src_x = 7 + label_w
+        src_w = max(10, w - src_x - 3)
+        rows = []
+        for it in items:
+            lab = textwrap.wrap(it["label"], label_w - 2, break_on_hyphens=False) or [""]
+            src = textwrap.wrap(it["source"], src_w, break_on_hyphens=False) or [""]
+            rows.append((lab, src, max(len(lab), len(src))))
+
         top = self.top[tab_id]
         if cur < top:
             top = cur
-        elif cur >= top + list_h:
-            top = cur - list_h + 1
+        while top < cur and sum(r[2] for r in rows[top:cur + 1]) > list_h:
+            top += 1
         self.top[tab_id] = top
 
-        label_w = min(42, max([len(i["label"]) for i in items] + [10]) + 2)
         if not items:
             msg = "Nothing selected yet — go back with ← and tick items with space." if tab_id == REVIEW else "(empty)"
             self.put(list_top + 1, 3, msg, self.c(3))
-        for row, it in enumerate(items[top:top + list_h]):
-            y = list_top + row
-            idx = top + row
+        y, last = list_top, top - 1
+        for idx in range(top, len(items)):
+            if y >= list_top + list_h:
+                break
+            it = items[idx]
+            lab, src, rh = rows[idx]
             sel = idx == cur
-            box = "[x]" if it["on"] else "[ ]"
-            prefix = "›" if sel else " "
-            label_attr = curses.A_BOLD if sel else 0
-            self.put(y, 1, prefix, self.c(1, curses.A_BOLD))
-            self.put(y, 3, box, self.c(2, curses.A_BOLD) if it["on"] else self.c(3))
-            self.put(y, 7, it["label"], label_attr)
-            self.put(y, 7 + label_w, it["source"], self.c(3))
+            self.put(y, 1, "›" if sel else " ", self.c(1, curses.A_BOLD))
+            self.put(y, 3, "[x]" if it["on"] else "[ ]", self.c(2, curses.A_BOLD) if it["on"] else self.c(3))
+            for n in range(rh):
+                if y + n >= list_top + list_h:
+                    break
+                if n < len(lab):
+                    self.put(y + n, 7, lab[n], curses.A_BOLD if sel else 0)
+                if n < len(src):
+                    self.put(y + n, src_x, src[n], self.c(3))
+            if y + rh <= list_top + list_h:
+                last = idx
+            y += rh
         if top > 0:
-            self.put(list_top, w - 3, "↑", self.c(3))
-        if top + list_h < len(items):
-            self.put(list_top + list_h - 1, w - 3, "↓", self.c(3))
-
-        # Detail pane: the full source of the highlighted item.
-        dy = h - detail_h - 2
-        self.put(dy, 0, "─" * (w - 1), self.c(3))
-        if items:
-            it = items[cur]
-            self.put(dy + 1, 1, it["label"], curses.A_BOLD)
-            for n, line in enumerate(textwrap.wrap(it["source"], max(20, w - 4))[:detail_h - 1]):
-                self.put(dy + 2 + n, 3, line, self.c(1))
+            self.put(list_top, w - 2, "↑", self.c(3))
+        if last < len(items) - 1:
+            self.put(list_top + list_h - 1, w - 2, "↓", self.c(3))
 
         if tab_id == REVIEW:
             keys = "space untick · ← back · enter confirm · q quit"
