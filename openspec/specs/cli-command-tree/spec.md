@@ -1,7 +1,9 @@
 # cli-command-tree Specification
 
 ## Purpose
-TBD - created by archiving change cli-noun-verb. Update Purpose after archive.
+How pmox's commands are grouped by noun and verb, which daily
+shortcuts stay at the top level, and how renamed commands keep working.
+
 ## Requirements
 ### Requirement: Noun-verb command groups
 

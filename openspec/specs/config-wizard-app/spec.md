@@ -1,7 +1,10 @@
 # config-wizard-app Specification
 
 ## Purpose
-TBD - created by archiving change config-wizard-app. Update Purpose after archive.
+How `pmox init` and `pmox config edit` run as one full-screen terminal
+app: its pages, dialogs, keys, what it writes and when, and the
+template-build hand-off.
+
 ## Requirements
 ### Requirement: Single persistent configuration app
 

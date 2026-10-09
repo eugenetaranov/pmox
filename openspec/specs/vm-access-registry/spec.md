@@ -1,7 +1,10 @@
 # vm-access-registry Specification
 
 ## Purpose
-TBD - created by archiving change vm-access-registry. Update Purpose after archive.
+How several people share pmox VMs: published public keys and grants
+kept on the cluster in /etc/pve/pmox, how pmox writes them into each
+VM's authorized_keys, and the guidance shown when a VM rejects a key.
+
 ## Requirements
 ### Requirement: Publish a public key to the cluster registry
 
