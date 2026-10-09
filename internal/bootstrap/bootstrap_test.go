@@ -72,9 +72,12 @@ func TestInjectStarterTemplate(t *testing.T) {
 	if doc["package_update"] != true || doc["runcmd"] == nil || doc["users"] == nil {
 		t.Errorf("original keys lost: %v", doc)
 	}
-	want := map[string]File{}
+	want := map[string]File{noAutoUpgrades.Path: noAutoUpgrades}
 	for _, f := range Files() {
 		want[f.Path] = f
+	}
+	if boot, _ := doc["bootcmd"].([]any); len(boot) != 1 || boot[0] != stopAutoUpgrades {
+		t.Errorf("bootcmd = %v", doc["bootcmd"])
 	}
 	if len(wfs) != len(want) {
 		t.Fatalf("got %d write_files, want %d", len(wfs), len(want))
@@ -92,7 +95,7 @@ func TestInjectStarterTemplate(t *testing.T) {
 			t.Errorf("%s: decoded content differs", w.Path)
 		}
 	}
-	for _, p := range []string{ScriptPath, ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl"} {
+	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl"} {
 		if _, ok := want[p]; !ok {
 			t.Errorf("missing %s", p)
 		}
@@ -106,7 +109,7 @@ func TestInjectKeepsExistingWriteFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, wfs := parse(t, out)
-	if wfs[0].Path != "/etc/motd" || len(wfs) != len(Files())+1 {
+	if wfs[0].Path != "/etc/motd" || len(wfs) != len(Files())+2 {
 		t.Errorf("existing entry not kept first: %+v", wfs[0])
 	}
 	if !strings.Contains(string(out), "# my comment") {
@@ -119,8 +122,19 @@ func TestInjectEmptyWriteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, wfs := parse(t, out); len(wfs) != len(Files()) {
+	if _, wfs := parse(t, out); len(wfs) != len(Files())+1 {
 		t.Errorf("got %d entries", len(wfs))
+	}
+}
+
+func TestInjectKeepsExistingBootcmd(t *testing.T) {
+	out, err := Inject([]byte("#cloud-config\nbootcmd:\n  - echo hi\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := parse(t, out)
+	if boot, _ := doc["bootcmd"].([]any); len(boot) != 2 || boot[0] != "echo hi" {
+		t.Errorf("bootcmd = %v", doc["bootcmd"])
 	}
 }
 

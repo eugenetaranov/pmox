@@ -21,7 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed devbox-setup assets
+//go:embed devbox-setup picker.py assets
 var files embed.FS
 
 // ShareDir is where the assets land on the VM; the script reads them there.
@@ -43,7 +43,14 @@ func Files() []File {
 	if err != nil {
 		panic(err) // embedded; cannot fail
 	}
-	out := []File{{Path: ScriptPath, Permissions: "0755", Content: script}}
+	picker, err := files.ReadFile("picker.py")
+	if err != nil {
+		panic(err)
+	}
+	out := []File{
+		{Path: ScriptPath, Permissions: "0755", Content: script},
+		{Path: path.Join(ShareDir, "picker.py"), Permissions: "0755", Content: picker},
+	}
 	_ = fs.WalkDir(files, "assets", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -59,9 +66,48 @@ func Files() []File {
 	return out
 }
 
+// noAutoUpgrades turns off unattended-upgrades on the dev VM: on first boot
+// it holds the dpkg lock for minutes and breaks installs (devbox-setup's,
+// and vendor scripts' own apt-get calls).
+var noAutoUpgrades = File{
+	Path:        "/etc/apt/apt.conf.d/20auto-upgrades",
+	Permissions: "0644",
+	Content: []byte(`// Written by pmox: no unattended upgrades on dev VMs.
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
+`),
+}
+
+// stopAutoUpgrades runs as a bootcmd, before the apt timers can fire.
+const stopAutoUpgrades = "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
+
+// seq returns root's sequence under key, creating it (or converting an
+// empty value) when needed.
+func seq(root *yaml.Node, key string) (*yaml.Node, error) {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != key {
+			continue
+		}
+		v := root.Content[i+1]
+		switch {
+		case v.Kind == yaml.SequenceNode:
+			return v, nil
+		case v.Tag == "!!null":
+			v.Kind, v.Tag, v.Value = yaml.SequenceNode, "", ""
+			return v, nil
+		default:
+			return nil, fmt.Errorf("cloud-init %s is not a list", key)
+		}
+	}
+	v := &yaml.Node{Kind: yaml.SequenceNode}
+	root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, v)
+	return v, nil
+}
+
 // Inject returns userData with the devbox-setup files appended to its
-// write_files list (created when absent). Everything else is kept as is.
-// userData must be a cloud-config mapping document.
+// write_files list and unattended upgrades turned off (bootcmd + an apt
+// config file). Everything else is kept as is. userData must be a
+// cloud-config mapping document.
 func Inject(userData []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(userData, &doc); err != nil {
@@ -72,25 +118,17 @@ func Inject(userData []byte) ([]byte, error) {
 	}
 	root := doc.Content[0]
 
-	var list *yaml.Node
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "write_files" {
-			list = root.Content[i+1]
-			break
-		}
+	list, err := seq(root, "write_files")
+	if err != nil {
+		return nil, err
 	}
-	if list == nil {
-		list = &yaml.Node{Kind: yaml.SequenceNode}
-		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "write_files"}, list)
-	} else if list.Kind != yaml.SequenceNode {
-		if list.Tag == "!!null" {
-			list.Kind, list.Tag, list.Value = yaml.SequenceNode, "", ""
-		} else {
-			return nil, fmt.Errorf("cloud-init write_files is not a list")
-		}
+	boot, err := seq(root, "bootcmd")
+	if err != nil {
+		return nil, err
 	}
+	boot.Content = append(boot.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: stopAutoUpgrades})
 
-	for _, f := range Files() {
+	for _, f := range append(Files(), noAutoUpgrades) {
 		enc, err := gzipB64(f.Content)
 		if err != nil {
 			return nil, err

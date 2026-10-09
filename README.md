@@ -410,9 +410,11 @@ to rewrite the cloud-init file with the new key.
 
 Every VM pmox launches gets `devbox-setup`, an interactive installer you run
 on the VM itself. It's the alternative to provisioning from outside with
-tack. Run `pmox shell web1`, then `sudo devbox-setup`. Nothing is
-preselected: tick items with space, press enter to go to the next screen.
-Every item shows how it will be installed, e.g. `mise use -g terraform`.
+tack. Run `pmox shell web1`, then `sudo devbox-setup`. Categories are tabs
+across the top (←/→ to switch) above a checklist: nothing is preselected and
+only space ticks an item. Every item shows how it will be installed, e.g.
+`mise use -g terraform`, and the pane below shows the full command for the
+highlighted one. The last tab, Review, lists everything ticked.
 
 1. **System (root):** essentials (git, curl, jq, gh, build tools), admin and
    debug tools (dig, mtr, tcpdump, strace, ncdu, …), Docker, Podman, Tailscale.
@@ -442,8 +444,11 @@ Run it again any time to add more. Choices accumulate in
 re-applies all of them without asking.
 
 The script is embedded in pmox and added to the VM's cloud-init at launch.
-Your cloud-init file is not changed, and nothing is downloaded at boot. To turn
-it off for a server, set `devbox_setup: false` under that server in
+Your cloud-init file is not changed, and nothing is downloaded at boot. The
+same injection turns off unattended-upgrades and the apt-daily timers:
+on first boot they hold the dpkg lock and make installs fail. Security
+updates on these VMs are then up to you (`sudo apt upgrade`). To turn all of
+this off for a server, set `devbox_setup: false` under that server in
 `config.yaml`.
 
 ## Post-create hooks

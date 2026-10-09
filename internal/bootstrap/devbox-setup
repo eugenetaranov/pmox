@@ -44,7 +44,7 @@ CATALOG_ROWS=(
   "podman|system|Podman (rootless)|apt|podman uidmap slirp4netns||"
   "tailscale|system|Tailscale|fn|||curl tailscale.com/install.sh · then tailscale up"
 
-  "cli|shell|Modern CLI tools|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv …"
+  "cli|shell|Modern CLI tools|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree htop (+ fd/bat links)"
   "editors|shell|Neovim + Vim|apt|neovim vim||"
   "tmux|shell|tmux|apt|tmux||"
   "zellij|shell|zellij|fn|||release binary → /usr/local/bin/zellij"
@@ -93,9 +93,8 @@ HIDDEN_ROWS=(
   "rubydeps|-|Ruby build dependencies|apt|libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev libgmp-dev||"
   "mise|-|mise|fn|||apt mise (mise.jdx.dev repo)"
 )
-SCREENS=("system|System (root)" "shell|Shell and CLI"
-         "lang|Languages" "cloud|Cloud · IaC · Kubernetes"
-         "ai|AI tools" "accounts|Accounts and keys")
+SCREENS=("system|System" "shell|Shell & CLI" "lang|Languages"
+         "cloud|Cloud & K8s" "ai|AI" "accounts|Accounts")
 
 YES=0 DRY=0
 ARGS=("$@")
@@ -146,12 +145,6 @@ source_of() {
     apt)  echo "apt install $what" ;;
     *)    field "$1" 7 ;;
   esac
-}
-# menu_line ID — "label   source" for the checklists, cut to fit 100 columns.
-menu_line() {
-  local src; src=$(source_of "$1")
-  [ ${#src} -gt 58 ] && src="${src:0:57}…"
-  printf '%-40s %s' "$(label_of "$1")" "$src"
 }
 
 # --- Saved answers -----------------------------------------------------------
@@ -242,7 +235,17 @@ ok()     { color 32 "$*"; }
 warn()   { color 33 "$*"; }
 err()    { color 31 "$*"; }
 
-TOGGLE_HINT="space toggles · enter continues"
+# pick VAR TITLE ITEMS-FILE [--no-review] — run the tabbed checklist
+# (picker.py, curses) and put the chosen ids in VAR. Quitting exits.
+pick() {
+  local var=$1 title=$2 items=$3 out; shift 3
+  out=$(mktemp)
+  if ! python3 "$SHARE/picker.py" "$items" --out "$out" --title "$title" "$@"; then
+    rm -f "$out" "$items"; say "Cancelled."; exit 0
+  fi
+  printf -v "$var" '%s' "$(cat "$out")"
+  rm -f "$out" "$items"
+}
 
 # --- MCP catalog helpers -------------------------------------------------------
 
@@ -287,21 +290,17 @@ ask() {
   A_USER=$(gum input --header "Set up for which user?" --value "$u_default")
   { [ -n "$A_USER" ] && id "$A_USER" >/dev/null 2>&1; } || die "user '$A_USER' does not exist"
 
-  # 1. Pick (lists only).
-  local picks= s screen title i=0 r id
-  for s in "${SCREENS[@]}"; do
-    i=$((i + 1)); screen=${s%%|*}; title=${s#*|}
-    local opts=()
+  # 1. Pick: one tabbed checklist over every category.
+  local items s r id
+  items=$(mktemp)
+  {
+    for s in "${SCREENS[@]}"; do echo "T|${s%%|*}|${s#*|}"; done
     for r in "${CATALOG_ROWS[@]}"; do
-      [ "$(echo "$r" | cut -d'|' -f2)" = "$screen" ] || continue
       id=${r%%|*}
-      opts+=("$(menu_line "$id")|$id")
+      echo "I|$(field "$id" 2)|$id|$(label_of "$id")|$(source_of "$id")"
     done
-    picks="$picks $(gum choose --no-limit --height 16 --label-delimiter '|' \
-      --header "$i/${#SCREENS[@]} $title — $TOGGLE_HINT (nothing ticked = skip)" \
-      "${opts[@]}" | tr '\n' ' ')"
-  done
-  RUN_PICKS=$(echo $picks)
+  } > "$items"
+  pick RUN_PICKS "devbox-setup — pick what to install" "$items"
 
   # 2. Type (every text prompt in one place).
   ask_mise_extra
@@ -354,15 +353,16 @@ ask_mcp() {
     --selected "$( [ "${A_MCP_LISTEN:-127.0.0.1}" = 127.0.0.1 ] && echo "$one" || echo "$all")" "$one" "$all")
   case "$l" in all*) A_MCP_LISTEN=0.0.0.0 ;; *) A_MCP_LISTEN=127.0.0.1 ;; esac
 
-  local mopts=() s n desc
-  for s in "$(catalog_dir)"/*.spec; do
-    n=$(basename "$s" .spec); desc=$(spec_field "$n" DESCRIPTION); desc=${desc//,/ ·}
-    mopts+=("$n — $desc|$n")
-  done
-  local chosen
-  chosen=$(gum choose --no-limit --label-delimiter '|' --header "MCP servers — $TOGGLE_HINT" \
-    "${mopts[@]}" | tr '\n' ' ')
-  RUN_MCP_SERVERS=$(echo $chosen)
+  local items s n
+  items=$(mktemp)
+  {
+    echo "T|mcp|MCP servers"
+    for s in "$(catalog_dir)"/*.spec; do
+      n=$(basename "$s" .spec)
+      echo "I|mcp|$n|$n|$(spec_field "$n" DESCRIPTION) · $(spec_field "$n" IMAGE)$(spec_field "$n" URL)"
+    done
+  } > "$items"
+  pick RUN_MCP_SERVERS "MCPJungle — which MCP servers?" "$items" --no-review
   # Servers set up before stay enabled (drop one by editing ~/.mcp/servers).
   A_MCP_SERVERS=$(merge "$A_MCP_SERVERS" "$RUN_MCP_SERVERS")
 
@@ -399,9 +399,12 @@ ask_mcp_keys() {
     faint "Leave a value empty to fill it in later in $envf"
     if [ ${#optional[@]} -gt 0 ]; then
       # Not via <(…): a process substitution can't read the terminal.
-      local chosen
-      chosen=$(gum choose --no-limit --header "Optional settings for $n — $TOGGLE_HINT (or just enter to skip)" \
-        "${optional[@]}" || true)
+      local items chosen=
+      items=$(mktemp)
+      { echo "T|opt|Optional settings"
+        for key in "${optional[@]}"; do echo "I|opt|$key|$key|optional · leave unticked to skip"; done
+      } > "$items"
+      pick chosen "$n — optional settings (enter to skip)" "$items" --no-review
       for opt in $chosen; do active+=("$opt"); done
     fi
     for key in "${active[@]}"; do
@@ -425,7 +428,7 @@ summary() {
     local id
     for id in $PLAN; do
       [ "$(field "$id" 2)" = - ] && [ "$id" != mise ] && continue
-      printf '  ✓ %s\n' "$(menu_line "$id")"
+      printf '  ✓ %-40s %s\n' "$(label_of "$id")" "$(source_of "$id")"
     done
     [ -n "$RUN_MISE_EXTRA" ] && printf '  ✓ %-40s mise use -g %s\n' "Extra mise tools" "$RUN_MISE_EXTRA"
     if picked mcpjungle; then
@@ -433,7 +436,7 @@ summary() {
     fi
     picked gitid && [ -n "$A_GIT_NAME$A_GIT_EMAIL" ] && echo "Git: $A_GIT_NAME <$A_GIT_EMAIL>"
     true
-  } | sed 's/^/  │ /'
+  } | sed 's/^/  /'
 }
 
 # review — show the plan; returns 0 to install, 1 to start over.
@@ -732,6 +735,10 @@ step() {
 FAILED=
 apply() {
   mkdir -p "$STATE"; : > "$LOG"; chmod 600 "$LOG"; rm -f "$STATE/.apt-fresh"
+  # Every apt-get waits for the dpkg lock instead of failing, including
+  # those inside vendor install scripts (tailscale, …). pmox also turns off
+  # unattended-upgrades at boot; this covers older VMs and other hosts.
+  echo 'DPkg::Lock::Timeout "900";' | put_file /etc/apt/apt.conf.d/90devbox-setup 0644 || true
   local id
   for id in $PLAN; do
     [ "$id" = github ] && continue
