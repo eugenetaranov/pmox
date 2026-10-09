@@ -43,5 +43,6 @@
 
 - [x] 8.1 README "Sharing VMs between users" section and llms.txt entries; required privileges in docs/pve-setup.md
 - [x] 8.2 `go vet`, `task lint`, `task test`, `openspec validate vm-access-registry`
-- [ ] 8.3 Manual end-to-end on a real cluster with two local users: publish, interactive grant, shell as the second user, revoke, launch with an all-VM grantee
-  - Done single-user on PVE 9.1.1 (scratch VM): publish, grant, guest block written (owner/mode kept), list in sync, doctor 3/3, revoke removes block, rejected-key guidance exits 10; found and fixed a non-ASCII file-write bug. Remaining: a second OS user, interactive grant, all-VM grant at launch.
+- [x] 8.3 Manual end-to-end on a real cluster with two local users: publish, interactive grant, shell as the second user, revoke, launch with an all-VM grantee
+  - Done single-user on PVE 9.1.1 (scratch VM): publish, grant, guest block written (owner/mode kept), list in sync, doctor 3/3, revoke removes block, rejected-key guidance exits 10; found and fixed a non-ASCII file-write bug.
+  - Second user (separate HOME and key, published as `bob`): all-VM grant then launch applies bob's key to the new VM, bob runs exec and an interactive shell, revoke locks bob out (exit 10), `access setup` grants one VM interactively. Found and fixed: rejection guidance looked the caller up by local username only, so a key published with `--name` was reported as "a different key"; it now matches the key by fingerprint first.

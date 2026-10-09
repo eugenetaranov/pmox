@@ -47,6 +47,7 @@
 ## 7. Verification and docs
 
 - [x] 7.1 teatest end-to-end flows: happy path, unreachable-then-fixed URL, changed cert declined, first-time host key accepted, Esc back from Access, edit-from-Review, Ctrl-C mid-probe (exit 130, nothing written), config edit opens on Review
-- [ ] 7.2 Manual run against a real PVE cluster: fresh init, re-init over an existing server, config edit, build-template hand-off; check resize and narrow terminals
+- [x] 7.2 Manual run against a real PVE cluster: fresh init, re-init over an existing server, config edit, build-template hand-off; check resize and narrow terminals
+  - Done on PVE 9.1.1 through a pty + terminal emulator, in throwaway homes: fresh init (paste token, first-time host key, write), re-init over the same URL (overwrite declined → no changes; accepted → saved), config edit opens on Review, build-template hand-off reaches the image picker after save; 60x20 clips with the enlarge hint, wider than 100 columns keeps the 100-column frame. Found and fixed: the bootstrap SSH key was generated on Access submit, so quitting before Confirm left `~/.ssh/pmox_ed25519` behind; it is now created on save.
 - [x] 7.3 `go vet`, `task lint`, `task test`, `openspec validate config-wizard-app`
 - [x] 7.4 Update the README `pmox init` section and `llms.txt` to describe the single-screen wizard and its keys (Esc back, Ctrl-C quit)
