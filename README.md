@@ -411,30 +411,53 @@ to rewrite the cloud-init file with the new key.
 Every VM pmox launches gets `devbox-setup`, an interactive installer you run
 on the VM itself. It's the alternative to provisioning from outside with
 tack. Run `pmox shell web1`, then `sudo devbox-setup`. Categories are tabs
-across the top (←/→ to switch) above a checklist: nothing is preselected and
-only space ticks an item. Every item shows how it will be installed, e.g.
-`mise use -g terraform`, and the pane below shows the full command for the
-highlighted one. The last tab, Review, lists everything ticked.
+across the top (←/→ or 1–9 to switch) above a checklist: nothing is
+preselected and only space ticks an item. Every item shows how it will be
+installed, e.g. `mise use -g terraform`, wrapped to fit the terminal. The
+last tab, Review, lists everything ticked.
 
-1. **System (root):** essentials (git, curl, jq, gh, build tools), admin and
-   debug tools (dig, mtr, tcpdump, strace, ncdu, …), Docker, Podman, Tailscale.
+1. **System (root):** etckeeper, essentials (git, curl, jq, gh, build tools),
+   admin and debug tools (dig, mtr, tcpdump, iperf3, nmap, strace, btop, …),
+   Docker (with log rotation and 10.200.0.0/16 networks), Podman + skopeo +
+   buildah, container tools (lazydocker, dive, hadolint, crane, cosign),
+   Tailscale, NFS/SMB clients, node_exporter + glances. Settings: dev limits
+   (inotify, open files), zram swap, a journal size cap, timezone + locale,
+   chrony synced to the Proxmox host clock. Opt-in hardening: automatic
+   security updates, quiet needrestart, SSH keys only, ufw, fail2ban.
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
-   delta, direnv), Neovim + Vim, tmux, zellij, zsh + oh-my-zsh + powerlevel10k,
-   a curated vim config, yq, Task. The shell and vim entries replace your
-   `.zshrc`/`.vimrc`, keeping the old ones as `.orig`.
-3. **Languages** (mise, except PHP and C/C++ from apt): Go, Python + uv,
-   Node + pnpm + TypeScript, Bun, Deno, Java + Maven + Gradle + Kotlin, Rust,
-   Ruby, PHP + Composer, C/C++, Zig, .NET.
-4. **Cloud, IaC and Kubernetes** (mise): AWS, Google Cloud, Azure,
-   DigitalOcean, Terraform, OpenTofu, Packer, Ansible, sops + age, Kubernetes
-   CLIs (kubectl, kubectx/kubens, helm, k9s), kind.
-5. **AI:** Claude Code, Codex CLI, Gemini CLI, omp, and the MCPJungle gateway
-   with MCP servers in Docker (Jira, AWS, Jenkins, context7, …).
-6. **Accounts and keys:** git identity, an SSH key, GitHub CLI login with the
-   key added to your account.
+   delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
+   zsh + oh-my-zsh + powerlevel10k (with autosuggestions and syntax
+   highlighting), a curated vim config, man pages + tldr. "Shell niceties"
+   turns the CLI tools on (zoxide, fzf keys, direnv, eza/bat aliases) through
+   `~/.config/devbox/shell.sh`, sourced from `.zshrc` and `.bashrc`; "tmux
+   config" writes `~/.tmux.conf`. The shell, vim and tmux entries replace your
+   files, keeping the old ones as `.orig`.
+3. **Dev tools:** lazygit, just + watchexec + hyperfine, Task, yq, xh + hurl,
+   linters and hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit),
+   database clients, pgcli + usql, perf/valgrind/bpftrace, act.
+4. **Languages** (mise, except PHP and C/C++ from apt): Go + gopls, delve,
+   govulncheck, golangci-lint; Python 3.13 + uv + ruff; Node + pnpm +
+   TypeScript; Bun; Deno; Java 25 + Maven + Gradle + Kotlin; Rust +
+   rust-analyzer + cargo-binstall; Ruby; PHP + Composer; C/C++; Zig; .NET.
+5. **Cloud** (mise): AWS, Google Cloud, Azure, DigitalOcean, Hetzner,
+   cloudflared, restic + rclone.
+6. **IaC** (mise): Terraform, OpenTofu, terragrunt + tflint + terraform-docs,
+   trivy + checkov, Packer, Ansible, sops + age, Vault.
+7. **Kubernetes:** kubectl, kubectx/kubens, Helm 3, k9s; stern, kustomize,
+   kubecolor, kubie, kubeconform; krew with plugins; helmfile + helm-diff;
+   Argo CD and Flux CLIs; kind, k3d, or k3s as a real cluster on the VM;
+   Tilt, Skaffold, ctlptl; talosctl.
+8. **AI:** Claude Code, Codex CLI, Gemini CLI, OpenCode, Aider, Goose, omp,
+   Ollama, OpenSpec, ECC for Claude Code (agents, rules and commands, no hooks), a `CLAUDE.md` /
+   `AGENTS.md` describing the VM, and the MCPJungle gateway with MCP servers
+   in Docker (Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex
+   and Gemini CLI.
+9. **Accounts and keys:** git identity, git defaults (rebase on pull, push
+   sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
+   GitHub CLI login with the key added to your account, GitLab CLI.
 
 After the checklists, it asks every typed question in one place: extra mise
-tools, git name and email, and MCP server keys (stored in
+tools, git name and email, timezone, and MCP server keys (stored in
 `~/.mcp/<name>/env`). Then a review screen offers Install, Start over or Quit.
 `~/devbox-setup.txt` lists everything installed so far, grouped by how it was
 installed, with how to update or remove it.
@@ -447,15 +470,19 @@ The script is embedded in pmox and added to the VM's cloud-init at launch.
 Your cloud-init file is not changed, and nothing is downloaded at boot. The
 same injection turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security
-updates on these VMs are then up to you (`sudo apt upgrade`). To turn
+updates on these VMs are then up to you (`sudo apt upgrade`), or tick
+"Automatic security updates" in devbox-setup: it turns them back on and
+leaves `/etc/devbox-setup/auto-upgrades`, which tells the boot-time line to
+stand down. To turn
 devbox-setup off for a server, set `devbox_setup: false` under that server in
 `config.yaml`.
 
 The starter cloud-init (`pmox init`, or `pmox config cloud-init --regenerate`)
 carries the same `bootcmd` line, visible and editable, so it applies with
 `devbox_setup: false` too. To keep unattended upgrades, delete the line and
-set `devbox_setup: false`. An older cloud-init file doesn't have it; add the line by hand or
-regenerate the file.
+set `devbox_setup: false`. An older cloud-init file doesn't have the line, or
+has it without the opt-in check. With devbox-setup on, pmox swaps in the
+current line at launch; otherwise regenerate the file.
 
 ## Post-create hooks
 

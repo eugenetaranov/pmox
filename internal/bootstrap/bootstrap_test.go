@@ -95,7 +95,7 @@ func TestInjectStarterTemplate(t *testing.T) {
 			t.Errorf("%s: decoded content differs", w.Path)
 		}
 	}
-	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl"} {
+	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/daemon.json"} {
 		if _, ok := want[p]; !ok {
 			t.Errorf("missing %s", p)
 		}
@@ -138,11 +138,48 @@ func TestInjectKeepsExistingBootcmd(t *testing.T) {
 	}
 }
 
+func TestInjectGuardsBootcmd(t *testing.T) {
+	if !strings.HasPrefix(stopAutoUpgrades, "[ -e "+AutoUpgradesMarker+" ] ||") {
+		t.Errorf("bootcmd does not yield to the opt-in marker: %s", stopAutoUpgrades)
+	}
+	// A cloud-init file written before the guard gets the guarded command
+	// in place of the old one, not both.
+	out, err := Inject([]byte("#cloud-config\nbootcmd:\n  - \"" + legacyStopAutoUpgrades + "\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := parse(t, out)
+	if boot, _ := doc["bootcmd"].([]any); len(boot) != 1 || boot[0] != stopAutoUpgrades {
+		t.Errorf("bootcmd = %v", doc["bootcmd"])
+	}
+}
+
+func TestStarterTemplateBootcmdMatches(t *testing.T) {
+	in, err := config.RenderTemplate("ubuntu", "ssh-ed25519 AAAA test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(in, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if boot, _ := doc["bootcmd"].([]any); len(boot) != 1 || boot[0] != stopAutoUpgrades {
+		t.Errorf("starter template bootcmd = %v, want %q", doc["bootcmd"], stopAutoUpgrades)
+	}
+}
+
 func TestInjectRejectsNonMapping(t *testing.T) {
 	for _, in := range []string{"#cloud-config\n- a\n- b\n", "key: [unclosed\n", "write_files: nope\n"} {
 		if _, err := Inject([]byte(in)); err == nil {
 			t.Errorf("Inject(%q) = nil error", in)
 		}
+	}
+}
+
+func TestScriptUsesMarker(t *testing.T) {
+	script, _ := files.ReadFile("devbox-setup")
+	if !strings.Contains(string(script), "AUTO_UPGRADES_MARKER="+AutoUpgradesMarker+"\n") {
+		t.Errorf("script's AUTO_UPGRADES_MARKER does not match %s", AutoUpgradesMarker)
 	}
 }
 

@@ -22,15 +22,22 @@ LOG=$STATE/last-run.log
 BIN=/usr/local/bin
 KEYRINGS=/etc/apt/keyrings
 CATALOG=/usr/local/share/mcp-catalog
+# pmox's bootcmd leaves the apt timers on when this exists (bootstrap.go).
+AUTO_UPGRADES_MARKER=/etc/devbox-setup/auto-upgrades
 
 # 0.17: gum 2 multi-selects no longer toggle with space.
 GUM_VERSION=0.17.0
 MCPJUNGLE_VERSION=0.4.6
 MCPJUNGLE_PORT=8080
+ECC_VERSION=2.2.3
 
-# Kept in step with tack-roles: roles/devbox/defaults/main.yaml.
+# Kept in step with tack-roles: roles/devbox/defaults/main.yaml, plus
+# autosuggestions and syntax-highlighting (which must stay last).
 ZSH_THEME_NAME="powerlevel10k/powerlevel10k"
-ZSH_PLUGINS="git terraform kubectl aws wd zsh-fzf-history-search"
+ZSH_PLUGINS="git terraform kubectl aws wd zsh-fzf-history-search zsh-autosuggestions zsh-syntax-highlighting"
+# pmox's own config files (conf/ in the pmox repo).
+CONF=$SHARE/conf
+DROPIN_LINE='[ -r ~/.config/devbox/shell.sh ] && . ~/.config/devbox/shell.sh'
 
 # The catalog, in install order:
 #   id | screen | label | how | what | needs | source
@@ -38,63 +45,116 @@ ZSH_PLUGINS="git terraform kubectl aws wd zsh-fzf-history-search"
 #       · fn (install_<id>, described by "source") · ask (a setting)
 # Labels must not contain "|".
 CATALOG_ROWS=(
-  "essentials|system|Essentials|apt|git curl wget ca-certificates unzip zip build-essential jq gh||"
-  "debug|system|Admin and debug tools|apt|dnsutils mtr-tiny tcpdump lsof strace sysstat iotop ncdu netcat-openbsd socat rsync btop||"
-  "docker|system|Docker Engine (docker group = root)|fn|||apt docker-ce (download.docker.com repo)"
-  "podman|system|Podman (rootless)|apt|podman uidmap slirp4netns||"
+  "etckeeper|system|etckeeper (/etc history in git; install it first)|apt|etckeeper||"
+  "essentials|system|Essentials (recommended)|apt|git curl wget ca-certificates unzip zip build-essential jq gh||"
+  "debug|system|Admin and debug tools (network, disk, process)|apt|bind9-dnsutils mtr-tiny traceroute tcpdump iperf3 ethtool nmap iftop lsof strace ltrace sysstat iotop-c ncdu duf pv lnav netcat-openbsd socat rsync btop||"
+  "docker|system|Docker Engine + Compose|fn|||apt docker-ce (download.docker.com repo) · log rotation, 10.200/16 networks · docker group = root"
+  "podman|system|Podman (rootless) + skopeo + buildah|apt|podman uidmap slirp4netns passt skopeo buildah||"
+  "ctools|system|Container tools (lazydocker, dive, hadolint, crane, cosign)|mise|lazydocker@latest dive@latest hadolint@latest crane@latest cosign@latest|docker|"
   "tailscale|system|Tailscale|fn|||curl tailscale.com/install.sh · then tailscale up"
+  "netfs|system|NFS + SMB clients|apt|nfs-common cifs-utils autofs||"
+  "monitoring|system|node_exporter (localhost:9100) + glances|fn||mise|apt prometheus-node-exporter · mise pipx:glances"
+  "devlimits|system|Dev limits: inotify watches, open files, map count|fn|||/etc/sysctl.d, limits.d, system.conf.d: 60-devbox.conf"
+  "zram|system|Compressed swap in RAM (zram)|fn|||apt systemd-zram-generator · zram0 = half of RAM, max 8 GB"
+  "journald|system|Cap the journal at 200 MB|fn|||/etc/systemd/journald.conf.d/60-devbox.conf"
+  "tzlocale|system|Timezone + en_US.UTF-8 locale|ask|||timedatectl set-timezone · locale-gen · apt locales-all"
+  "chrony|system|Clock from the Proxmox host (chrony + PTP)|fn|||apt chrony · ptp_kvm refclock · steps after snapshot rollbacks"
+  "autoupdates|system|Automatic security updates (no auto-reboot)|fn|||unattended-upgrades · undoes pmox's boot-time switch-off"
+  "needrestart|system|needrestart: restart services quietly after apt|fn|||/etc/needrestart/conf.d/devbox.conf · no kernel pop-ups"
+  "sshharden|system|SSH: keys only, no root login (advanced)|fn|||/etc/ssh/sshd_config.d/10-devbox.conf · refuses if you have no authorized key"
+  "ufw|system|Firewall: only SSH, Tailscale, mosh in (advanced)|fn|||ufw · note: Docker's published ports bypass it"
+  "fail2ban|system|fail2ban: ban SSH brute force (internet-facing VMs)|fn|||apt fail2ban · sshd jail · Tailscale IPs never banned"
 
-  "cli|shell|Modern CLI tools|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree htop (+ fd/bat links)"
-  "editors|shell|Neovim + Vim|apt|neovim vim||"
+  "cli|shell|CLI upgrades (ripgrep, fd, bat, eza, fzf, zoxide, delta, direnv)|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree (+ fd/bat links)"
+  "editors|shell|Vim|apt|vim||"
+  "neovim|shell|Neovim (latest)|mise|neovim@latest||"
   "tmux|shell|tmux|apt|tmux||"
-  "zellij|shell|zellij|fn|||release binary → /usr/local/bin/zellij"
-  "shell|shell|zsh + oh-my-zsh + p10k (writes .zshrc)|fn|||apt zsh · git clone ~/.oh-my-zsh · .zshrc.orig kept"
+  "zellij|shell|zellij (tmux alternative)|mise|zellij@latest||"
+  "mosh|shell|mosh (SSH that survives sleep and roaming)|apt|mosh||"
+  "shell|shell|zsh + oh-my-zsh + p10k (prompt wizard on first login)|fn|||apt zsh · git clone ~/.oh-my-zsh · .zshrc.orig kept"
   "vimcfg|shell|Vim config + plugins (writes .vimrc)|fn||editors|vim-plug · curated ~/.vimrc · .vimrc.orig kept"
-  "yq|shell|yq (YAML processor)|mise|yq@latest||"
-  "task|shell|Task (go-task)|mise|task@latest||"
+  "shellcfg|shell|Shell niceties: z, fzf keys, direnv, eza/bat aliases|fn|||~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
+  "tmuxcfg|shell|tmux config (mouse, splits, 50k history)|fn||tmux|~/.tmux.conf · .tmux.conf.orig kept"
+  "docs|shell|Man pages, completion, tldr|fn|||apt man-db manpages-dev bash-completion command-not-found plocate tealdeer · unminimize if needed"
 
-  "go|lang|Go + golangci-lint|mise|go@latest golangci-lint@latest||"
-  "python|lang|Python 3.12 + uv|mise|python@3.12 uv@latest||"
+  "lazygit|dev|lazygit (git TUI)|mise|lazygit@latest||"
+  "runners|dev|just + watchexec + hyperfine|mise|just@latest watchexec@latest hyperfine@latest||"
+  "task|dev|Task (Makefile alternative)|mise|task@latest||"
+  "yq|dev|yq (YAML processor)|mise|yq@latest||"
+  "http|dev|HTTP clients (xh, hurl)|mise|xh@latest hurl@latest||"
+  "lint|dev|Linters + hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit)|mise|shellcheck@latest shfmt@latest actionlint@latest gitleaks@latest uv@latest pipx:pre-commit||"
+  "dbclients|dev|DB clients (psql, mariadb, sqlite3, redis-cli)|apt|postgresql-client mariadb-client sqlite3 redis-tools||"
+  "pgcli|dev|pgcli + usql (friendlier DB shells)|mise|uv@latest pipx:pgcli usql@latest||"
+  "profiling|dev|Profiling (perf, valgrind, bpftrace)|fn|||apt linux-tools-\$(uname -r) valgrind bpftrace bpfcc-tools"
+  "act|dev|act (run GitHub Actions locally)|mise|act@latest|docker|"
+
+  "go|lang|Go + gopls, delve, govulncheck, golangci-lint|mise|go@latest golangci-lint@latest go:golang.org/x/tools/gopls@latest go:github.com/go-delve/delve/cmd/dlv@latest go:golang.org/x/vuln/cmd/govulncheck@latest||"
+  "python|lang|Python 3.13 + uv + ruff|mise|python@3.13 uv@latest ruff@latest||"
   "node|lang|Node.js LTS + pnpm + TypeScript|mise|node@lts pnpm@latest npm:typescript@latest||"
   "bun|lang|Bun|mise|bun@latest||"
   "deno|lang|Deno|mise|deno@latest||"
-  "java|lang|Java 21 + Maven + Gradle + Kotlin|mise|java@21 maven@latest gradle@latest kotlin@latest||"
-  "rust|lang|Rust (rustup)|mise|rust@stable||"
+  "java|lang|Java 25 (Temurin) + Maven + Gradle + Kotlin|mise|java@temurin-25 maven@latest gradle@latest kotlin@latest||"
+  "rust|lang|Rust (rustup) + rust-analyzer + cargo-binstall|mise|rust@stable cargo-binstall@latest||"
   "ruby|lang|Ruby (builds from source ~5 min)|mise|ruby@latest|rubydeps|"
   "php|lang|PHP + Composer|apt|php-cli php-mbstring php-xml php-curl php-zip php-sqlite3 composer||"
-  "cpp|lang|C/C++ (gcc clang cmake gdb)|apt|build-essential clang clangd cmake ninja-build gdb pkg-config||"
+  "cpp|lang|C/C++ (gcc clang cmake gdb)|apt|clang clangd cmake ninja-build gdb pkg-config|essentials|"
   "zig|lang|Zig|mise|zig@latest||"
   "dotnet|lang|.NET SDK|mise|dotnet@latest||"
 
   "aws|cloud|AWS CLI|mise|aws-cli@latest||"
-  "gcloud|cloud|Google Cloud CLI|mise|gcloud@latest||"
-  "azure|cloud|Azure CLI|mise|uv@latest pipx:azure-cli||"
+  "gcloud|cloud|Google Cloud CLI (large)|mise|gcloud@latest||"
+  "azure|cloud|Azure CLI (large)|mise|uv@latest pipx:azure-cli||"
   "doctl|cloud|DigitalOcean doctl|mise|doctl@latest||"
-  "terraform|cloud|Terraform|mise|terraform@latest||"
-  "opentofu|cloud|OpenTofu|mise|opentofu@latest||"
-  "packer|cloud|Packer|mise|packer@latest||"
-  "ansible|cloud|Ansible|mise|uv@latest pipx:ansible||"
-  "sops|cloud|sops + age (secrets in git)|mise|sops@latest age@latest||"
-  "k8s|cloud|Kubernetes CLIs|mise|kubectl@latest kubectx@latest kubens@latest helm@latest k9s@latest||"
-  "kind|cloud|kind (local k8s in Docker)|mise|kind@latest|docker|"
+  "hcloud|cloud|Hetzner Cloud CLI|mise|hcloud@latest||"
+  "cloudflared|cloud|cloudflared (Cloudflare tunnels)|mise|cloudflared@latest||"
+  "backup|cloud|restic + rclone (backups, cloud storage)|mise|restic@latest rclone@latest||"
+
+  "terraform|iac|Terraform|mise|terraform@latest||"
+  "opentofu|iac|OpenTofu|mise|opentofu@latest||"
+  "iaclint|iac|Terraform helpers (terragrunt, tflint, terraform-docs)|mise|terragrunt@latest tflint@latest terraform-docs@latest||"
+  "iacscan|iac|IaC and image scanners (trivy, checkov)|mise|trivy@latest uv@latest pipx:checkov||"
+  "packer|iac|Packer|mise|packer@latest||"
+  "ansible|iac|Ansible|mise|uv@latest pipx:ansible||"
+  "sops|iac|sops + age (secrets in git)|mise|sops@latest age@latest||"
+  "vault|iac|Vault CLI|mise|vault@latest||"
+
+  "k8s|k8s|Kubernetes CLIs (kubectl, kubectx, helm 3, k9s)|mise|kubectl@latest kubectx@latest kubens@latest helm@3 k9s@latest||"
+  "k8sextra|k8s|K8s extras (stern, kustomize, kubecolor, kubie, kubeconform)|mise|stern@latest kustomize@latest kubecolor@latest kubie@latest kubeconform@latest|k8s|"
+  "krew|k8s|kubectl krew + plugins (neat, tree, view-secret)|fn||k8s|krew release → ~/.krew · kubectl krew install neat tree view-secret"
+  "helmfile|k8s|helmfile + helm-diff|fn||k8s|mise use -g helmfile · helm plugin install helm-diff"
+  "gitops|k8s|GitOps CLIs (Argo CD, Flux)|mise|argocd@latest flux2@latest|k8s|"
+  "kind|k8s|kind (local k8s in Docker)|mise|kind@latest|docker|"
+  "k3d|k8s|k3d (k3s in Docker)|mise|k3d@latest|docker|"
+  "k3s|k8s|k3s cluster on this VM (systemd)|fn|||curl get.k3s.io · kubeconfig → ~/.kube/config if absent"
+  "devloop|k8s|Inner loop (Tilt, Skaffold, ctlptl)|mise|tilt@latest skaffold@latest ctlptl@latest|k8s|"
+  "talos|k8s|talosctl (Talos Linux)|mise|talosctl@latest||"
 
   "claude|ai|Claude Code|fn|||apt claude-code (Anthropic repo)"
   "codex|ai|OpenAI Codex CLI|mise|codex@latest||"
   "gemini|ai|Gemini CLI|mise|gemini@latest|node|"
-  "omp|ai|omp (oh-my-pi)|fn|||curl omp.sh/install → /usr/local/bin/omp"
+  "opencode|ai|OpenCode|mise|opencode@latest||"
+  "aider|ai|Aider|mise|uv@latest pipx:aider-chat[uvx_args=--python=3.12]||"
+  "goose|ai|Goose|mise|aqua:block/goose@latest||"
+  "omp|ai|omp (oh-my-pi coding agent)|fn|||curl omp.sh/install → /usr/local/bin/omp"
+  "ollama|ai|Ollama (local models; large, CPU-only without GPU passthrough)|fn|||curl ollama.com/install.sh · listens on 127.0.0.1:11434"
+  "openspec|ai|OpenSpec (spec-driven development CLI)|mise|npm:@fission-ai/openspec@latest|node|"
+  "ecc|ai|ECC for Claude Code (~68 agents, rules, commands; no hooks)|fn||node claude|npx ecc-universal@$ECC_VERSION install --profile minimal · npx ecc-universal uninstall to remove"
+  "agentcfg|ai|Describe this VM to agents (CLAUDE.md, AGENTS.md)|fn|||~/.claude/CLAUDE.md · ~/.codex/AGENTS.md · only if absent"
   "mcpjungle|ai|MCPJungle + MCP servers (Docker)|fn||docker|release binary · systemd mcpjungle · mcp-sync"
 
   "gitid|accounts|Git name and email|ask||essentials|git config --global user.name/email"
+  "gitcfg|accounts|Git defaults (rebase pulls, auto upstream, delta diffs)|fn||essentials|git config --global · aliases st co br sw lg amend · ~/.config/git/ignore"
   "sshkey|accounts|SSH key (ed25519)|fn|||ssh-keygen → ~/.ssh/id_ed25519 (kept if present)"
   "github|accounts|GitHub login + upload SSH key|fn||essentials sshkey|gh auth login · gh ssh-key add"
+  "glab|accounts|GitLab CLI (glab)|mise|glab@latest||"
 )
 # Hidden helpers pulled in by "needs".
 HIDDEN_ROWS=(
   "rubydeps|-|Ruby build dependencies|apt|libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev libgmp-dev||"
   "mise|-|mise|fn|||apt mise (mise.jdx.dev repo)"
 )
-SCREENS=("system|System" "shell|Shell & CLI" "lang|Languages"
-         "cloud|Cloud & K8s" "ai|AI" "accounts|Accounts")
+SCREENS=("system|System" "shell|Shell & CLI" "dev|Dev tools" "lang|Languages"
+         "cloud|Cloud" "iac|IaC" "k8s|Kubernetes" "ai|AI" "accounts|Accounts")
 
 YES=0 DRY=0
 ARGS=("$@")
@@ -149,8 +209,9 @@ source_of() {
 
 # --- Saved answers -----------------------------------------------------------
 
-A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_CLAUDE= A_GIT_NAME= A_GIT_EMAIL=
-ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_CLAUDE A_GIT_NAME A_GIT_EMAIL"
+A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_AGENTS= A_GIT_NAME= A_GIT_EMAIL= A_TZ=
+A_WIRE_CLAUDE= # saved before v0.32; read into A_WIRE_AGENTS
+ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_AGENTS A_GIT_NAME A_GIT_EMAIL A_TZ"
 load_answers() {
   # shellcheck disable=SC1090
   [ -r "$ANSWERS" ] && . "$ANSWERS"
@@ -163,11 +224,13 @@ load_answers() {
       shell) out="$out shell vimcfg" ;;
       typescript) out="$out node" ;;
       kotlin) out="$out java" ;;
+      editors) out="$out editors neovim" ;; # Neovim moved to its own (mise) item
       *) out="$out $id" ;;
     esac
   done
   A_PICKS=$(printf '%s\n' $out | awk '!seen[$0]++' | tr '\n' ' ')
   A_PICKS=$(echo $A_PICKS)
+  [ -z "$A_WIRE_AGENTS" ] && [ -n "$A_WIRE_CLAUDE" ] && A_WIRE_AGENTS=$A_WIRE_CLAUDE
   return 0
 }
 save_answers() {
@@ -307,6 +370,7 @@ ask() {
   PLAN=$(resolve $RUN_PICKS)
   [ -n "$PLAN" ] || { say "Nothing picked."; exit 0; }
   picked gitid && ask_git
+  picked tzlocale && ask_tz
   picked mcpjungle && ask_mcp
   if picked tailscale && ! tailscale status >/dev/null 2>&1; then
     TS_AUTHKEY=$(gum input --password --header "Tailscale auth key (empty: run 'sudo tailscale up' later)" || true)
@@ -345,6 +409,20 @@ ask_git() {
   A_GIT_EMAIL=$(gum input --header "Git user.email" --value "${cur_email:-$A_GIT_EMAIL}")
 }
 
+ask_tz() {
+  local cur tz
+  cur=${A_TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo Etc/UTC)}
+  echo
+  header "Timezone"
+  while :; do
+    tz=$(gum input --header "Timezone (e.g. Europe/Berlin, America/New_York)" --value "$cur")
+    timedatectl list-timezones 2>/dev/null | grep -qxF "$tz" && break
+    warn "Unknown timezone '$tz'."
+    cur=$tz
+  done
+  A_TZ=$tz
+}
+
 ask_mcp() {
   echo
   header "MCPJungle"
@@ -366,13 +444,13 @@ ask_mcp() {
   # Servers set up before stay enabled (drop one by editing ~/.mcp/servers).
   A_MCP_SERVERS=$(merge "$A_MCP_SERVERS" "$RUN_MCP_SERVERS")
 
-  if picked claude || have claude; then
-    faint "This runs 'claude mcp add' for $A_USER so Claude Code can use every MCP server registered in MCPJungle."
-    if gum confirm "Add the MCPJungle gateway to $A_USER's Claude Code?" \
-         --default="$( [ "${A_WIRE_CLAUDE:-yes}" = yes ] && echo true || echo false)"; then
-      A_WIRE_CLAUDE=yes
+  if picked claude || picked codex || picked gemini || have claude || user_has codex || user_has gemini; then
+    faint "This adds the gateway to $A_USER's Claude Code, Codex and Gemini CLI (those installed), so they can use every MCP server registered in MCPJungle."
+    if gum confirm "Add the MCPJungle gateway to $A_USER's coding agents?" \
+         --default="$( [ "${A_WIRE_AGENTS:-yes}" = yes ] && echo true || echo false)"; then
+      A_WIRE_AGENTS=yes
     else
-      A_WIRE_CLAUDE=no
+      A_WIRE_AGENTS=no
     fi
   fi
   ask_mcp_keys
@@ -454,16 +532,27 @@ review() {
 # --- Install steps -------------------------------------------------------------
 
 # A fresh VM often runs unattended-upgrades on first boot: wait for its lock.
-APT_OPTS=(-q -o DPkg::Lock::Timeout=900)
+# Steps have no terminal, so a "modified config file" question would fail
+# the install: keep the existing file instead.
+APT_OPTS=(-q -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 apt_update() { apt-get "${APT_OPTS[@]}" update; touch "$STATE/.apt-fresh"; }
+# NEEDRESTART_MODE=l: list, don't restart. An automatic restart of docker
+# mid-run would kill the MCP containers being set up.
 apt_install() {
   [ -f "$STATE/.apt-fresh" ] || apt_update
-  DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTS[@]}" install -y "$@"
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get "${APT_OPTS[@]}" install -y "$@"
 }
 # add_key NAME URL — fetch an apt signing key into $KEYRINGS once.
 add_key() {
   install -d -m 0755 "$KEYRINGS"
-  [ -s "$KEYRINGS/$1" ] || { curl -fsSL "$2" -o "$KEYRINGS/$1"; chmod 0644 "$KEYRINGS/$1"; }
+  [ -s "$KEYRINGS/$1" ] && return 0
+  # Into place only when complete: a cut-off download would be kept forever.
+  local tmp; tmp=$(mktemp)
+  if curl -fsSL "$2" -o "$tmp" && [ -s "$tmp" ]; then
+    install -m 0644 "$tmp" "$KEYRINGS/$1"; rm -f "$tmp"
+  else
+    rm -f "$tmp"; echo "could not download the signing key $2" >&2; return 1
+  fi
 }
 # put_file PATH MODE — write stdin to PATH if it differs; returns 0 if changed.
 put_file() {
@@ -475,22 +564,29 @@ put_file() {
   return 0
 }
 as_user() { runuser -u "$A_USER" -- "$@"; }
+# note TEXT — show TEXT after the install steps (their own output only goes
+# to the log).
+note() { echo "$*" >> "$STATE/.notes"; echo "NOTE: $*"; }
 in_group() { case " $(id -nG "$A_USER") " in *" $1 "*) return 0 ;; esac; return 1; }
 user_home() { home_of "$A_USER"; }
+# user_conf SRC DEST — install $CONF/SRC as the user's DEST, keeping an
+# existing different file as DEST.orig (once).
+user_conf() {
+  if [ -f "$2" ] && [ ! -f "$2.orig" ] && ! cmp -s "$CONF/$1" "$2"; then cp -p "$2" "$2.orig"; fi
+  as_user install -D -m 0644 "$CONF/$1" "$2"
+}
+# add_dropin FILE — source the shell drop-in at the end of FILE, once.
+add_dropin() {
+  [ -f "$1" ] || return 0
+  grep -qxF "$DROPIN_LINE" "$1" || printf '\n%s\n' "$DROPIN_LINE" >> "$1"
+}
 codename() { . /etc/os-release; echo "${VERSION_CODENAME:-noble}"; }
 
 install_cli() {
-  apt_install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree htop
+  apt_install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree
   # Ubuntu renames these two; link the usual names.
   ln -sfn /usr/bin/fdfind "$BIN/fd"
   ln -sfn /usr/bin/batcat "$BIN/bat"
-}
-
-install_zellij() {
-  [ -x "$BIN/zellij" ] && return 0
-  curl -fsSL "https://github.com/zellij-org/zellij/releases/latest/download/zellij-$(uname -m)-unknown-linux-musl.tar.gz" \
-    | tar -xzf - -C "$BIN" zellij
-  chmod 0755 "$BIN/zellij"
 }
 
 install_shell() {
@@ -500,13 +596,29 @@ install_shell() {
   [ -d "$home/.oh-my-zsh" ] || as_user git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$home/.oh-my-zsh"
   [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] || \
     as_user git clone -q --depth 1 https://github.com/romkatv/powerlevel10k.git "$home/.oh-my-zsh/custom/themes/powerlevel10k"
-  [ -d "$home/.oh-my-zsh/custom/plugins/zsh-fzf-history-search" ] || \
-    as_user git clone -q --depth 1 https://github.com/joshskidmore/zsh-fzf-history-search.git "$home/.oh-my-zsh/custom/plugins/zsh-fzf-history-search"
+  local repo
+  for repo in joshskidmore/zsh-fzf-history-search zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting; do
+    [ -d "$home/.oh-my-zsh/custom/plugins/${repo#*/}" ] || \
+      as_user git clone -q --depth 1 "https://github.com/$repo.git" "$home/.oh-my-zsh/custom/plugins/${repo#*/}"
+  done
   if [ -f "$home/.zshrc" ] && [ ! -f "$home/.zshrc.orig" ]; then cp -p "$home/.zshrc" "$home/.zshrc.orig"; fi
   sed -e "s|{{ .devbox_zsh_theme }}|$ZSH_THEME_NAME|" -e "s|{{ .devbox_zsh_plugins }}|$ZSH_PLUGINS|" \
     "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
-  chown "$A_USER:" "$home/.zshrc"
+  chown -h "$A_USER:" "$home/.zshrc"
+  # The template replaced .zshrc: keep the shell drop-in if it is set up.
+  [ -f "$home/.config/devbox/shell.sh" ] && add_dropin "$home/.zshrc"
+  return 0
 }
+
+install_shellcfg() {
+  local home; home=$(user_home)
+  as_user install -D -m 0644 "$CONF/shell.sh" "$home/.config/devbox/shell.sh"
+  as_user touch "$home/.bashrc"
+  add_dropin "$home/.bashrc"
+  add_dropin "$home/.zshrc"
+}
+
+install_tmuxcfg() { user_conf tmux.conf "$(user_home)/.tmux.conf"; }
 
 install_vimcfg() {
   local home; home=$(user_home)
@@ -515,7 +627,7 @@ install_vimcfg() {
     as_user curl -fsSL --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim -o "$home/.vim/autoload/plug.vim"
   if [ -f "$home/.vimrc" ] && [ ! -f "$home/.vimrc.orig" ]; then cp -p "$home/.vimrc" "$home/.vimrc.orig"; fi
   put_file "$home/.vimrc" 0644 < "$SHARE/vimrc" || true
-  chown "$A_USER:" "$home/.vimrc"
+  chown -h "$A_USER:" "$home/.vimrc"
   as_user vim -es -u "$home/.vimrc" +PlugInstall +qall </dev/null || true
 }
 
@@ -530,6 +642,11 @@ Components: stable
 Architectures: $(deb_arch)
 Signed-By: $KEYRINGS/docker.asc
 EOF
+  # Defaults for a fresh engine only: changing them later means a restart
+  # that stops running containers.
+  if ! have dockerd && [ ! -e /etc/docker/daemon.json ]; then
+    install -D -m 0644 "$CONF/daemon.json" /etc/docker/daemon.json
+  fi
   apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
   in_group docker || usermod -aG docker "$A_USER"
@@ -537,7 +654,124 @@ EOF
 
 install_tailscale() {
   have tailscale || curl -fsSL https://tailscale.com/install.sh | sh
-  if [ -n "$TS_AUTHKEY" ]; then tailscale up --authkey "$TS_AUTHKEY"; fi
+  if [ -n "$TS_AUTHKEY" ]; then
+    # From a file: on the command line, ps would show the key.
+    local kf rc=0; kf=$(mktemp); chmod 600 "$kf"
+    printf '%s' "$TS_AUTHKEY" > "$kf"
+    tailscale up --auth-key="file:$kf" || rc=$?
+    rm -f "$kf"
+    return "$rc"
+  fi
+}
+
+# sysstat ships disabled: without this, sar has no data.
+post_debug() {
+  sed -i 's/^ENABLED=.*/ENABLED="true"/' /etc/default/sysstat
+  systemctl enable --now sysstat
+  systemctl restart sysstat
+}
+
+install_devlimits() {
+  install -m 0644 "$CONF/sysctl-devbox.conf" /etc/sysctl.d/60-devbox.conf
+  install -m 0644 "$CONF/limits-devbox.conf" /etc/security/limits.d/60-devbox.conf
+  install -D -m 0644 "$CONF/systemd-devbox.conf" /etc/systemd/system.conf.d/60-devbox.conf
+  sysctl --system >/dev/null
+  systemctl daemon-reexec
+}
+
+install_zram() {
+  apt_install systemd-zram-generator
+  install -m 0644 "$CONF/zram-generator.conf" /etc/systemd/zram-generator.conf
+  # With swap in compressed RAM, swapping early is cheap.
+  echo 'vm.swappiness = 100' | put_file /etc/sysctl.d/61-zram.conf 0644 || true
+  sysctl -q -p /etc/sysctl.d/61-zram.conf
+  systemctl daemon-reload
+  systemctl restart systemd-zram-setup@zram0
+}
+
+install_journald() {
+  install -D -m 0644 "$CONF/journald-devbox.conf" /etc/systemd/journald.conf.d/60-devbox.conf
+  systemctl restart systemd-journald
+}
+
+install_tzlocale() {
+  [ -n "$A_TZ" ] && timedatectl set-timezone "$A_TZ"
+  apt_install locales locales-all
+  locale-gen en_US.UTF-8
+  update-locale LANG=en_US.UTF-8
+}
+
+install_chrony() {
+  apt_install chrony
+  echo ptp_kvm | put_file /etc/modules-load.d/ptp_kvm.conf 0644 || true
+  modprobe ptp_kvm 2>/dev/null || true
+  if [ -e /dev/ptp0 ]; then
+    install -D -m 0644 "$CONF/chrony-pmox.conf" /etc/chrony/conf.d/pmox.conf
+  else
+    rm -f /etc/chrony/conf.d/pmox.conf
+    note "chrony: no /dev/ptp0 (KVM PTP clock), so it syncs from the default NTP pools."
+  fi
+  systemctl restart chrony
+}
+
+install_autoupdates() {
+  apt_install unattended-upgrades
+  put_file /etc/apt/apt.conf.d/20auto-upgrades 0644 <<'EOF' || true
+// Written by devbox-setup ("Automatic security updates").
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+  echo 'Unattended-Upgrade::Automatic-Reboot "false";' | put_file /etc/apt/apt.conf.d/52devbox 0644 || true
+  # pmox's bootcmd turns the timers off at every boot unless this exists.
+  install -d -m 0755 "$(dirname "$AUTO_UPGRADES_MARKER")"
+  touch "$AUTO_UPGRADES_MARKER"
+  systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+  local ud=/var/lib/cloud/instance/user-data.txt
+  if [ -r "$ud" ] && grep -qF 'systemctl disable --now apt-daily.timer' "$ud" && ! grep -qF "$AUTO_UPGRADES_MARKER" "$ud"; then
+    note "This VM's cloud-init turns automatic updates off at every boot (launched by an older pmox): after a reboot, run 'sudo devbox-setup --yes' again."
+  fi
+}
+
+install_needrestart() {
+  have needrestart || apt_install needrestart
+  install -D -m 0644 "$CONF/needrestart-devbox.conf" /etc/needrestart/conf.d/devbox.conf
+}
+
+install_sshharden() {
+  local keys; keys="$(user_home)/.ssh/authorized_keys"
+  if ! grep -qE '^(ssh-|ecdsa-|sk-)' "$keys" 2>/dev/null; then
+    echo "$keys has no SSH key: turning off password login would lock $A_USER out." >&2
+    return 1
+  fi
+  install -m 0644 "$CONF/sshd-devbox.conf" /etc/ssh/sshd_config.d/10-devbox.conf
+  install -d -m 0755 /run/sshd
+  if ! sshd -t; then
+    rm -f /etc/ssh/sshd_config.d/10-devbox.conf
+    echo "sshd rejected the config; nothing changed." >&2
+    return 1
+  fi
+  systemctl try-reload-or-restart ssh
+}
+
+install_ufw() {
+  apt_install ufw
+  ufw default deny incoming
+  ufw default allow outgoing
+  ufw limit OpenSSH
+  if picked tailscale || have tailscale; then ufw allow in on tailscale0; fi
+  if picked mosh || have mosh-server; then ufw allow 60000:61000/udp; fi
+  if { picked mcpjungle || have mcpjungle; } && [ "$A_MCP_LISTEN" = 0.0.0.0 ]; then ufw allow "$MCPJUNGLE_PORT/tcp"; fi
+  # Last, once SSH is allowed.
+  ufw --force enable
+  have docker && note "ufw: ports published by Docker (-p) bypass the firewall; bind them to 127.0.0.1 or use the DOCKER-USER chain."
+  return 0
+}
+
+install_fail2ban() {
+  apt_install fail2ban python3-systemd
+  install -m 0644 "$CONF/fail2ban-devbox.local" /etc/fail2ban/jail.d/devbox.local
+  systemctl enable fail2ban
+  systemctl restart fail2ban
 }
 
 install_mise() {
@@ -554,17 +788,105 @@ Architectures: $(deb_arch)
 Signed-By: $KEYRINGS/mise-archive-keyring.asc
 EOF
   apt_install mise
-  # Shims on PATH for every shell, including non-interactive ones; for bash
-  # the line goes before Ubuntu's "not interactive -> return" guard.
+  add_path_line "$line"
+}
+
+# add_path_line LINE — put LINE in the user's .zshenv and at the top of
+# .bashrc, so every shell has it, including non-interactive ones: for bash
+# it goes before Ubuntu's "not interactive -> return" guard.
+add_path_line() {
+  local home; home=$(user_home)
   touch "$home/.zshenv" "$home/.bashrc"
-  grep -qxF "$line" "$home/.zshenv" || echo "$line" >> "$home/.zshenv"
-  grep -qxF "$line" "$home/.bashrc" || sed -i "1i $line" "$home/.bashrc"
-  chown "$A_USER:" "$home/.zshenv" "$home/.bashrc"
+  grep -qxF "$1" "$home/.zshenv" || echo "$1" >> "$home/.zshenv"
+  if ! grep -qxF "$1" "$home/.bashrc"; then
+    # sed's "1i" does nothing on an empty file.
+    if [ -s "$home/.bashrc" ]; then sed -i "1i $1" "$home/.bashrc"; else echo "$1" > "$home/.bashrc"; fi
+  fi
+  chown -h "$A_USER:" "$home/.zshenv" "$home/.bashrc"
 }
 
 # mise_use TOOLS... — install tools globally for the user.
 mise_use() {
   as_user sh -c 'cd && PATH="$HOME/.local/share/mise/shims:$PATH" mise use -g --yes "$@" && mise reshim' _ "$@"
+}
+
+# as_user_sh CMD — run CMD in a login-less sh as the user, from their home,
+# with the mise shims on PATH.
+# user_has CMD — CMD is on the user's PATH (mise tools are not on root's).
+user_has() { as_user_sh "command -v $1" >/dev/null 2>&1; }
+as_user_sh() { as_user sh -c "cd && PATH=\"\$HOME/.local/share/mise/shims:\$PATH\" && $1"; }
+
+post_rust() { as_user_sh 'mise exec rust -- rustup component add rust-analyzer'; }
+
+install_docs() {
+  # Minimal cloud images strip man pages and docs; unminimize restores them.
+  if [ -e /etc/dpkg/dpkg.cfg.d/excludes ]; then
+    apt_install unminimize 2>/dev/null || true
+    have unminimize && { yes | unminimize; }
+  fi
+  apt_install man-db manpages-dev bash-completion command-not-found plocate tealdeer
+  as_user tldr --update || true
+}
+
+install_profiling() {
+  apt_install linux-tools-common "linux-tools-$(uname -r)" valgrind bpftrace bpfcc-tools
+}
+
+install_monitoring() {
+  apt_install prometheus-node-exporter
+  # Debian's default listens on every interface.
+  if put_file /etc/default/prometheus-node-exporter 0644 <<'EOF'
+# Written by devbox-setup: metrics on localhost only.
+ARGS="--web.listen-address=127.0.0.1:9100"
+EOF
+  then systemctl restart prometheus-node-exporter; fi
+  mise_use uv@latest pipx:glances
+}
+
+install_krew() {
+  local a t; a=$(deb_arch)
+  if ! [ -x "$(user_home)/.krew/bin/kubectl-krew" ]; then
+    t=$(mktemp -d); chmod 755 "$t"
+    curl -fsSL "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_$a.tar.gz" | tar -xzf - -C "$t"
+    chmod -R a+rX "$t"
+    as_user_sh "$t/krew-linux_$a install krew"
+    rm -rf "$t"
+  fi
+  add_path_line 'export PATH="$HOME/.krew/bin:$PATH"'
+  as_user_sh 'PATH="$HOME/.krew/bin:$PATH" kubectl krew install neat tree view-secret'
+}
+
+install_helmfile() {
+  mise_use helmfile@latest
+  as_user_sh 'helm plugin list | grep -q "^diff" || helm plugin install https://github.com/databus23/helm-diff'
+}
+
+install_k3s() {
+  local home grp; home=$(user_home); grp=$(id -gn "$A_USER")
+  have k3s || curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode=600" sh -
+  install -d -m 0700 -o "$A_USER" -g "$grp" "$home/.kube"
+  if [ -e "$home/.kube/config" ]; then
+    note "k3s: ~/.kube/config already exists, so it was kept; the k3s kubeconfig is /etc/rancher/k3s/k3s.yaml."
+  else
+    install -m 0600 -o "$A_USER" -g "$grp" /etc/rancher/k3s/k3s.yaml "$home/.kube/config"
+  fi
+}
+
+install_ollama() {
+  have ollama || curl -fsSL https://ollama.com/install.sh | sh
+  # The installer's unit listens on 127.0.0.1:11434; keep it that way.
+  lspci 2>/dev/null | grep -qiE 'nvidia|amd/ati' || note "ollama: no GPU found, so models run on the CPU (slow for anything big)."
+}
+
+install_ecc() {
+  as_user_sh "npx --yes ecc-universal@$ECC_VERSION install --target claude --profile minimal"
+}
+
+install_agentcfg() {
+  local home; home=$(user_home)
+  [ -e "$home/.claude/CLAUDE.md" ] || as_user install -D -m 0644 "$CONF/agent-notes.md" "$home/.claude/CLAUDE.md"
+  [ -e "$home/.codex/AGENTS.md" ] || as_user install -D -m 0644 "$CONF/agent-notes.md" "$home/.codex/AGENTS.md"
+  return 0
 }
 
 install_claude() {
@@ -609,7 +931,7 @@ SupplementaryGroups=docker
 WorkingDirectory=$mcp
 # Docker-based servers can take a while to start the first time.
 Environment=MCP_SERVER_INIT_REQ_TIMEOUT_SEC=120
-# --host= (empty) listens on all interfaces.
+# --host is 127.0.0.1 (this machine) or 0.0.0.0 (all interfaces).
 ExecStart=$BIN/mcpjungle start --host=$A_MCP_LISTEN --port $MCPJUNGLE_PORT --sqlite-db-path $mcp/mcpjungle.db
 Restart=on-failure
 RestartSec=5
@@ -624,11 +946,12 @@ EOF
   else
     systemctl enable --now mcpjungle
   fi
-  local i
+  local i up=
   for i in $(seq 60); do
-    curl -s -o /dev/null "http://127.0.0.1:$MCPJUNGLE_PORT/" && break
+    curl -s -o /dev/null "http://127.0.0.1:$MCPJUNGLE_PORT/" && { up=1; break; }
     sleep 1
   done
+  [ -n "$up" ] || note "mcpjungle is not answering on port $MCPJUNGLE_PORT after 60s; see: journalctl -u mcpjungle"
 
   # Credentials from the prompts go into each server's env file (the same
   # files mcp-sync creates and reads).
@@ -640,10 +963,35 @@ EOF
     envset "${key#* }" "${MCP_KEYS[$key]}" "$mcp/${key%% *}/env"
   done
   for n in $A_MCP_SERVERS; do
-    chown "$A_USER:$grp" "$mcp/$n/env"; chmod 600 "$mcp/$n/env"
+    chown -h "$A_USER:$grp" "$mcp/$n/env"; chmod 600 "$mcp/$n/env"
   done
-  if [ "$A_WIRE_CLAUDE" = yes ] && have claude; then
-    as_user sh -c "cd && { claude mcp get mcpjungle >/dev/null 2>&1 || claude mcp add --transport http mcpjungle http://localhost:$MCPJUNGLE_PORT/mcp --scope user; }"
+  [ "$A_WIRE_AGENTS" = yes ] && wire_agents
+  return 0
+}
+
+# wire_agents — register the MCPJungle gateway with each installed agent,
+# once.
+wire_agents() {
+  local home url f tmp; home=$(user_home); url="http://localhost:$MCPJUNGLE_PORT/mcp"
+  if have claude; then
+    as_user sh -c "cd && { claude mcp get mcpjungle >/dev/null 2>&1 || claude mcp add --transport http mcpjungle $url --scope user; }"
+  fi
+  if user_has codex; then
+    f="$home/.codex/config.toml"
+    if ! grep -qxF '[mcp_servers.mcpjungle]' "$f" 2>/dev/null; then
+      as_user install -d -m 0700 "$home/.codex"
+      as_user sh -c "printf '\n[mcp_servers.mcpjungle]\nurl = \"%s\"\n' '$url' >> '$f'"
+    fi
+  fi
+  if user_has gemini; then
+    f="$home/.gemini/settings.json"
+    as_user install -d -m 0700 "$home/.gemini"
+    [ -s "$f" ] || echo '{}' | as_user tee "$f" >/dev/null
+    if ! jq -e '.mcpServers.mcpjungle' "$f" >/dev/null 2>&1; then
+      tmp=$(mktemp)
+      jq --arg u "$url" '.mcpServers.mcpjungle = {httpUrl: $u}' "$f" > "$tmp" && cat "$tmp" > "$f"
+      rm -f "$tmp"
+    fi
   fi
 }
 
@@ -651,6 +999,26 @@ install_gitid() {
   [ -n "$A_GIT_NAME" ] && as_user git config --global user.name "$A_GIT_NAME"
   [ -n "$A_GIT_EMAIL" ] && as_user git config --global user.email "$A_GIT_EMAIL"
   as_user git config --global init.defaultBranch main
+  return 0
+}
+
+install_gitcfg() {
+  local home kv; home=$(user_home)
+  for kv in pull.rebase=true rebase.autoStash=true rebase.autoSquash=true rebase.updateRefs=true \
+      push.autoSetupRemote=true push.default=current fetch.prune=true rerere.enabled=true \
+      merge.conflictStyle=zdiff3 diff.algorithm=histogram diff.colorMoved=default \
+      branch.sort=-committerdate column.ui=auto commit.verbose=true init.defaultBranch=main \
+      core.excludesFile=~/.config/git/ignore \
+      "alias.st=status -sb" alias.co=checkout alias.br=branch alias.sw=switch \
+      "alias.lg=log --graph --oneline --decorate --all" "alias.amend=commit --amend --no-edit"; do
+    as_user git config --global "${kv%%=*}" "${kv#*=}"
+  done
+  if have delta; then
+    for kv in core.pager=delta "interactive.diffFilter=delta --color-only" delta.navigate=true delta.line-numbers=true; do
+      as_user git config --global "${kv%%=*}" "${kv#*=}"
+    done
+  fi
+  [ -f "$home/.config/git/ignore" ] || as_user install -D -m 0644 "$CONF/gitignore_global" "$home/.config/git/ignore"
   return 0
 }
 
@@ -707,6 +1075,8 @@ run_id() {
           mise_use $(what_of "$1") ;;
     fn|ask) "install_$1" ;;
   esac
+  # post_ID: settings that go with an apt or mise item.
+  if declare -F "post_$1" >/dev/null; then "post_$1"; fi
 }
 
 # step ID TITLE CMD... — run CMD with its output in the log, behind a
@@ -734,11 +1104,13 @@ step() {
 
 FAILED=
 apply() {
-  mkdir -p "$STATE"; : > "$LOG"; chmod 600 "$LOG"; rm -f "$STATE/.apt-fresh"
+  mkdir -p "$STATE"; : > "$LOG"; chmod 600 "$LOG"; rm -f "$STATE/.apt-fresh" "$STATE/.notes"
   # Every apt-get waits for the dpkg lock instead of failing, including
   # those inside vendor install scripts (tailscale, …). pmox also turns off
   # unattended-upgrades at boot; this covers older VMs and other hosts.
-  echo 'DPkg::Lock::Timeout "900";' | put_file /etc/apt/apt.conf.d/90devbox-setup 0644 || true
+  printf '%s\n' 'DPkg::Lock::Timeout "900";' \
+    'Dpkg::Options { "--force-confdef"; "--force-confold"; };' \
+    | put_file /etc/apt/apt.conf.d/90devbox-setup 0644 || true
   local id
   for id in $PLAN; do
     [ "$id" = github ] && continue
@@ -757,12 +1129,18 @@ apply() {
   if picked mcpjungle && ! picked_failed mcpjungle; then
     echo
     header "MCP servers"
+    curl -s -o /dev/null "http://127.0.0.1:$MCPJUNGLE_PORT/" || \
+      warn "mcpjungle is not answering on port $MCPJUNGLE_PORT; check: journalctl -u mcpjungle"
     as_user env MCP_CATALOG="$CATALOG" MCPJUNGLE_REGISTRY="http://127.0.0.1:$MCPJUNGLE_PORT" \
       "$BIN/mcp-sync" $A_MCP_SERVERS || warn "Some servers did not register (see above)."
     faint "Change credentials in ~$A_USER/.mcp/<name>/env, then run mcp-sync as $A_USER."
   fi
   if picked github && ! picked_failed essentials; then github_login; fi
 
+  if [ -s "$STATE/.notes" ]; then
+    echo
+    while IFS= read -r l; do warn "! $l"; done < "$STATE/.notes"
+  fi
   echo
   write_manage_notes
   if picked tailscale && [ -z "$TS_AUTHKEY" ] && ! tailscale status >/dev/null 2>&1; then
@@ -816,7 +1194,7 @@ write_manage_notes() {
     fi
     echo "Run 'sudo devbox-setup' again to add more."
   } > "$f"
-  chown "$A_USER:" "$f"
+  chown -h "$A_USER:" "$f"
 }
 
 dry_run() {
@@ -830,7 +1208,7 @@ dry_run() {
     esac
   done
   [ -n "$RUN_MISE_EXTRA" ] && say "mise: $RUN_MISE_EXTRA"
-  picked mcpjungle && say "mcpjungle: listen $A_MCP_LISTEN:$MCPJUNGLE_PORT · servers: $A_MCP_SERVERS · wire claude: ${A_WIRE_CLAUDE:-no}"
+  picked mcpjungle && say "mcpjungle: listen $A_MCP_LISTEN:$MCPJUNGLE_PORT · servers: $A_MCP_SERVERS · wire agents: ${A_WIRE_AGENTS:-no}"
   return 0
 }
 

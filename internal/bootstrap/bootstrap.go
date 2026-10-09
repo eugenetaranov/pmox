@@ -5,7 +5,8 @@
 // The script lives here; its assets (mcp-sync, the MCP catalog, the zsh/vim
 // templates) are copies from github.com/tackhq/tack-roles, refreshed with
 // `task bootstrap:sync`, so the on-node installer and the tack roles share
-// the same files.
+// the same files. conf/ holds pmox's own config files (shell drop-in, git,
+// tmux, docker, system drop-ins); the sync never touches it.
 package bootstrap
 
 import (
@@ -21,7 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed devbox-setup picker.py assets
+//go:embed devbox-setup picker.py assets conf
 var files embed.FS
 
 // ShareDir is where the assets land on the VM; the script reads them there.
@@ -63,6 +64,14 @@ func Files() []File {
 		out = append(out, File{Path: path.Join(ShareDir, strings.TrimPrefix(p, "assets/")), Permissions: perm, Content: b})
 		return nil
 	})
+	_ = fs.WalkDir(files, "conf", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, _ := files.ReadFile(p)
+		out = append(out, File{Path: path.Join(ShareDir, p), Permissions: "0644", Content: b})
+		return nil
+	})
 	return out
 }
 
@@ -78,8 +87,17 @@ APT::Periodic::Unattended-Upgrade "0";
 `),
 }
 
-// stopAutoUpgrades runs as a bootcmd, before the apt timers can fire.
-const stopAutoUpgrades = "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
+// AutoUpgradesMarker is created by devbox-setup's "autoupdates" item: the
+// user opted into automatic security updates, so the bootcmd stands down.
+const AutoUpgradesMarker = "/etc/devbox-setup/auto-upgrades"
+
+// stopAutoUpgrades runs as a bootcmd (every boot), before the apt timers
+// can fire, unless the user opted in.
+const stopAutoUpgrades = "[ -e " + AutoUpgradesMarker + " ] || systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
+
+// legacyStopAutoUpgrades is the unguarded form older cloud-init files carry;
+// Inject replaces it so the opt-in survives reboots.
+const legacyStopAutoUpgrades = "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
 
 // seq returns root's sequence under key, creating it (or converting an
 // empty value) when needed.
@@ -134,6 +152,11 @@ func Inject(userData []byte) ([]byte, error) {
 	boot, err := seq(root, "bootcmd")
 	if err != nil {
 		return nil, err
+	}
+	for _, n := range boot.Content {
+		if n.Kind == yaml.ScalarNode && n.Value == legacyStopAutoUpgrades {
+			n.Value = stopAutoUpgrades
+		}
 	}
 	if !hasScalar(boot, stopAutoUpgrades) { // the starter template has it already
 		boot.Content = append(boot.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: stopAutoUpgrades})

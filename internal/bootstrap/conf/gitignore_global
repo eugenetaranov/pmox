@@ -1,0 +1,11 @@
+# Global git ignores, written by devbox-setup ("Git defaults") once.
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+.direnv/
+.env.local
+__pycache__/
+node_modules/
