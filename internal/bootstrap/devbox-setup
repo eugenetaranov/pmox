@@ -6,11 +6,13 @@
 # tack-roles (github.com/tackhq/tack-roles) from outside.
 #
 #   sudo devbox-setup             choose tools, languages, AI and settings
-#   sudo devbox-setup --yes       re-apply the saved choices without asking
+#   sudo devbox-setup --yes       re-apply everything chosen so far, no questions
 #   devbox-setup --dry-run        ask, then show what would happen
 #
-# Choices (no secrets) are saved in /var/lib/devbox-setup/answers so a re-run
-# starts with them ticked. MCP credentials live only in ~/.mcp/<name>/env.
+# Nothing is preselected. Everything ever chosen (no secrets) accumulates in
+# /var/lib/devbox-setup/answers, and ~/devbox-setup.txt lists how each tool
+# was installed and how to manage it. MCP credentials live only in
+# ~/.mcp/<name>/env.
 set -euo pipefail
 
 SHARE=${DEVBOX_SETUP_SHARE:-/usr/local/share/devbox-setup}
@@ -21,71 +23,79 @@ BIN=/usr/local/bin
 KEYRINGS=/etc/apt/keyrings
 CATALOG=/usr/local/share/mcp-catalog
 
-GUM_VERSION=2.0.2
+# 0.17: gum 2 multi-selects no longer toggle with space.
+GUM_VERSION=0.17.0
 MCPJUNGLE_VERSION=0.4.6
 MCPJUNGLE_PORT=8080
 
 # Kept in step with tack-roles: roles/devbox/defaults/main.yaml.
-DEVBOX_PACKAGES="zsh vim neovim tmux git fd-find silversearcher-ag ripgrep fzf
-  git-delta bat gh zoxide eza jq htop tree direnv curl wget unzip
-  build-essential ca-certificates"
 ZSH_THEME_NAME="powerlevel10k/powerlevel10k"
 ZSH_PLUGINS="git terraform kubectl aws wd zsh-fzf-history-search"
 
 # The catalog, in install order:
-#   id | screen | label | how | what | needs
-# how:  apt (packages) · mise (global tools for the user) · fn (install_<id>)
-#       · ask (a setting, no install)
-# Labels must not contain commas (gum's --selected splits on them).
+#   id | screen | label | how | what | needs | source
+# how:  apt (packages) · mise (global tools for the user, `mise use -g`)
+#       · fn (install_<id>, described by "source") · ask (a setting)
+# Labels must not contain "|".
 CATALOG_ROWS=(
-  "devbox|base|CLI tools — git · gh · ripgrep · fzf · delta · neovim · tmux · zellij · …|fn||"
-  "shell|base|zsh + oh-my-zsh + powerlevel10k · managed .zshrc/.vimrc|fn||devbox"
-  "docker|base|Docker Engine|fn||"
-  "podman|base|Podman|apt|podman uidmap slirp4netns|"
-  "tailscale|base|Tailscale|fn||"
+  "essentials|system|Essentials|apt|git curl wget ca-certificates unzip zip build-essential jq gh||"
+  "debug|system|Admin and debug tools|apt|dnsutils mtr-tiny tcpdump lsof strace sysstat iotop ncdu netcat-openbsd socat rsync btop||"
+  "docker|system|Docker Engine (docker group = root)|fn|||apt docker-ce (download.docker.com repo)"
+  "podman|system|Podman (rootless)|apt|podman uidmap slirp4netns||"
+  "tailscale|system|Tailscale|fn|||curl tailscale.com/install.sh · then tailscale up"
 
-  "go|lang|Go · golangci-lint|mise|go@latest golangci-lint@latest|"
-  "python|lang|Python 3.12 · uv|mise|python@3.12 uv@latest|"
-  "node|lang|Node.js LTS · pnpm|mise|node@lts pnpm@latest|"
-  "typescript|lang|TypeScript (tsc)|mise|npm:typescript@latest|node"
-  "bun|lang|Bun|mise|bun@latest|"
-  "deno|lang|Deno|mise|deno@latest|"
-  "java|lang|Java 21 · Maven · Gradle|mise|java@21 maven@latest gradle@latest|"
-  "kotlin|lang|Kotlin|mise|kotlin@latest|java"
-  "rust|lang|Rust (rustup · cargo)|mise|rust@stable|"
-  "ruby|lang|Ruby (compiled · takes a few minutes)|mise|ruby@latest|rubydeps"
-  "php|lang|PHP · Composer|apt|php-cli php-mbstring php-xml php-curl php-zip php-sqlite3 composer|"
-  "cpp|lang|C/C++ — gcc · clang · cmake · ninja · gdb|apt|build-essential clang clangd cmake ninja-build gdb pkg-config|"
-  "zig|lang|Zig|mise|zig@latest|"
-  "dotnet|lang|.NET SDK|mise|dotnet@latest|"
-  "task|lang|Task (Taskfile runner)|mise|task@latest|"
+  "cli|shell|Modern CLI tools|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv …"
+  "editors|shell|Neovim + Vim|apt|neovim vim||"
+  "tmux|shell|tmux|apt|tmux||"
+  "zellij|shell|zellij|fn|||release binary → /usr/local/bin/zellij"
+  "shell|shell|zsh + oh-my-zsh + p10k (writes .zshrc)|fn|||apt zsh · git clone ~/.oh-my-zsh · .zshrc.orig kept"
+  "vimcfg|shell|Vim config + plugins (writes .vimrc)|fn||editors|vim-plug · curated ~/.vimrc · .vimrc.orig kept"
+  "yq|shell|yq (YAML processor)|mise|yq@latest||"
+  "task|shell|Task (go-task)|mise|task@latest||"
 
-  "aws|cloud|AWS CLI|mise|aws-cli@latest|"
-  "gcloud|cloud|Google Cloud CLI|mise|gcloud@latest|"
-  "azure|cloud|Azure CLI|mise|uv@latest pipx:azure-cli|"
-  "doctl|cloud|DigitalOcean doctl|mise|doctl@latest|"
-  "terraform|cloud|Terraform|mise|terraform@latest|"
-  "opentofu|cloud|OpenTofu|mise|opentofu@latest|"
-  "k8s|cloud|Kubernetes — kubectl · kubectx · kubens · helm · k9s|mise|kubectl@latest kubectx@latest kubens@latest helm@latest k9s@latest|"
+  "go|lang|Go + golangci-lint|mise|go@latest golangci-lint@latest||"
+  "python|lang|Python 3.12 + uv|mise|python@3.12 uv@latest||"
+  "node|lang|Node.js LTS + pnpm + TypeScript|mise|node@lts pnpm@latest npm:typescript@latest||"
+  "bun|lang|Bun|mise|bun@latest||"
+  "deno|lang|Deno|mise|deno@latest||"
+  "java|lang|Java 21 + Maven + Gradle + Kotlin|mise|java@21 maven@latest gradle@latest kotlin@latest||"
+  "rust|lang|Rust (rustup)|mise|rust@stable||"
+  "ruby|lang|Ruby (builds from source ~5 min)|mise|ruby@latest|rubydeps|"
+  "php|lang|PHP + Composer|apt|php-cli php-mbstring php-xml php-curl php-zip php-sqlite3 composer||"
+  "cpp|lang|C/C++ (gcc clang cmake gdb)|apt|build-essential clang clangd cmake ninja-build gdb pkg-config||"
+  "zig|lang|Zig|mise|zig@latest||"
+  "dotnet|lang|.NET SDK|mise|dotnet@latest||"
 
-  "claude|ai|Claude Code|fn||"
-  "codex|ai|OpenAI Codex CLI|mise|codex@latest|"
-  "gemini|ai|Gemini CLI|mise|gemini@latest|node"
-  "omp|ai|omp (oh-my-pi) coding agent|fn||"
-  "mcpjungle|ai|MCPJungle MCP gateway + MCP servers (in Docker)|fn||docker"
+  "aws|cloud|AWS CLI|mise|aws-cli@latest||"
+  "gcloud|cloud|Google Cloud CLI|mise|gcloud@latest||"
+  "azure|cloud|Azure CLI|mise|uv@latest pipx:azure-cli||"
+  "doctl|cloud|DigitalOcean doctl|mise|doctl@latest||"
+  "terraform|cloud|Terraform|mise|terraform@latest||"
+  "opentofu|cloud|OpenTofu|mise|opentofu@latest||"
+  "packer|cloud|Packer|mise|packer@latest||"
+  "ansible|cloud|Ansible|mise|uv@latest pipx:ansible||"
+  "sops|cloud|sops + age (secrets in git)|mise|sops@latest age@latest||"
+  "k8s|cloud|Kubernetes CLIs|mise|kubectl@latest kubectx@latest kubens@latest helm@latest k9s@latest||"
+  "kind|cloud|kind (local k8s in Docker)|mise|kind@latest|docker|"
 
-  "gitid|config|Git identity (user.name / user.email)|ask||devbox"
-  "sshkey|config|SSH key for $(hostname) (ed25519)|fn||"
-  "github|config|Log in to GitHub CLI and add the SSH key to your account|fn||devbox sshkey"
+  "claude|ai|Claude Code|fn|||apt claude-code (Anthropic repo)"
+  "codex|ai|OpenAI Codex CLI|mise|codex@latest||"
+  "gemini|ai|Gemini CLI|mise|gemini@latest|node|"
+  "omp|ai|omp (oh-my-pi)|fn|||curl omp.sh/install → /usr/local/bin/omp"
+  "mcpjungle|ai|MCPJungle + MCP servers (Docker)|fn||docker|release binary · systemd mcpjungle · mcp-sync"
+
+  "gitid|accounts|Git name and email|ask||essentials|git config --global user.name/email"
+  "sshkey|accounts|SSH key (ed25519)|fn|||ssh-keygen → ~/.ssh/id_ed25519 (kept if present)"
+  "github|accounts|GitHub login + upload SSH key|fn||essentials sshkey|gh auth login · gh ssh-key add"
 )
 # Hidden helpers pulled in by "needs".
 HIDDEN_ROWS=(
-  "rubydeps|-|Ruby build dependencies|apt|libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev libgmp-dev|"
-  "mise|-|mise|fn||"
+  "rubydeps|-|Ruby build dependencies|apt|libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev libgmp-dev||"
+  "mise|-|mise|fn|||apt mise (mise.jdx.dev repo)"
 )
-SCREENS=("base|Base tools and containers" "lang|Languages (installed with mise unless noted)"
-         "cloud|Cloud and infrastructure CLIs" "ai|AI tools" "config|Accounts and settings")
-DEFAULT_PICKS="devbox shell docker go python node claude gitid sshkey"
+SCREENS=("system|System (root)" "shell|Shell and CLI"
+         "lang|Languages" "cloud|Cloud · IaC · Kubernetes"
+         "ai|AI tools" "accounts|Accounts and keys")
 
 YES=0 DRY=0
 ARGS=("$@")
@@ -128,6 +138,22 @@ how_of()   { field "$1" 4; }
 what_of()  { field "$1" 5; }
 needs_of() { field "$1" 6; }
 
+# source_of ID — how ID gets installed, as a command where there is one.
+source_of() {
+  local what; what=$(what_of "$1")
+  case "$(how_of "$1")" in
+    mise) echo "mise use -g ${what//@latest/}" ;;
+    apt)  echo "apt install $what" ;;
+    *)    field "$1" 7 ;;
+  esac
+}
+# menu_line ID — "label   source" for the checklists, cut to fit 100 columns.
+menu_line() {
+  local src; src=$(source_of "$1")
+  [ ${#src} -gt 58 ] && src="${src:0:57}…"
+  printf '%-40s %s' "$(label_of "$1")" "$src"
+}
+
 # --- Saved answers -----------------------------------------------------------
 
 A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_CLAUDE= A_GIT_NAME= A_GIT_EMAIL=
@@ -135,15 +161,25 @@ ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_CLAUD
 load_answers() {
   # shellcheck disable=SC1090
   [ -r "$ANSWERS" ] && . "$ANSWERS"
-  # v0.29 had the Kubernetes tools as separate entries.
-  local id out= k8s=
+  # Entries renamed or merged since v0.29.
+  local id out=
   for id in $A_PICKS; do
-    case "$id" in kubectl|kubectx|helm|k9s) k8s=" k8s" ;; *) out="$out $id" ;; esac
+    case "$id" in
+      kubectl|kubectx|helm|k9s) out="$out k8s" ;;
+      devbox) out="$out essentials cli editors tmux zellij" ;;
+      shell) out="$out shell vimcfg" ;;
+      typescript) out="$out node" ;;
+      kotlin) out="$out java" ;;
+      *) out="$out $id" ;;
+    esac
   done
-  A_PICKS=$(echo $out$k8s)
+  A_PICKS=$(printf '%s\n' $out | awk '!seen[$0]++' | tr '\n' ' ')
+  A_PICKS=$(echo $A_PICKS)
   return 0
 }
 save_answers() {
+  A_PICKS=$(merge "$A_PICKS" "$RUN_PICKS")
+  A_MISE_EXTRA=$(merge "$A_MISE_EXTRA" "$RUN_MISE_EXTRA")
   mkdir -p "$STATE"; chmod 700 "$STATE"
   {
     echo "# devbox-setup choices ($(date -u +%Y-%m-%dT%H:%M:%SZ)). No secrets here."
@@ -154,6 +190,10 @@ save_answers() {
 }
 
 picked() { case " $PLAN " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# This run's picks; the saved A_PICKS / A_MISE_EXTRA accumulate across runs.
+RUN_PICKS= RUN_MISE_EXTRA= RUN_MCP_SERVERS=
+merge() { printf '%s\n' $1 $2 | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'; }
 
 # resolve IDS — IDS plus everything they need, in catalog order.
 resolve() {
@@ -169,7 +209,7 @@ resolve() {
       fi
     done
   done
-  [ -n "${A_MISE_EXTRA// /}" ] && case "$want" in *" mise "*) ;; *) want="$want""mise " ;; esac
+  [ -n "$RUN_MISE_EXTRA" ] && case "$want" in *" mise "*) ;; *) want="$want""mise " ;; esac
   # mise and hidden apt helpers go before the first tool that needs them.
   local out= r
   for r in "${HIDDEN_ROWS[@]}" "${CATALOG_ROWS[@]}"; do
@@ -182,7 +222,8 @@ resolve() {
 # --- gum ---------------------------------------------------------------------
 
 ensure_gum() {
-  have gum && return 0
+  local v; v=$(gum --version 2>/dev/null || true)
+  [[ "$v" == *"v$GUM_VERSION"* ]] && return 0
   [ "$(id -u)" = 0 ] || die "gum is not installed; run 'sudo devbox-setup' once"
   say "Installing gum $GUM_VERSION (the menu UI)…"
   local t; t=$(mktemp -d)
@@ -192,11 +233,16 @@ ensure_gum() {
   rm -rf "$t"
 }
 
-header() { gum style --bold --foreground 212 "$*"; }
-faint()  { gum style --faint "$*"; }
+# Plain ANSI colors: gum 0.17's `style` leaves the terminal so the next
+# prompt misses keys.
+color()  { printf '\033[%sm%s\033[0m\n' "$1" "$2"; }
+header() { color '1;38;5;212' "$*"; }
+faint()  { color 2 "$*"; }
+ok()     { color 32 "$*"; }
+warn()   { color 33 "$*"; }
+err()    { color 31 "$*"; }
 
-# gum 2 multi-selects toggle with x or tab (not space).
-TOGGLE_HINT="x/tab toggles · enter continues"
+TOGGLE_HINT="space toggles · enter continues"
 
 # --- MCP catalog helpers -------------------------------------------------------
 
@@ -234,41 +280,59 @@ is_secret() { case "$1" in *TOKEN*|*SECRET*|*PASSWORD*|*_KEY|*_KEY_ID|*APIKEY*) 
 
 ask() {
   header "devbox-setup"
-  faint "Pick what to install. Re-run any time: your choices come back ticked."
+  faint "Pick what to install: nothing is preselected. Run it again any time to add more."
   echo
 
   local u_default=${A_USER:-${SUDO_USER:-$(id -un)}}
   A_USER=$(gum input --header "Set up for which user?" --value "$u_default")
   { [ -n "$A_USER" ] && id "$A_USER" >/dev/null 2>&1; } || die "user '$A_USER' does not exist"
 
-  local prev=" ${A_PICKS:-$DEFAULT_PICKS} " picks= s screen title i=0 r id
+  # 1. Pick (lists only).
+  local picks= s screen title i=0 r id
   for s in "${SCREENS[@]}"; do
     i=$((i + 1)); screen=${s%%|*}; title=${s#*|}
-    local opts=() sel=()
+    local opts=()
     for r in "${CATALOG_ROWS[@]}"; do
       [ "$(echo "$r" | cut -d'|' -f2)" = "$screen" ] || continue
       id=${r%%|*}
-      opts+=("$(label_of "$id")|$id")
-      case "$prev" in *" $id "*) sel+=(--selected "$(label_of "$id")") ;; esac
+      opts+=("$(menu_line "$id")|$id")
     done
     picks="$picks $(gum choose --no-limit --height 16 --label-delimiter '|' \
-      --header "$i/${#SCREENS[@]} $title — $TOGGLE_HINT" \
-      "${sel[@]}" "${opts[@]}" | tr '\n' ' ')"
-    if [ "$screen" = lang ]; then
-      A_MISE_EXTRA=$(gum input --width 80 --header "Other mise tools (optional, e.g. 'elixir@latest lua@5.4')" \
-        --placeholder "none" --value "$A_MISE_EXTRA")
-    fi
+      --header "$i/${#SCREENS[@]} $title — $TOGGLE_HINT (nothing ticked = skip)" \
+      "${opts[@]}" | tr '\n' ' ')"
   done
-  A_PICKS=$(echo $picks)
-  PLAN=$(resolve $A_PICKS)
-  [ -n "$PLAN" ] || { say "Nothing picked."; exit 0; }
+  RUN_PICKS=$(echo $picks)
 
+  # 2. Type (every text prompt in one place).
+  ask_mise_extra
+  PLAN=$(resolve $RUN_PICKS)
+  [ -n "$PLAN" ] || { say "Nothing picked."; exit 0; }
   picked gitid && ask_git
   picked mcpjungle && ask_mcp
   if picked tailscale && ! tailscale status >/dev/null 2>&1; then
     TS_AUTHKEY=$(gum input --password --header "Tailscale auth key (empty: run 'sudo tailscale up' later)" || true)
   fi
   return 0
+}
+
+# ask_mise_extra — optional extra mise tools, checked against mise's
+# registry when mise is already installed.
+ask_mise_extra() {
+  local val bad t
+  while :; do
+    val=$(gum input --width 80 --header "Extra mise tools, space-separated (e.g. just sops@3), blank to skip" \
+      --placeholder "none" --value "${val:-}")
+    RUN_MISE_EXTRA=$(echo $val)
+    [ -n "$RUN_MISE_EXTRA" ] && have mise || return 0
+    bad=
+    for t in $RUN_MISE_EXTRA; do
+      t=${t%%@*}
+      case "$t" in *:*) continue ;; esac # backend:tool, can't check offline
+      mise registry "$t" >/dev/null 2>&1 || bad="$bad $t"
+    done
+    [ -z "$bad" ] && return 0
+    warn "Not in mise's registry:$bad — fix or clear them."
+  done
 }
 
 ask_git() {
@@ -290,15 +354,17 @@ ask_mcp() {
     --selected "$( [ "${A_MCP_LISTEN:-127.0.0.1}" = 127.0.0.1 ] && echo "$one" || echo "$all")" "$one" "$all")
   case "$l" in all*) A_MCP_LISTEN=0.0.0.0 ;; *) A_MCP_LISTEN=127.0.0.1 ;; esac
 
-  local mopts=() msel=() s n desc
+  local mopts=() s n desc
   for s in "$(catalog_dir)"/*.spec; do
     n=$(basename "$s" .spec); desc=$(spec_field "$n" DESCRIPTION); desc=${desc//,/ ·}
     mopts+=("$n — $desc|$n")
-    case " ${A_MCP_SERVERS:-context7 sequential-thinking} " in *" $n "*) msel+=(--selected "$n — $desc") ;; esac
   done
-  A_MCP_SERVERS=$(gum choose --no-limit --label-delimiter '|' --header "MCP servers — $TOGGLE_HINT" \
-    "${msel[@]}" "${mopts[@]}" | tr '\n' ' ')
-  A_MCP_SERVERS=$(echo $A_MCP_SERVERS)
+  local chosen
+  chosen=$(gum choose --no-limit --label-delimiter '|' --header "MCP servers — $TOGGLE_HINT" \
+    "${mopts[@]}" | tr '\n' ' ')
+  RUN_MCP_SERVERS=$(echo $chosen)
+  # Servers set up before stay enabled (drop one by editing ~/.mcp/servers).
+  A_MCP_SERVERS=$(merge "$A_MCP_SERVERS" "$RUN_MCP_SERVERS")
 
   if picked claude || have claude; then
     faint "This runs 'claude mcp add' for $A_USER so Claude Code can use every MCP server registered in MCPJungle."
@@ -315,7 +381,7 @@ ask_mcp() {
 ask_mcp_keys() {
   local home n envf skel line key cur val opt
   home=$(home_of "$A_USER")
-  for n in $A_MCP_SERVERS; do
+  for n in $RUN_MCP_SERVERS; do
     envf="$home/.mcp/$n/env"
     skel=$(spec_skeleton "$n")
     # Active KEY= lines are asked for; commented ones are optional extras.
@@ -332,12 +398,10 @@ ask_mcp_keys() {
     header "$n — $(spec_field "$n" DESCRIPTION)"
     faint "Leave a value empty to fill it in later in $envf"
     if [ ${#optional[@]} -gt 0 ]; then
-      local osel=()
-      for key in "${optional[@]}"; do [ -n "$(envget "$key" "$envf")" ] && osel+=(--selected "$key"); done
       # Not via <(…): a process substitution can't read the terminal.
       local chosen
       chosen=$(gum choose --no-limit --header "Optional settings for $n — $TOGGLE_HINT (or just enter to skip)" \
-        "${osel[@]}" "${optional[@]}" || true)
+        "${optional[@]}" || true)
       for opt in $chosen; do active+=("$opt"); done
     fi
     for key in "${active[@]}"; do
@@ -359,15 +423,29 @@ summary() {
   {
     echo "For user: $A_USER"
     local id
-    for id in $PLAN; do [ "$(field "$id" 2)" = - ] || echo "  ✓ $(label_of "$id")"; done
-    [ -n "${A_MISE_EXTRA// /}" ] && echo "  ✓ mise: $A_MISE_EXTRA"
+    for id in $PLAN; do
+      [ "$(field "$id" 2)" = - ] && [ "$id" != mise ] && continue
+      printf '  ✓ %s\n' "$(menu_line "$id")"
+    done
+    [ -n "$RUN_MISE_EXTRA" ] && printf '  ✓ %-40s mise use -g %s\n' "Extra mise tools" "$RUN_MISE_EXTRA"
     if picked mcpjungle; then
-      echo "MCPJungle: http://$A_MCP_LISTEN:$MCPJUNGLE_PORT/mcp"
-      echo "MCP servers: ${A_MCP_SERVERS:-none}"
+      echo "MCPJungle: http://$A_MCP_LISTEN:$MCPJUNGLE_PORT/mcp · servers: ${A_MCP_SERVERS:-none}"
     fi
     picked gitid && [ -n "$A_GIT_NAME$A_GIT_EMAIL" ] && echo "Git: $A_GIT_NAME <$A_GIT_EMAIL>"
     true
-  } | gum style --border rounded --padding "0 1" --border-foreground 212
+  } | sed 's/^/  │ /'
+}
+
+# review — show the plan; returns 0 to install, 1 to start over.
+review() {
+  summary
+  local c
+  c=$(gum choose --header "Ready?" "Install" "Start over" "Quit")
+  case "$c" in
+    Install) return 0 ;;
+    "Start over") return 1 ;;
+    *) exit 0 ;;
+  esac
 }
 
 # --- Install steps -------------------------------------------------------------
@@ -398,20 +476,23 @@ in_group() { case " $(id -nG "$A_USER") " in *" $1 "*) return 0 ;; esac; return 
 user_home() { home_of "$A_USER"; }
 codename() { . /etc/os-release; echo "${VERSION_CODENAME:-noble}"; }
 
-install_devbox() {
-  # shellcheck disable=SC2086
-  apt_install $DEVBOX_PACKAGES
+install_cli() {
+  apt_install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree htop
+  # Ubuntu renames these two; link the usual names.
   ln -sfn /usr/bin/fdfind "$BIN/fd"
   ln -sfn /usr/bin/batcat "$BIN/bat"
-  if [ ! -x "$BIN/zellij" ]; then
-    curl -fsSL "https://github.com/zellij-org/zellij/releases/latest/download/zellij-$(uname -m)-unknown-linux-musl.tar.gz" \
-      | tar -xzf - -C "$BIN" zellij
-    chmod 0755 "$BIN/zellij"
-  fi
+}
+
+install_zellij() {
+  [ -x "$BIN/zellij" ] && return 0
+  curl -fsSL "https://github.com/zellij-org/zellij/releases/latest/download/zellij-$(uname -m)-unknown-linux-musl.tar.gz" \
+    | tar -xzf - -C "$BIN" zellij
+  chmod 0755 "$BIN/zellij"
 }
 
 install_shell() {
   local home; home=$(user_home)
+  apt_install zsh git
   usermod -s /usr/bin/zsh "$A_USER"
   [ -d "$home/.oh-my-zsh" ] || as_user git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$home/.oh-my-zsh"
   [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] || \
@@ -422,6 +503,11 @@ install_shell() {
   sed -e "s|{{ .devbox_zsh_theme }}|$ZSH_THEME_NAME|" -e "s|{{ .devbox_zsh_plugins }}|$ZSH_PLUGINS|" \
     "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
   chown "$A_USER:" "$home/.zshrc"
+}
+
+install_vimcfg() {
+  local home; home=$(user_home)
+  apt_install curl git
   [ -f "$home/.vim/autoload/plug.vim" ] || \
     as_user curl -fsSL --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim -o "$home/.vim/autoload/plug.vim"
   if [ -f "$home/.vimrc" ] && [ ! -f "$home/.vimrc.orig" ]; then cp -p "$home/.vimrc" "$home/.vimrc.orig"; fi
@@ -584,14 +670,14 @@ github_login() {
   else
     faint "Open the URL below on any machine and enter the code."
     as_user sh -c 'cd && gh auth login -h github.com -p ssh --skip-ssh-key -w -s admin:public_key' || {
-      gum style --foreground 3 "GitHub login skipped; run 'gh auth login' later."; return 0; }
+      warn "GitHub login skipped; run 'gh auth login' later."; return 0; }
   fi
   local keys; keys=$(as_user gh ssh-key list 2>/dev/null || true)
   if [ -f "$pub" ] && [[ "$keys" != *"$(cut -d' ' -f2 "$pub")"* ]]; then
     if as_user gh ssh-key add "$pub" --title "$title"; then
-      gum style --foreground 2 "✓ SSH key added to GitHub as '$title'"
+      ok "✓ SSH key added to GitHub as '$title'"
     else
-      gum style --foreground 3 "Could not add the SSH key; add $pub at https://github.com/settings/keys"
+      warn "Could not add the SSH key; add $pub at https://github.com/settings/keys"
     fi
   fi
   as_user sh -c 'ssh-keygen -F github.com >/dev/null 2>&1 || ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null'
@@ -604,7 +690,7 @@ github_login() {
     if [ -n "$email" ]; then
       as_user git config --global user.name "$name"
       as_user git config --global user.email "$email"
-      gum style --foreground 2 "✓ git identity: $name <$email>"
+      ok "✓ git identity: $name <$email>"
     fi
   fi
 }
@@ -634,9 +720,9 @@ step() {
   fi
   wait "$pid" || rc=$?
   if [ "$rc" -eq 0 ]; then
-    gum style --foreground 2 "✓ $title"
+    ok "✓ $title"
   else
-    gum style --foreground 1 "✗ $title (exit $rc) — last lines of $LOG:"
+    err "✗ $title (exit $rc) — last lines of $LOG:"
     tail -n 25 "$LOG" | sed 's/^/    /'
     FAILED="$FAILED $id"
   fi
@@ -653,32 +739,78 @@ apply() {
     local n skip=
     for n in $(needs_of "$id"); do case " $FAILED " in *" $n "*) skip=$n ;; esac; done
     if [ "$(how_of "$id")" = mise ]; then case " $FAILED " in *" mise "*) skip=mise ;; esac; fi
-    if [ -n "$skip" ]; then gum style --foreground 3 "- $(label_of "$id") (skipped: $skip failed)"; continue; fi
+    if [ -n "$skip" ]; then warn "- $(label_of "$id") (skipped: $skip failed)"; continue; fi
     step "$id" "$(label_of "$id")" run_id "$id"
   done
-  if [ -n "${A_MISE_EXTRA// /}" ] && ! picked_failed mise; then
+  if [ -n "$RUN_MISE_EXTRA" ] && ! picked_failed mise; then
     # shellcheck disable=SC2086
-    step mise-extra "mise: $A_MISE_EXTRA" mise_use $A_MISE_EXTRA
+    step mise-extra "mise: $RUN_MISE_EXTRA" mise_use $RUN_MISE_EXTRA
   fi
 
   if picked mcpjungle && ! picked_failed mcpjungle; then
     echo
     header "MCP servers"
     as_user env MCP_CATALOG="$CATALOG" MCPJUNGLE_REGISTRY="http://127.0.0.1:$MCPJUNGLE_PORT" \
-      "$BIN/mcp-sync" $A_MCP_SERVERS || gum style --foreground 3 "Some servers did not register (see above)."
+      "$BIN/mcp-sync" $A_MCP_SERVERS || warn "Some servers did not register (see above)."
     faint "Change credentials in ~$A_USER/.mcp/<name>/env, then run mcp-sync as $A_USER."
   fi
-  if picked github && ! picked_failed devbox; then github_login; fi
+  if picked github && ! picked_failed essentials; then github_login; fi
 
   echo
+  write_manage_notes
   if picked tailscale && [ -z "$TS_AUTHKEY" ] && ! tailscale status >/dev/null 2>&1; then
     faint "Tailscale is installed; run 'sudo tailscale up' to log in."
   fi
+  faint "How each tool was installed and how to update it: ~$A_USER/devbox-setup.txt"
   faint "Start a new shell (log out and back in) to pick up the new shell, groups and PATH."
   faint "Log: $LOG"
-  [ -z "$FAILED" ] || { gum style --foreground 1 "Failed:$FAILED — fix and re-run devbox-setup."; exit 1; }
+  [ -z "$FAILED" ] || { err "Failed:$FAILED — fix and re-run devbox-setup."; exit 1; }
 }
 picked_failed() { case " $FAILED " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# write_manage_notes — ~/devbox-setup.txt: everything installed so far,
+# grouped by how it was installed, with how to manage it.
+write_manage_notes() {
+  local all id mise_l= apt_l= other_l= f
+  all=$(resolve "$(merge "$A_PICKS" "$RUN_PICKS")")
+  for id in $all; do
+    [ "$id" = mise ] && continue
+    local how; how=$(how_of "$id")
+    [[ "$(source_of "$id")" == "apt install "* ]] && how=apt
+    case "$how" in
+      mise) mise_l="$mise_l  $(printf '%-40s' "$(label_of "$id")") $(source_of "$id")\n" ;;
+      apt)  apt_l="$apt_l  $(printf '%-40s' "$(label_of "$id")") $(source_of "$id")\n" ;;
+      *)    other_l="$other_l  $(printf '%-40s' "$(label_of "$id")") $(source_of "$id")\n" ;;
+    esac
+  done
+  local extra; extra=$(merge "$A_MISE_EXTRA" "$RUN_MISE_EXTRA")
+  [ -n "$extra" ] && mise_l="$mise_l  $(printf '%-40s' "Extra mise tools") mise use -g $extra\n"
+  f="$(user_home)/devbox-setup.txt"
+  {
+    echo "devbox-setup — what is installed and how to manage it (updated $(date -u +%Y-%m-%d))"
+    echo
+    if [ -n "$mise_l" ]; then
+      echo "Installed with mise (per user, ~/.config/mise/config.toml):"
+      printf '%b' "$mise_l"
+      echo "  update all: mise up · list: mise ls · pin: mise use -g <tool>@<version> · remove: mise rm -g <tool>"
+      echo
+    fi
+    if [ -n "$apt_l" ]; then
+      echo "Installed with apt (system):"
+      printf '%b' "$apt_l"
+      echo "  update: sudo apt update && sudo apt upgrade · remove: sudo apt remove <package>"
+      echo
+    fi
+    if [ -n "$other_l" ]; then
+      echo "Vendor repos, release binaries, scripts and settings:"
+      printf '%b' "$other_l"
+      echo "  vendor apt repos update with apt upgrade; claude and omp update themselves."
+      echo
+    fi
+    echo "Run 'sudo devbox-setup' again to add more."
+  } > "$f"
+  chown "$A_USER:" "$f"
+}
 
 dry_run() {
   say "user: $A_USER"
@@ -690,7 +822,7 @@ dry_run() {
       *)    say "step: $(label_of "$id")" ;;
     esac
   done
-  [ -n "${A_MISE_EXTRA// /}" ] && say "mise: $A_MISE_EXTRA"
+  [ -n "$RUN_MISE_EXTRA" ] && say "mise: $RUN_MISE_EXTRA"
   picked mcpjungle && say "mcpjungle: listen $A_MCP_LISTEN:$MCPJUNGLE_PORT · servers: $A_MCP_SERVERS · wire claude: ${A_WIRE_CLAUDE:-no}"
   return 0
 }
@@ -698,15 +830,19 @@ dry_run() {
 # --- Main ------------------------------------------------------------------------
 
 load_answers
-PLAN=$(resolve $A_PICKS)
 if [ "$YES" = 1 ]; then
   [ -n "$A_PICKS" ] || die "no saved choices yet; run devbox-setup without --yes first"
+  RUN_PICKS=$A_PICKS RUN_MISE_EXTRA=$A_MISE_EXTRA
+  PLAN=$(resolve $RUN_PICKS)
 else
   { [ -t 0 ] && [ -t 1 ]; } || die "needs a terminal (or --yes to re-apply saved choices)"
   ensure_gum
-  ask
-  summary
-  [ "$DRY" = 1 ] || gum confirm "Install now?" || exit 0
+  while :; do
+    ask
+    [ "$DRY" = 1 ] && { summary; break; }
+    review && break
+    MCP_KEYS=()
+  done
 fi
 
 if [ "$DRY" = 1 ]; then dry_run; exit 0; fi

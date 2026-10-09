@@ -410,25 +410,36 @@ to rewrite the cloud-init file with the new key.
 
 Every VM pmox launches gets `devbox-setup`, an interactive installer you run
 on the VM itself. It's the alternative to provisioning from outside with
-tack. Run `pmox shell web1`, then `sudo devbox-setup`, and tick what you want:
+tack. Run `pmox shell web1`, then `sudo devbox-setup`. Nothing is
+preselected: tick items with space, press enter to go to the next screen.
+Every item shows how it will be installed, e.g. `mise use -g terraform`.
 
-- **Base:** CLI tools (git, gh, ripgrep, fzf, delta, neovim, tmux, zellij, …),
-  zsh + oh-my-zsh + powerlevel10k, Docker, Podman, Tailscale.
-- **Languages** (via [mise](https://mise.jdx.dev) unless noted): Go, Python + uv,
-  Node + pnpm, TypeScript, Bun, Deno, Java + Maven + Gradle, Kotlin, Rust,
-  Ruby, PHP + Composer (apt), C/C++ (apt), Zig, .NET, Task, plus any other
-  mise tool you name.
-- **Cloud and infra CLIs:** AWS, Google Cloud, Azure, DigitalOcean, Terraform,
-  OpenTofu, and Kubernetes (kubectl, kubectx/kubens, Helm, k9s).
-- **AI:** Claude Code, Codex CLI, Gemini CLI, omp, and the MCPJungle gateway
-  with MCP servers in Docker (Jira, AWS, Jenkins, context7, …).
-  It asks for each server's keys and stores them in `~/.mcp/<name>/env`.
-- **Accounts:** git identity, an SSH key, GitHub CLI login with the key
-  added to your account.
+1. **System (root):** essentials (git, curl, jq, gh, build tools), admin and
+   debug tools (dig, mtr, tcpdump, strace, ncdu, …), Docker, Podman, Tailscale.
+2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
+   delta, direnv), Neovim + Vim, tmux, zellij, zsh + oh-my-zsh + powerlevel10k,
+   a curated vim config, yq, Task. The shell and vim entries replace your
+   `.zshrc`/`.vimrc`, keeping the old ones as `.orig`.
+3. **Languages** (mise, except PHP and C/C++ from apt): Go, Python + uv,
+   Node + pnpm + TypeScript, Bun, Deno, Java + Maven + Gradle + Kotlin, Rust,
+   Ruby, PHP + Composer, C/C++, Zig, .NET.
+4. **Cloud, IaC and Kubernetes** (mise): AWS, Google Cloud, Azure,
+   DigitalOcean, Terraform, OpenTofu, Packer, Ansible, sops + age, Kubernetes
+   CLIs (kubectl, kubectx/kubens, helm, k9s), kind.
+5. **AI:** Claude Code, Codex CLI, Gemini CLI, omp, and the MCPJungle gateway
+   with MCP servers in Docker (Jira, AWS, Jenkins, context7, …).
+6. **Accounts and keys:** git identity, an SSH key, GitHub CLI login with the
+   key added to your account.
 
-Re-run it any time: your previous choices come back ticked.
-`sudo devbox-setup --yes` re-applies them without asking. Choices are saved
-in `/var/lib/devbox-setup/answers`, without secrets.
+After the checklists, it asks every typed question in one place: extra mise
+tools, git name and email, and MCP server keys (stored in
+`~/.mcp/<name>/env`). Then a review screen offers Install, Start over or Quit.
+`~/devbox-setup.txt` lists everything installed so far, grouped by how it was
+installed, with how to update or remove it.
+
+Run it again any time to add more. Choices accumulate in
+`/var/lib/devbox-setup/answers` (no secrets), and `sudo devbox-setup --yes`
+re-applies all of them without asking.
 
 The script is embedded in pmox and added to the VM's cloud-init at launch.
 Your cloud-init file is not changed, and nothing is downloaded at boot. To turn
