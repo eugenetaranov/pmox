@@ -50,7 +50,7 @@ common first-launch errors.
 ```
 pmox init                    # walks through API + SSH + defaults
 pmox template create              # optional: bake an Ubuntu template
-pmox launch web1                  # clone, cloud-init, wait for SSH
+pmox launch web1                  # clone, cloud-init, wait for SSH (alias: create)
 pmox shell web1                   # interactive SSH session
 pmox delete web1                  # stop + destroy + snippet cleanup
 ```

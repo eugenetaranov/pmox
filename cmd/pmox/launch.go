@@ -62,8 +62,9 @@ type launchFlags struct {
 func newLaunchCmd() *cobra.Command {
 	f := &launchFlags{}
 	cmd := &cobra.Command{
-		Use:   "launch [name]",
-		Short: "Launch a new VM",
+		Use:     "launch [name]",
+		Aliases: []string{"create"},
+		Short:   "Launch a new VM",
 		Long: `Launch a new VM on the resolved Proxmox cluster from a cloud-init-
 enabled template. Clones the template, tags the new VM, resizes its
 disk, uploads the per-server cloud-init snippet, starts the VM, waits

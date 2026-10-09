@@ -26,7 +26,7 @@ func findPath(t *testing.T, path string) *cobra.Command {
 
 func TestCommandTreeResolves(t *testing.T) {
 	canonical := []string{
-		"vm launch", "vm clone", "vm list", "vm ls", "vm info", "vm start", "vm stop", "vm delete", "vm rm",
+		"vm launch", "vm create", "vm clone", "vm list", "vm ls", "vm info", "vm start", "vm stop", "vm delete", "vm rm",
 		"vm shell", "vm exec", "vm cp", "vm sync", "vm apply", "vm ssh-config",
 		"template create", "template list", "template ls",
 		"context list", "context ls", "context use", "context current", "context rename", "context delete", "context rm",
@@ -42,9 +42,12 @@ func TestCommandTreeResolves(t *testing.T) {
 			t.Errorf("canonical %q is hidden/deprecated", p)
 		}
 	}
-	shortcuts := []string{"launch", "list", "ls", "info", "start", "stop", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
+	shortcuts := []string{"launch", "create", "list", "ls", "info", "start", "stop", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
 	for _, p := range shortcuts {
 		findPath(t, p)
+	}
+	if c := findPath(t, "create"); c.Name() != "launch" {
+		t.Errorf("create resolves to %q, want launch", c.Name())
 	}
 	for _, p := range []string{
 		"create-template", "ssh-config", "clone",
