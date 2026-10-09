@@ -447,9 +447,15 @@ The script is embedded in pmox and added to the VM's cloud-init at launch.
 Your cloud-init file is not changed, and nothing is downloaded at boot. The
 same injection turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security
-updates on these VMs are then up to you (`sudo apt upgrade`). To turn all of
-this off for a server, set `devbox_setup: false` under that server in
+updates on these VMs are then up to you (`sudo apt upgrade`). To turn
+devbox-setup off for a server, set `devbox_setup: false` under that server in
 `config.yaml`.
+
+The starter cloud-init (`pmox init`, or `pmox config cloud-init --regenerate`)
+carries the same `bootcmd` line, visible and editable, so it applies with
+`devbox_setup: false` too. To keep unattended upgrades, delete the line and
+set `devbox_setup: false`. An older cloud-init file doesn't have it; add the line by hand or
+regenerate the file.
 
 ## Post-create hooks
 

@@ -104,6 +104,15 @@ func seq(root *yaml.Node, key string) (*yaml.Node, error) {
 	return v, nil
 }
 
+func hasScalar(list *yaml.Node, v string) bool {
+	for _, n := range list.Content {
+		if n.Kind == yaml.ScalarNode && n.Value == v {
+			return true
+		}
+	}
+	return false
+}
+
 // Inject returns userData with the devbox-setup files appended to its
 // write_files list and unattended upgrades turned off (bootcmd + an apt
 // config file). Everything else is kept as is. userData must be a
@@ -126,7 +135,9 @@ func Inject(userData []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	boot.Content = append(boot.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: stopAutoUpgrades})
+	if !hasScalar(boot, stopAutoUpgrades) { // the starter template has it already
+		boot.Content = append(boot.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: stopAutoUpgrades})
+	}
 
 	for _, f := range append(Files(), noAutoUpgrades) {
 		enc, err := gzipB64(f.Content)

@@ -20,6 +20,11 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAA... replace-with-your-key
 
+# No unattended upgrades: on first boot they hold the dpkg lock for minutes
+# and make installs fail. Run `sudo apt upgrade` yourself, or delete this.
+bootcmd:
+  - systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true
+
 package_update: true
 packages:
   - qemu-guest-agent
