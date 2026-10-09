@@ -48,7 +48,7 @@ func TestExplainSSHFailureOnlyWhenKeyRejected(t *testing.T) {
 		regGranted:      "pmox access sync web1",
 		regDifferentKey: "pmox key publish --replace",
 	} {
-		registryStatusFn = func(context.Context, string, string, string, int) regStatus { return status }
+		registryStatusFn = func(_ context.Context, _, name, _ string, _ int) (regStatus, string) { return status, name }
 		localUsername = func() (string, error) { return "bob", nil }
 		got := explainSSHFailure(ctx, target, formURL, exitErr(255), true)
 		var ae *sshAuthError
@@ -78,19 +78,29 @@ func TestRegistryStatus(t *testing.T) {
 	withNodeSSH(t)
 	mine, _ := accessreg.NewPublishedKey("bob", testKeyA)
 
-	if got := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regNotPublished {
+	if got, _ := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regNotPublished {
 		t.Errorf("unpublished: got %d", got)
 	}
 	publishAs(ctx, t, reg, "bob", testKeyB)
-	if got := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regDifferentKey {
+	if got, _ := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regDifferentKey {
 		t.Errorf("different key: got %d", got)
 	}
 	publishAs(ctx, t, reg, "bob", testKeyA)
-	if got := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regNotGranted {
+	if got, _ := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regNotGranted {
 		t.Errorf("not granted: got %d", got)
 	}
 	_, _ = accessreg.UpdateAccess(ctx, reg, func(a *accessreg.Access) error { a.GrantVMs("bob", 101); return nil })
-	if got := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regGranted {
+	if got, _ := registryStatus(ctx, formURL, "bob", mine.Fingerprint, 101); got != regGranted {
 		t.Errorf("granted: got %d", got)
+	}
+
+	// Published under another name (key publish --name): found by fingerprint.
+	got, name := registryStatus(ctx, formURL, "e", mine.Fingerprint, 101)
+	if got != regGranted || name != "bob" {
+		t.Errorf("by fingerprint: got %d as %q, want granted as bob", got, name)
+	}
+	got, name = registryStatus(ctx, formURL, "e", mine.Fingerprint, 102)
+	if got != regNotGranted || name != "bob" {
+		t.Errorf("by fingerprint, other VM: got %d as %q, want not granted as bob", got, name)
 	}
 }

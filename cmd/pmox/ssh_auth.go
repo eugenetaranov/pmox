@@ -86,37 +86,54 @@ const (
 // registryStatusFn is a seam over the registry lookup.
 var registryStatusFn = registryStatus
 
-func registryStatus(ctx context.Context, serverURL, name, fingerprint string, vmid int) regStatus {
+// registryStatus looks the caller up in the registry. A key published
+// under any name with the caller's fingerprint counts as theirs (--name
+// may differ from the local username); otherwise name is checked. It
+// returns the name the registry knows the caller by.
+func registryStatus(ctx context.Context, serverURL, name, fingerprint string, vmid int) (regStatus, string) {
 	cfg, err := config.Load()
 	if err != nil {
-		return regUnknown
+		return regUnknown, name
 	}
 	r, err := server.Resolve(ctx, server.Options{Cfg: cfg, Flag: serverURL})
 	if err != nil || !r.HasNodeSSH() {
-		return regUnknown
+		return regUnknown, name
 	}
 	fs, closeFS, err := openRegistryFn(ctx, r)
 	if err != nil {
-		return regUnknown
+		return regUnknown, name
 	}
 	defer closeFS()
-	k, err := accessreg.GetKey(ctx, fs, name)
-	switch {
-	case errors.Is(err, accessreg.ErrNotPublished):
-		return regNotPublished
-	case err != nil:
-		return regUnknown
-	case fingerprint != "" && k.Fingerprint != fingerprint:
-		return regDifferentKey
+	matched := false
+	if fingerprint != "" {
+		if keys, _, err := accessreg.ListKeys(ctx, fs); err == nil {
+			for _, k := range keys {
+				if k.Fingerprint == fingerprint {
+					name, matched = k.Name, true
+					break
+				}
+			}
+		}
+	}
+	if !matched {
+		k, err := accessreg.GetKey(ctx, fs, name)
+		switch {
+		case errors.Is(err, accessreg.ErrNotPublished):
+			return regNotPublished, name
+		case err != nil:
+			return regUnknown, name
+		case fingerprint != "" && k.Fingerprint != fingerprint:
+			return regDifferentKey, name
+		}
 	}
 	acc, err := accessreg.ReadAccess(ctx, fs)
 	if err != nil {
-		return regUnknown
+		return regUnknown, name
 	}
 	if acc.Allowed(name, vmid) {
-		return regGranted
+		return regGranted, name
 	}
-	return regNotGranted
+	return regNotGranted, name
 }
 
 // keyFingerprint returns the SHA256 fingerprint of the public half of
@@ -148,10 +165,11 @@ func authGuidance(ctx context.Context, target *sshTarget, serverURL string) stri
 		name = "<your-name>"
 	}
 
+	status, name := registryStatusFn(ctx, serverURL, name, fp, target.VMID)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s doesn't accept your SSH key %s as %s.\n", vmName, keyDesc, target.User)
 	grant := fmt.Sprintf("pmox access grant %s --to %s", vmName, name)
-	switch registryStatusFn(ctx, serverURL, name, fp, target.VMID) {
+	switch status {
 	case regNotGranted:
 		fmt.Fprintf(&b, "  Your key is published as %q but not granted for %s.\n  Ask a cluster admin to run:   %s", name, vmName, grant)
 	case regGranted:
