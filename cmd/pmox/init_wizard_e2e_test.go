@@ -143,3 +143,60 @@ func TestE2ECtrlCMidProbe(t *testing.T) {
 		t.Errorf("ctrl+c mid-probe wrote %+v", cfg.Servers)
 	}
 }
+
+// TestE2EGeneratedKeyWrittenOnConfirm: picking "generate" creates the
+// bootstrap key only on Confirm, so quitting at Review leaves no files.
+func TestE2EGeneratedKeyWrittenOnConfirm(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "quit", true: "confirm"}[confirm], func(t *testing.T) { e2eGeneratedKey(t, confirm) })
+	}
+}
+
+func e2eGeneratedKey(t *testing.T, confirm bool) {
+	{
+		tm := startE2E(t, oneNode())
+		// A fresh machine: no keys, so the wizard defaults to generating one.
+		if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519.pub")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, tm, "Server URL and API credentials")
+		fillConnection(tm)
+		waitFor(t, tm, "vmbr0")
+		for i := 0; i < 5; i++ {
+			enter(tm)
+		}
+		waitFor(t, tm, "SSH key for VM bootstrap")
+		enter(tm) // generate a new dedicated key
+		enter(tm) // default user
+		enter(tm) // node ssh user
+		enter(tm) // password auth
+		tm.Type("ssh-pass")
+		enter(tm)
+		waitFor(t, tm, "Confirm and write configuration")
+
+		priv := filepath.Join(os.Getenv("HOME"), ".ssh", "pmox_ed25519")
+		if _, err := os.Stat(priv); err == nil {
+			t.Fatalf("confirm=%v: key generated before Confirm", confirm)
+		}
+		if confirm {
+			enter(tm)
+		} else {
+			tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+		}
+		fm := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(*wizard.Model)
+		_, statErr := os.Stat(priv + ".pub")
+		if !confirm {
+			if !errors.Is(fm.Err(), tui.ErrAborted) || statErr == nil {
+				t.Fatalf("quit at Review: err=%v, key written=%v", fm.Err(), statErr == nil)
+			}
+			return
+		}
+		if fm.Err() != nil || statErr != nil {
+			t.Fatalf("confirm: err=%v, key stat=%v", fm.Err(), statErr)
+		}
+		cfg, _ := config.Load()
+		if srv := cfg.Servers[formURL]; srv == nil || srv.SSHPubkey != priv+".pub" {
+			t.Fatalf("saved server key wrong: %+v", srv)
+		}
+	}
+}

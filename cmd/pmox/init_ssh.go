@@ -211,7 +211,7 @@ func promptSSHKey(p prompter, current string) (string, error) {
 		}
 		switch choice {
 		case "generate":
-			return generateBootstrapKey(p, sshDir, home)
+			return generateBootstrapKey(p, sshDir)
 		default: // "existing"
 			path, err := selectExistingKeyFn(p, sshDir, home, suggest)
 			if errors.Is(err, errSSHKeyChoiceBack) {
@@ -278,21 +278,13 @@ func chooseSSHKeyAction(suggest string) (string, error) {
 
 // generateBootstrapKey creates (or reuses) a dedicated pmox ed25519 key at
 // ~/.ssh/pmox_ed25519 and returns its public-key path.
-func generateBootstrapKey(p prompter, sshDir, home string) (string, error) {
-	pub, reused, err := sshkey.EnsureBootstrap(sshDir, sshkey.DefaultComment())
-	switch {
-	case errors.Is(err, sshkey.ErrPubKeyMissing):
-		priv := filepath.Join(sshDir, sshkey.BootstrapKeyName)
-		return "", fmt.Errorf("%w: %s exists but %s is missing; remove it or pick another key",
-			exitcode.ErrUserInput, displayPath(priv, home), displayPath(priv+".pub", home))
-	case err != nil:
+func generateBootstrapKey(p prompter, sshDir string) (string, error) {
+	n, err := ensureBootstrapKey(sshDir)
+	if err != nil {
 		return "", err
-	case reused:
-		p.Printf("reusing existing pmox key: %s\n", displayPath(pub, home))
-	default:
-		p.Printf("generated new SSH key: %s\n", displayPath(pub, home))
 	}
-	return pub, nil
+	p.Printf("%s\n", n.text)
+	return filepath.Join(sshDir, sshkey.BootstrapKeyName) + ".pub", nil
 }
 
 // selectExistingKey shows a picker of ~/.ssh/*.pub, falling back to a

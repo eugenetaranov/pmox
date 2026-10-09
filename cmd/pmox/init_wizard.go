@@ -690,6 +690,7 @@ type accessStage struct {
 	keyPass      string
 
 	resolvedKey string
+	generateKey bool // resolvedKey is the bootstrap key, created on save
 	form        *wizard.Form
 }
 
@@ -719,7 +720,7 @@ func (s *accessStage) Enter(ctx context.Context) tea.Cmd {
 	prev := s.st.acc
 	suggest := sshkey.DefaultSuggestion(prev.sshKey, s.sshDir)
 	s.keyAction, s.keyPath = "generate", suggest
-	if suggest != "" {
+	if suggest != "" && !prev.generateKey {
 		s.keyAction = "existing"
 	}
 	s.user = prev.user
@@ -839,24 +840,17 @@ func (s *accessStage) Update(msg tea.Msg) (wizard.Stage, tea.Cmd) {
 }
 
 func (s *accessStage) submit() tea.Cmd {
+	s.generateKey = false
 	if s.keyAction == "generate" {
-		pub, reused, err := sshkey.EnsureBootstrap(s.sshDir, sshkey.DefaultComment())
-		switch {
-		case errors.Is(err, sshkey.ErrPubKeyMissing):
-			priv := filepath.Join(s.sshDir, sshkey.BootstrapKeyName)
+		// Only check here; the key is created on save (see saveStage).
+		priv := filepath.Join(s.sshDir, sshkey.BootstrapKeyName)
+		_, privErr := os.Stat(priv)
+		_, pubErr := os.Stat(priv + ".pub")
+		if privErr == nil && pubErr != nil {
 			return s.retry(fmt.Sprintf("%s exists but %s is missing; remove it or pick another key",
 				displayPath(priv, s.home), displayPath(priv+".pub", s.home)))
-		case err != nil:
-			return s.retry(err.Error())
-		case reused:
-			s.st.addSummary(infoNotice("reusing existing pmox key: " + displayPath(pub, s.home)))
-		default:
-			s.st.addSummary(infoNotice("generated new SSH key: " + displayPath(pub, s.home)))
 		}
-		s.resolvedKey = pub
-		// Show the generated key as the existing choice on a revisit.
-		s.pubKeys = sshkey.FindPubKeys(s.sshDir)
-		s.keyPath = pub
+		s.resolvedKey, s.generateKey = priv+".pub", privErr != nil
 	} else {
 		if err := s.checkKey(s.keyPath); err != nil {
 			return s.retry(err.Error())
@@ -942,7 +936,7 @@ func (s *accessStage) onValidated(err error) tea.Cmd {
 	}
 	cfg, _ := s.sshConfig()
 	ns := &config.NodeSSH{User: cfg.User}
-	acc := accessAnswers{sshKey: s.resolvedKey, user: strings.TrimSpace(s.user), nodeSSH: ns}
+	acc := accessAnswers{sshKey: s.resolvedKey, generateKey: s.generateKey, user: strings.TrimSpace(s.user), nodeSSH: ns}
 	if s.auth == "key" {
 		ns.Auth, ns.KeyPath = config.AuthKey, cfg.KeyPath
 		acc.sshKeyPass = cfg.KeyPass
@@ -1033,6 +1027,24 @@ type saveMsg struct {
 	err     error
 }
 
+// ensureBootstrapKey creates (or reuses) the dedicated pmox key in sshDir
+// and reports which happened.
+func ensureBootstrapKey(sshDir string) (notice, error) {
+	home, _ := os.UserHomeDir()
+	pub, reused, err := sshkey.EnsureBootstrap(sshDir, sshkey.DefaultComment())
+	switch {
+	case errors.Is(err, sshkey.ErrPubKeyMissing):
+		priv := filepath.Join(sshDir, sshkey.BootstrapKeyName)
+		return notice{}, fmt.Errorf("%w: %s exists but %s is missing; remove it or pick another key",
+			exitcode.ErrUserInput, displayPath(priv, home), displayPath(priv+".pub", home))
+	case err != nil:
+		return notice{}, err
+	case reused:
+		return infoNotice("reusing existing pmox key: " + displayPath(pub, home)), nil
+	}
+	return infoNotice("generated new SSH key: " + displayPath(pub, home)), nil
+}
+
 // saveStage writes the configuration. It is a hidden step of the Review
 // tab and can't be left with Esc while writing.
 type saveStage struct {
@@ -1060,12 +1072,21 @@ func (s *saveStage) Enter(context.Context) tea.Cmd {
 		sshKey: st.acc.sshKey, user: st.acc.user, nodeSSH: st.acc.nodeSSH,
 		sshPassword: st.acc.sshPassword, sshKeyPass: st.acc.sshKeyPass,
 	}
-	seq, ops, cfg, in := s.seq, st.ops, st.cfg, s.in
+	seq, ops, cfg, in, gen := s.seq, st.ops, st.cfg, s.in, st.acc.generateKey
 	return busyThen("Saving configuration …", func() tea.Msg {
+		var keyNotices []notice
+		if gen {
+			n, err := ensureBootstrapKey(filepath.Dir(in.sshKey))
+			if err != nil {
+				return saveMsg{seq: seq, err: err}
+			}
+			keyNotices = append(keyNotices, n)
+		}
 		srv, notices, err := ops.Persist(cfg, in)
 		if err != nil {
 			return saveMsg{seq: seq, err: err}
 		}
+		notices = append(keyNotices, notices...)
 		return saveMsg{seq: seq, srv: srv, notices: notices, ci: ops.CloudInit(in.canonical, in.user, in.sshKey)}
 	})
 }

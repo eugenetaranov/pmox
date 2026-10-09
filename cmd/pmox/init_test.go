@@ -488,7 +488,7 @@ func TestGenerateBootstrapKeyCreatesAndReuses(t *testing.T) {
 	sshDir := filepath.Join(home, ".ssh")
 	p := &fakePrompter{}
 
-	pub, err := generateBootstrapKey(p, sshDir, home)
+	pub, err := generateBootstrapKey(p, sshDir)
 	if err != nil {
 		t.Fatalf("generateBootstrapKey: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestGenerateBootstrapKeyCreatesAndReuses(t *testing.T) {
 
 	// Second call reuses without clobbering.
 	p2 := &fakePrompter{}
-	pub2, err := generateBootstrapKey(p2, sshDir, home)
+	pub2, err := generateBootstrapKey(p2, sshDir)
 	if err != nil {
 		t.Fatalf("generateBootstrapKey reuse: %v", err)
 	}

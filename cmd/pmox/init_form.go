@@ -49,6 +49,9 @@ type accessAnswers struct {
 	nodeSSH     *config.NodeSSH
 	sshPassword string
 	sshKeyPass  string
+	// generateKey defers creating the bootstrap key at sshKey until the
+	// configuration is saved, so an abandoned wizard leaves no files.
+	generateKey bool
 }
 
 // establishEditConnectionFn is a seam so 'config edit' tests needn't dial.
