@@ -3,7 +3,6 @@
 ## Purpose
 How pmox's commands are grouped by noun and verb, which daily
 shortcuts stay at the top level, and how renamed commands keep working.
-
 ## Requirements
 ### Requirement: Noun-verb command groups
 
@@ -19,7 +18,7 @@ pmox SHALL organize commands into singular noun groups:
 | `key` | `publish`, `unpublish`, `show` |
 | `access` | `grant`, `revoke`, `list`, `sync` |
 
-`ls` and `rm` SHALL be the only verb aliases. `init`, `doctor`, `cleanup`, `version` and `completion` SHALL remain root commands.
+`ls` and `rm` SHALL be the only verb aliases. `init`, `doctor`, `cleanup`, `version` and `completion` SHALL remain root commands. `version` SHALL keep printing the version when run alone, and SHALL have one verb, `upgrade` (see `self-upgrade`). The palette SHALL run `version` directly; `upgrade` is reached as `pmox version upgrade`.
 
 #### Scenario: Canonical VM listing
 - **WHEN** a user runs `pmox vm list`
@@ -32,6 +31,18 @@ pmox SHALL organize commands into singular noun groups:
 #### Scenario: Listing templates
 - **WHEN** a user runs `pmox template list`
 - **THEN** pmox lists the cluster's templates with VMID, name and node
+
+#### Scenario: Version keeps printing
+- **WHEN** a user runs `pmox version`
+- **THEN** it prints `pmox version <version> (commit: …, built: …)` as before
+
+#### Scenario: Version from the palette
+- **WHEN** a user picks `version` in the bare `pmox` palette
+- **THEN** pmox prints the version and build information, without opening a submenu
+
+#### Scenario: Upgrade under version
+- **WHEN** a user runs `pmox version upgrade --check`
+- **THEN** pmox reports whether a newer release exists
 
 ### Requirement: Top-level shortcuts with full parity
 
