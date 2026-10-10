@@ -14,6 +14,14 @@ When the destination is supplied in the explicit `<name|vmid>:<remote_path>` for
 
 When the destination is a bare `<remote_path>` with no `<name|vmid>:` prefix, the command SHALL delegate VM resolution to the shared target picker defined in the `interactive-target-picker` capability: exactly one pmox VM auto-selects, multiple pmox VMs show an interactive picker when stdin and stderr are TTYs, and non-interactive / zero-VM cases error out with the same messages used by `pmox shell`.
 
+When invoked interactively with missing arguments, the command SHALL use the fields defined in the `remote-target-input` capability:
+- With no arguments: a local path field (default `.`, directories only), then a target field.
+- With only `<local_path>`: the target field only.
+
+The target field's default path SHALL be `/mnt/<base name of the absolute local path>`. Without a terminal, missing arguments SHALL remain a usage error.
+
+The command SHALL accept `--mkdir` and SHALL confirm and create a missing remote directory as defined in `remote-target-input`, before the initial sync.
+
 The command SHALL accept `--user` / `-u` (default `"pmox"`), `--identity` / `-i`, and `--force` flags with identical behavior to `pmox shell`.
 
 The command SHALL accept `--daemon` / `-d` to run in the background and write a PID file.
@@ -103,6 +111,15 @@ The `pmox mount --help` output SHALL document that the `<name|vmid>:` prefix on 
 #### Scenario: Custom user and identity
 - **WHEN** `pmox mount --user ubuntu --identity ~/.ssh/custom ./src web1:/opt/app` is invoked
 - **THEN** the rsync `-e` flag SHALL reference `-i ~/.ssh/custom` and the remote path SHALL use `ubuntu@<ip>`
+
+#### Scenario: Bare `pmox mount` on a terminal
+- **WHEN** `pmox mount` is invoked with no arguments in `~/code/src` on a terminal, with web1 the only pmox VM
+- **THEN** the local field shows `.` greyed, and after Enter the target field opens as `web1:` with `/mnt/src` greyed
+- **AND** Enter on both starts the mount of `.` to `web1:/mnt/src`
+
+#### Scenario: Local path given, target asked
+- **WHEN** `pmox mount ./src` is invoked on a terminal
+- **THEN** only the target field is shown, with default path `/mnt/src`
 
 ### Requirement: Daemon mode (default)
 
@@ -201,9 +218,15 @@ When invoked with an explicit `<name|vmid>:<remote_path>` argument, the command 
 
 When invoked with `--all <name|vmid>` (no colon), the command SHALL behave exactly as it does today: it stops every mount whose PID file is prefixed with that VM name.
 
-When invoked with no positional arguments at all, the command SHALL delegate VM resolution to the shared target picker defined in the `interactive-target-picker` capability (exactly one pmox VM auto-selects silently; multiple VMs show an interactive picker when stdin and stderr are TTYs; non-interactive / zero-VM cases error out). After resolving the VM, the command SHALL stop every daemon-mode mount associated with that VM — equivalent to running `pmox umount --all <resolved-vm>`.
+When invoked with no positional arguments, the command SHALL read the running daemon-mode mounts from the local state directory without contacting the cluster:
+- None running: print "✓ No active mounts" and exit 0.
+- Exactly one running: stop it without asking.
+- Several running, on a terminal: show a multi-select of them as `<local> → <vm>:<path>` and stop the ones chosen.
+- Several running, without a terminal: exit non-zero with the existing missing-argument error.
 
-The `pmox umount --help` output SHALL document that calling `pmox umount` with no arguments stops all mounts for the resolved VM.
+When the requested mount is not running (explicit target, or `--all` with none), the command SHALL report that with a "✓" line and exit 0, as `cli-progress-feedback` requires.
+
+The `pmox umount --help` output SHALL document that calling `pmox umount` with no arguments offers the running mounts to stop.
 
 #### Scenario: Stop a specific mount by explicit target
 - **WHEN** `pmox umount web1:/opt/app` is invoked and a daemon mount exists for that path
@@ -217,36 +240,29 @@ The `pmox umount --help` output SHALL document that calling `pmox umount` with n
 - **THEN** the command SHALL find all PID files for `web1` and send SIGTERM to each
 - **AND** the command SHALL NOT invoke the target picker
 
-#### Scenario: Bare `pmox umount`, single pmox VM exists
-- **WHEN** `pmox umount` is invoked with no positional arguments
-- **AND** exactly one pmox-tagged VM exists on the cluster
-- **THEN** the command SHALL auto-select that VM without showing a picker
-- **AND** the command SHALL stop every daemon-mode mount for that VM (equivalent to `pmox umount --all <vm>`)
-- **AND** the command SHALL print the number of stopped mounts to stderr
+#### Scenario: Bare `pmox umount`, nothing running
+- **WHEN** `pmox umount` is invoked with no positional arguments and no mount is running
+- **THEN** the command SHALL print "✓ No active mounts" and exit 0
+- **AND** SHALL NOT contact the cluster
 
-#### Scenario: Bare `pmox umount`, multiple pmox VMs, interactive TTY
-- **WHEN** `pmox umount` is invoked with no positional arguments
-- **AND** two or more pmox-tagged VMs exist
-- **AND** stdin and stderr are both TTYs
-- **THEN** the command SHALL display the shared target picker
-- **AND** on selection SHALL stop every daemon-mode mount for the chosen VM
+#### Scenario: Bare `pmox umount`, one mount running
+- **WHEN** `pmox umount` is invoked with no positional arguments and exactly one mount is running
+- **THEN** the command SHALL stop it without prompting
 
-#### Scenario: Bare `pmox umount`, non-TTY stdin
-- **WHEN** `pmox umount` is invoked with no positional arguments
-- **AND** stdin or stderr is not a TTY
-- **AND** two or more pmox-tagged VMs exist
+#### Scenario: Bare `pmox umount`, several mounts, interactive TTY
+- **WHEN** `pmox umount` is invoked with no positional arguments, several mounts are running, and stdin and stderr are TTYs
+- **THEN** the command SHALL list them as `<local> → <vm>:<path>` in a multi-select
+- **AND** SHALL stop each mount chosen
+
+#### Scenario: Bare `pmox umount`, several mounts, non-TTY
+- **WHEN** `pmox umount` is invoked with no positional arguments, several mounts are running, and stdin or stderr is not a TTY
 - **THEN** the command SHALL exit non-zero without prompting
 - **AND** the error SHALL match the existing missing-argument behavior
 
-#### Scenario: Bare `pmox umount`, zero pmox VMs
-- **WHEN** `pmox umount` is invoked with no positional arguments
-- **AND** no pmox-tagged VMs exist
-- **THEN** the command SHALL exit non-zero
-- **AND** the error SHALL state that no pmox VMs were found and suggest `pmox launch`
-
 #### Scenario: No matching mount for explicit target
 - **WHEN** `pmox umount web1:/opt/app` is invoked but no daemon mount exists for that path
-- **THEN** the command SHALL exit non-zero with an error stating no mount was found
+- **THEN** the command SHALL print a "✓" line stating no mount is running there
+- **AND** SHALL exit 0
 
 #### Scenario: Stale PID file
 - **WHEN** `pmox umount web1:/opt/app` is invoked and the PID file references a dead process

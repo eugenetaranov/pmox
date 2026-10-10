@@ -1,9 +1,7 @@
 ## Purpose
 
 `pmox cp` copies files and directories between the local machine and a pmox VM over SSH.
-
 ## Requirements
-
 ### Requirement: `pmox cp` command
 
 The CLI SHALL expose `pmox cp <source> <destination>` which copies files between the local host and a pmox-managed VM using the system `scp` binary. Exactly one of source or destination SHALL use the `<name|vmid>:<path>` syntax to identify the remote side. The part before `:` is resolved via the existing VM resolution logic.
@@ -78,3 +76,24 @@ The command SHALL look up `scp` via `exec.LookPath`. If not found, the command S
 #### Scenario: scp not installed
 - **WHEN** the `scp` binary is not on PATH
 - **THEN** the command SHALL exit non-zero with an error stating `scp` was not found
+
+### Requirement: Interactive transfer prompts
+
+When `pmox cp` is invoked with no arguments on a terminal, it SHALL ask for the direction (upload or download). It SHALL then use the fields defined in `remote-target-input`, in direction order:
+- upload: the local path field, then the target field
+- download: the target field, then the local path field
+
+The local path field SHALL accept files and directories. Without a terminal, no arguments SHALL remain a usage error.
+
+#### Scenario: Interactive upload with one VM
+- **WHEN** `pmox cp` is invoked with no arguments on a terminal and web1 is the only pmox VM, and the user picks upload
+- **THEN** the local field opens with `.` greyed, then the target field opens as `web1:` without asking for a VM
+
+### Requirement: Missing destination directory
+
+`pmox cp` SHALL accept `--mkdir` and SHALL confirm and create a missing destination directory as defined in `remote-target-input`, before running scp.
+
+#### Scenario: Copy into a missing remote directory
+- **WHEN** `pmox cp ./app.tar.gz web1:/opt/new/` is invoked on a terminal and `/opt/new` doesn't exist
+- **THEN** pmox asks "Create /opt/new/ on web1?" and, on Yes, creates it and runs scp
+
