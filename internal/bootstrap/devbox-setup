@@ -535,7 +535,27 @@ review() {
 # Steps have no terminal, so a "modified config file" question would fail
 # the install: keep the existing file instead.
 APT_OPTS=(-q -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-apt_update() { apt-get "${APT_OPTS[@]}" update; touch "$STATE/.apt-fresh"; }
+# DPkg::Lock::Timeout covers installs, not `apt-get update`'s lists lock
+# (/var/lib/apt/lists/lock), which cloud-init or apt-daily can hold right
+# after boot: retry while another apt holds it, for up to 15 minutes.
+apt_update() {
+  local out tries=0
+  while :; do
+    if out=$(apt-get "${APT_OPTS[@]}" update 2>&1); then
+      printf '%s\n' "$out"
+      touch "$STATE/.apt-fresh"
+      return 0
+    fi
+    case "$out" in
+      *"Could not get lock"*)
+        [ "$tries" = 0 ] && echo "Waiting for another apt process to finish…"
+        tries=$((tries + 1))
+        [ "$tries" -le 180 ] || { printf '%s\n' "$out"; return 1; }
+        sleep 5 ;;
+      *) printf '%s\n' "$out"; return 1 ;;
+    esac
+  done
+}
 # NEEDRESTART_MODE=l: list, don't restart. An automatic restart of docker
 # mid-run would kill the MCP containers being set up.
 apt_install() {
