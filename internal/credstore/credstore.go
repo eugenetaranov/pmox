@@ -131,16 +131,19 @@ func cachedKeychainProbe() func() bool {
 	}
 }
 
-// probeKeychain does a sentinel set->get->delete; any failure means the
-// keychain is unusable (headless Linux, CI, no Secret Service).
+// probeAccount is an entry pmox never writes; looking it up tells
+// whether the keychain answers at all.
+const probeAccount = "__pmox_keychain_probe__"
+
+// probeKeychain reports whether the OS keychain is usable with a single
+// read-only lookup: "not found" (or, for a leftover entry from older
+// pmox, a hit) means it answers; any other error (headless Linux, CI,
+// no Secret Service) means it doesn't. It must not write: concurrent
+// pmox processes used to race on a shared set→get→delete sentinel, and
+// a loser fell back to the secrets file with "secret not found".
 func probeKeychain() bool {
-	const probe = "__pmox_keychain_probe__"
-	if err := keyring.Set(service, probe, "1"); err != nil {
-		return false
-	}
-	_, getErr := keyring.Get(service, probe)
-	_ = keyring.Delete(service, probe)
-	return getErr == nil
+	_, err := keyring.Get(service, probeAccount)
+	return err == nil || errors.Is(err, keyring.ErrNotFound)
 }
 
 // ActiveBackend returns the backend secrets currently resolve to,

@@ -89,3 +89,28 @@ func TestRemove(t *testing.T) {
 		t.Errorf("want ErrNotFound after remove, got %v", err)
 	}
 }
+
+func TestProbeKeychainIsReadOnly(t *testing.T) {
+	keyring.MockInit()
+	if !probeKeychain() {
+		t.Fatal("a working keychain must probe as available")
+	}
+	// Nothing may be left behind (or ever written): concurrent processes
+	// raced on a shared probe entry when the probe wrote one.
+	if _, err := keyring.Get(service, probeAccount); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatalf("probe wrote an entry: %v", err)
+	}
+	// A leftover entry from an older pmox still means "available".
+	_ = keyring.Set(service, probeAccount, "1")
+	if !probeKeychain() {
+		t.Error("a leftover probe entry must still probe as available")
+	}
+}
+
+func TestProbeKeychainUnavailable(t *testing.T) {
+	keyring.MockInitWithError(errors.New("org.freedesktop.secrets was not provided"))
+	t.Cleanup(keyring.MockInit)
+	if probeKeychain() {
+		t.Error("a keychain that errors must probe as unavailable")
+	}
+}
