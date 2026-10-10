@@ -28,6 +28,11 @@ const (
 // canonicalAnnotation records the canonical path of a shortcut.
 const canonicalAnnotation = "pmox.canonical"
 
+// paletteLeafAnnotation marks a command with subcommands that the
+// palette runs directly instead of opening as a menu ('version' prints
+// the version; 'version upgrade' is for the command line).
+const paletteLeafAnnotation = "pmox.palette-leaf"
+
 // rename changes the command word of c's Use (keeping its argument
 // synopsis) and replaces its aliases.
 func rename(c *cobra.Command, name string, aliases ...string) *cobra.Command {

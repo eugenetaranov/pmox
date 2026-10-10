@@ -66,7 +66,7 @@ func paletteMenu(cmd *cobra.Command) palette.Menu {
 				Desc:    desc,
 				Hint:    strings.Join(hints, " · "),
 				Section: title,
-				Sub:     c.HasAvailableSubCommands(),
+				Sub:     c.HasAvailableSubCommands() && c.Annotations[paletteLeafAnnotation] == "",
 			})
 		}
 	}

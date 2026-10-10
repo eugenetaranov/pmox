@@ -31,6 +31,14 @@ go install github.com/eugenetaranov/pmox/cmd/pmox@latest
 Or download a pre-built binary from the
 [releases page](https://github.com/eugenetaranov/pmox/releases).
 
+To upgrade later, run `pmox version upgrade`. It finds the latest release
+and upgrades the same way pmox was installed: through `brew upgrade` for
+the Homebrew tap, or by downloading the release, verifying its checksum and
+replacing the binary for everything else. It uses sudo, which asks for
+your password, when the binary's directory isn't writable. It asks before
+upgrading; `--check` only reports, and `--yes` skips the question (needed
+without a terminal).
+
 ## Proxmox-side setup
 
 pmox needs three things on the cluster:

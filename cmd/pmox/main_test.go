@@ -160,6 +160,16 @@ func TestRootMenuOptions(t *testing.T) {
 			t.Errorf("deprecated %q must not be offered (names=%v)", hidden, names)
 		}
 	}
+	// 'version' prints the version from the palette; it has an 'upgrade'
+	// verb but must not open as a submenu.
+	for _, it := range menu.Items {
+		if it.Key == "version" && it.Sub {
+			t.Error("version must run from the palette, not open a submenu")
+		}
+		if it.Key == "vm" && !it.Sub {
+			t.Error("vm must still open its submenu")
+		}
+	}
 	// Sections in --help order: Get started, Common, Resources,
 	// Maintenance; each alphabetical within (as cobra lists them).
 	order := []string{"launch", "delete", "list", "template", "vm", "doctor", "version"}

@@ -105,13 +105,19 @@ func runRootMenu(cmd *cobra.Command) error {
 }
 
 func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Show the pmox version",
+		Long: `Show the pmox version. 'pmox version upgrade' upgrades pmox to the
+latest release.`,
+		Args:        cobra.NoArgs,
+		Annotations: map[string]string{paletteLeafAnnotation: "true"},
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("pmox version %s (commit: %s, built: %s)\n", version, commit, date)
+			fmt.Fprintf(cmd.OutOrStdout(), "pmox version %s (commit: %s, built: %s)\n", version, commit, date)
 		},
 	}
+	cmd.AddCommand(newVersionUpgradeCmd())
+	return cmd
 }
 
 func init() {
