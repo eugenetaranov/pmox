@@ -188,6 +188,21 @@ func zeroOrExactArgs(n int, usage, example string) cobra.PositionalArgs {
 	}
 }
 
+// atMostArgs allows 0..n positionals (before any "--"); a terminal asks
+// for the missing ones.
+func atMostArgs(n int, usage, example string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		got := len(args)
+		if d := cmd.ArgsLenAtDash(); d >= 0 {
+			got = d
+		}
+		if got <= n {
+			return nil
+		}
+		return fmt.Errorf("expected at most %d argument(s), got %d — usage: %s (example: %s)", n, got, usage, example)
+	}
+}
+
 func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	sigCh := make(chan os.Signal, 1)

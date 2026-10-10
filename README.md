@@ -202,11 +202,37 @@ shows an **arrow-key picker** when several do:
 
 - `info`, `start`, `stop`, `delete`, `shell`, `exec`, `ssh-config`, `apply` — omit the `[name|vmid]`.
 - `stop` and `delete` show a **multi-select** picker (space to toggle, enter to confirm) and also accept several names at once.
-- `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM, or omit both arguments entirely and pmox asks for a direction (upload/download), the VM, and both paths.
+- `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM, or omit both arguments entirely and pmox asks for a direction (upload/download), then the local path and the `<vm>:<path>` target (see below).
 - `clone <new-name>` — omit the source to pick it, or omit both source and new name and pmox asks for each in turn.
 - `exec [name|vmid]` — omit the remote command after `--` and pmox asks for it.
-- `mount` / `umount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, or for `mount`, omit both arguments and pmox asks for the local path and the remote target.
+- `mount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, give only the local directory (`pmox mount ./src`), or omit both and pmox asks for the local directory and the target.
+- `umount` — omit the argument and pmox lists the running mounts to stop (one running mount is stopped without asking).
 - `context use` — omit the name to pick a context.
+
+**The `<vm>:<path>` target field** (mount, cp, sync) lists your pmox
+VMs under the input and suggests a greyed default — `web1:/mnt/<local
+folder>` for `mount`, `web1:~/<local folder>` for uploads:
+
+- **Tab** completes the VM name (extending to the common prefix, then
+  cycling), then remote directories (one SSH listing per directory);
+  **→**/**End** accept the greyed suggestion.
+- **↑/↓** picks another VM and keeps the path you typed.
+- Everything stays editable: backspace into the path or the VM name,
+  retype, or pick again. **Enter** confirms; **Esc** goes back to the
+  previous field.
+- With exactly one pmox VM, the field opens as `web1:` with the cursor
+  in the path — you're never asked for the VM.
+- A remote path that starts with neither `/` nor `~/` is relative to
+  the login user's home: `project/pmox` is `~/project/pmox`.
+
+The local path field defaults to `.` and Tab-completes local paths.
+
+**A missing destination directory** is confirmed before anything is
+copied: `Create ~/project/pmox on web1?` (default Yes) creates it, owned
+by the login user — with `sudo` when the parent isn't writable, as for
+`/mnt`. Scripts pass `--mkdir` to create it without asking; without a
+terminal and without `--mkdir`, pmox stops with an error naming the
+path.
 
 Pickers are strictly non-obtrusive: an explicit arg always skips them,
 they only appear on a terminal, and they never draw in scripts, pipes,
@@ -779,8 +805,10 @@ rerun; pmox will re-pin on the next connection. pmox never touches
 ### `pmox mount` stops silently in the background
 
 Background mounts write a PID file and log file under
-`~/.config/pmox/mount/`. `pmox umount <vm>` stops every mount for a
-VM; inspect the log file to find out why a mount exited.
+`~/.config/pmox/mount/`. `pmox mount list` shows the running ones,
+`pmox umount` offers them to stop, and `pmox umount --all <vm>` stops
+every mount for a VM; inspect the log file to find out why a mount
+exited.
 
 ### Hook exited non-zero but `pmox launch` exited 0
 

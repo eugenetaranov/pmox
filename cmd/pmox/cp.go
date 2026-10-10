@@ -11,9 +11,11 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tui"
+	"github.com/eugenetaranov/pmox/internal/tui/target"
 )
 
 // ensureVMRef resolves the VM side of a cp/sync transfer. An explicit
@@ -61,12 +63,13 @@ func resolveTransferArgs(args []string) (local string, remote remoteArg, localIs
 }
 
 // resolveCpSyncArgs returns cp/sync's source and destination the way
-// resolveTransferArgs does, either parsed straight from args (the
-// len==2 case zeroOrExactArgs guarantees) or, with none given on a
-// terminal, by prompting for a direction, the local path, a VM (the
-// shared picker), and the remote path. Non-interactively with zero
+// resolveTransferArgs does, either parsed straight from args or, with
+// none given on a terminal, by asking for a direction and then the local
+// path and <vm>:<path> fields in that direction's order
+// (openspec/specs/remote-target-input). Non-interactively with zero
 // args this is still the same hard error cp/sync always gave.
-func resolveCpSyncArgs(ctx context.Context, client *pveclient.Client, args []string, usage, example string) (localArg string, remote remoteArg, localIsSource bool, err error) {
+func resolveCpSyncArgs(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, f *sshFlags, serverURL string, srv *config.Server, args []string, usage, example string) (localArg string, remote remoteArg, localIsSource bool, err error) {
+	args = positionalArgs(cmd, args)
 	if len(args) == 2 {
 		return resolveTransferArgs(args)
 	}
@@ -74,40 +77,57 @@ func resolveCpSyncArgs(ctx context.Context, client *pveclient.Client, args []str
 		return "", remoteArg{}, false, fmt.Errorf("%w: expected 2 arguments, got 0 — usage: %s (example: %s)", exitcode.ErrUserInput, usage, example)
 	}
 
-	dir, err := tui.Select("Direction", []huh.Option[string]{
+	dir, err := selectDirectionFn("Direction", []huh.Option[string]{
 		huh.NewOption("Upload: local → VM", "upload"),
 		huh.NewOption("Download: VM → local", "download"),
 	})
 	if err != nil {
 		return "", remoteArg{}, false, err
 	}
-	picked, err := vmPickFn(ctx, client)
+	vms, err := targetVMsFn(ctx, client)
 	if err != nil {
 		return "", remoteArg{}, false, err
 	}
-	vmRef := strconv.Itoa(picked.VMID)
+	upload := dir == "upload"
+	local := &target.Local{Title: "Local destination"}
+	rem := &target.Remote{Title: "Remote source", VMs: vms, List: targetLister(f, serverURL, srv)}
+	fields := []target.Field{rem, local}
+	if upload {
+		local.Title, rem.Title = "Local source", "Remote destination"
+		// ~/<local name>: never the bare home directory, which a
+		// directory sync would fill with the source's contents.
+		rem.DefaultPath = func(prev []string) string {
+			if p := mountDefaultPath(prev[0]); p != "" {
+				return "~/" + strings.TrimPrefix(p, "/mnt/")
+			}
+			return ""
+		}
+		fields = []target.Field{local, rem}
+	}
+	if err := targetRunFn(ctx, fields...); err != nil {
+		return "", remoteArg{}, false, err
+	}
+	v, p := rem.Result()
+	return local.Result(), remoteArg{vmRef: v.Name, remotePath: p}, upload, nil
+}
 
-	p := newStdPrompter(ctx)
-	if dir == "upload" {
-		local, err := promptRequired(p, "Local source path: ", "a path is required")
-		if err != nil {
-			return "", remoteArg{}, false, err
-		}
-		remotePath, err := promptRequired(p, "Remote destination path: ", "a path is required")
-		if err != nil {
-			return "", remoteArg{}, false, err
-		}
-		return local, remoteArg{vmRef: vmRef, remotePath: remotePath}, true, nil
+// selectDirectionFn asks upload vs download. A seam for tests.
+var selectDirectionFn = tui.Select
+
+// isLocalDir reports whether p is an existing local directory.
+func isLocalDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// ensureTransferDir confirms and creates a missing destination directory
+// before cp/sync: remote for uploads, local for downloads. wholeDir is
+// set when the destination itself must exist (sync of a directory).
+func ensureTransferDir(ctx context.Context, cmd *cobra.Command, sshT *sshTarget, localArg, remotePath string, localIsSource, wholeDir, mkdir bool) error {
+	if localIsSource {
+		return ensureRemoteDir(ctx, cmd, sshT, dirToCheck(remotePath, wholeDir, remoteParent), mkdir)
 	}
-	remotePath, err := promptRequired(p, "Remote source path: ", "a path is required")
-	if err != nil {
-		return "", remoteArg{}, false, err
-	}
-	local, err := promptRequired(p, "Local destination path: ", "a path is required")
-	if err != nil {
-		return "", remoteArg{}, false, err
-	}
-	return local, remoteArg{vmRef: vmRef, remotePath: remotePath}, false, nil
+	return ensureLocalDir(cmd, dirToCheck(localArg, false, localParent), mkdir)
 }
 
 // scpOptionArgs returns the scp "-o" host-key options plus an optional
@@ -161,7 +181,7 @@ var rsyncRunFn = func(bin string, args []string) error {
 
 func newCpCmd() *cobra.Command {
 	f := &sshFlags{}
-	var recursive bool
+	var recursive, mkdir bool
 	cmd := &cobra.Command{
 		Use:   "cp <source> <destination>",
 		Short: "Copy files to or from a VM",
@@ -175,20 +195,26 @@ Examples:
   pmox cp -r ./config/ web1:/etc/app/
   pmox cp ./big.tar web1:/tmp/ -- -l 1000
 
-On a terminal, 'pmox cp' alone prompts for a direction, the local
-path, a VM (the shared picker), and the remote path.`,
+On a terminal, 'pmox cp' alone asks for a direction, then the local
+path and the <vm>:<path> target (Tab completes the VM and remote
+directories; one pmox VM is filled in for you). A remote path not
+starting with / or ~/ is relative to the login home.
+
+A missing destination directory is confirmed and created; --mkdir
+creates it without asking.`,
 		Args:               zeroOrExactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCp(cmd, args, f, recursive)
+			return runCp(cmd, args, f, recursive, mkdir)
 		},
 	}
 	addSSHFlags(cmd, f)
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "copy directories recursively")
+	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create a missing destination directory without asking")
 	return cmd
 }
 
-func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error {
+func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive, mkdir bool) error {
 	scpPath, err := exec.LookPath("scp")
 	if err != nil {
 		return fmt.Errorf("scp binary not found on PATH; install OpenSSH to use pmox cp")
@@ -201,7 +227,7 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 	}
 	srv := resolved.Server
 
-	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, client, args, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
+	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, cmd, client, f, resolved.URL, srv, args, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
 	if err != nil {
 		return err
 	}
@@ -213,6 +239,10 @@ func runCp(cmd *cobra.Command, args []string, f *sshFlags, recursive bool) error
 
 	target, err := resolveSSHTarget(ctx, cmd, client, remote.vmRef, f, resolved.URL, srv)
 	if err != nil {
+		return err
+	}
+
+	if err := ensureTransferDir(ctx, cmd, target, localArg, remote.remotePath, localIsSource, false, mkdir); err != nil {
 		return err
 	}
 
@@ -239,6 +269,7 @@ func buildScpArgs(scpPath string, target *sshTarget, localPath, remotePath strin
 
 func newSyncCmd() *cobra.Command {
 	f := &sshFlags{}
+	var noArchive, mkdir bool
 	cmd := &cobra.Command{
 		Use:   "sync <source> <destination>",
 		Short: "Sync a directory to or from a VM",
@@ -251,19 +282,28 @@ Examples:
   pmox sync web1:/var/log/ ./logs/
   pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git
 
-On a terminal, 'pmox sync' alone prompts for a direction, the local
-path, a VM (the shared picker), and the remote path.`,
+rsync runs with -a (recursive, keeps attributes) unless --no-archive.
+
+On a terminal, 'pmox sync' alone asks for a direction, then the local
+path and the <vm>:<path> target (Tab completes the VM and remote
+directories; one pmox VM is filled in for you). A remote path not
+starting with / or ~/ is relative to the login home.
+
+A missing destination directory is confirmed and created; --mkdir
+creates it without asking.`,
 		Args:               zeroOrExactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSync(cmd, args, f)
+			return runSync(cmd, args, f, !noArchive, mkdir)
 		},
 	}
 	addSSHFlags(cmd, f)
+	cmd.Flags().BoolVar(&noArchive, "no-archive", false, "don't pass rsync -a (pass your own flags after --)")
+	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create a missing destination directory without asking")
 	return cmd
 }
 
-func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
+func runSync(cmd *cobra.Command, args []string, f *sshFlags, archive, mkdir bool) error {
 	rsyncPath, err := exec.LookPath("rsync")
 	if err != nil {
 		return fmt.Errorf("rsync binary not found on PATH; install rsync to use pmox sync")
@@ -276,7 +316,7 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 	srv := resolved.Server
 
-	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, client, args, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/")
+	localArg, remote, localIsSource, err := resolveCpSyncArgs(ctx, cmd, client, f, resolved.URL, srv, args, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/")
 	if err != nil {
 		return err
 	}
@@ -291,12 +331,20 @@ func runSync(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, guestHostKeyOpts(), extraArgsAfterDash(cmd))
+	wholeDir := localIsSource && isLocalDir(localArg)
+	if err := ensureTransferDir(ctx, cmd, target, localArg, remote.remotePath, localIsSource, wholeDir, mkdir); err != nil {
+		return err
+	}
+
+	rsyncArgs := buildRsyncArgs(rsyncPath, target, localArg, remote.remotePath, localIsSource, archive, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 	return explainSSHFailure(ctx, target, resolved.URL, rsyncRunFn(rsyncPath, rsyncArgs), false)
 }
 
-func buildRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, localIsSource bool, hostKeyOpts, extra []string) []string {
+func buildRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, localIsSource, archive bool, hostKeyOpts, extra []string) []string {
 	args := []string{rsyncPath}
+	if archive {
+		args = append(args, "-a") // copy directories, not "skipping directory"
+	}
 	args = append(args, "-e", rsyncSSHOption(target, hostKeyOpts))
 	args = append(args, extra...)
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +25,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
+	"github.com/eugenetaranov/pmox/internal/tui/target"
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
@@ -367,7 +371,7 @@ func TestRunMountDaemon_RefusesLiveDuplicate(t *testing.T) {
 func TestResolveMountArgs(t *testing.T) {
 	t.Run("two args pass through unchanged", func(t *testing.T) {
 		cmd := newMountCmd()
-		localPath, destArg, err := resolveMountArgs(cmd, []string{"./src", "web1:/opt/app"})
+		localPath, destArg, err := resolveMountArgs(cmd, nil, &mountFlags{}, "", nil, []string{"./src", "web1:/opt/app"})
 		require.NoError(t, err)
 		assert.Equal(t, "./src", localPath)
 		assert.Equal(t, "web1:/opt/app", destArg)
@@ -379,11 +383,57 @@ func TestResolveMountArgs(t *testing.T) {
 	t.Run("zero args non-interactively is an error", func(t *testing.T) {
 		cmd := newMountCmd()
 		cmd.SetContext(context.Background())
-		_, _, err := resolveMountArgs(cmd, nil)
+		_, _, err := resolveMountArgs(cmd, nil, &mountFlags{}, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expected 2 arguments, got 0")
 		assert.True(t, errors.Is(err, exitcode.ErrUserInput))
 	})
+
+	t.Run("local path only asks for the target with /mnt/<dir>", func(t *testing.T) {
+		forceInteractive(t)
+		stubTargetFields(t, []target.VM{{Name: "web1", VMID: 101, Status: "running"}}, tea.KeyEnter)
+		cmd := newMountCmd()
+		cmd.SetContext(context.Background())
+		local, dest, err := resolveMountArgs(cmd, nil, &mountFlags{}, "", nil, []string{"./src"})
+		require.NoError(t, err)
+		assert.Equal(t, "./src", local)
+		assert.Equal(t, "web1:/mnt/src", dest)
+	})
+
+	t.Run("no args asks for both", func(t *testing.T) {
+		forceInteractive(t)
+		dir := filepath.Join(t.TempDir(), "proj")
+		require.NoError(t, os.Mkdir(dir, 0o755))
+		wd, _ := os.Getwd()
+		t.Cleanup(func() { _ = os.Chdir(wd) })
+		require.NoError(t, os.Chdir(dir))
+		stubTargetFields(t, []target.VM{{Name: "web1", VMID: 101}, {Name: "web2", VMID: 102}}, tea.KeyEnter, tea.KeyDown, tea.KeyEnter)
+		cmd := newMountCmd()
+		cmd.SetContext(context.Background())
+		local, dest, err := resolveMountArgs(cmd, nil, &mountFlags{}, "", nil, nil)
+		require.NoError(t, err)
+		assert.Equal(t, ".", local)
+		assert.Equal(t, "web2:/mnt/proj", dest)
+	})
+}
+
+// stubTargetFields offers vms to the fields and answers them by
+// pressing keys on the real form.
+func stubTargetFields(t *testing.T, vms []target.VM, keys ...tea.KeyType) {
+	t.Helper()
+	origVMs, origRun := targetVMsFn, targetRunFn
+	targetVMsFn = func(context.Context, *pveclient.Client) ([]target.VM, error) { return vms, nil }
+	targetRunFn = func(ctx context.Context, fields ...target.Field) error {
+		f := target.New(ctx, fields...)
+		for _, k := range keys {
+			f.Update(tea.KeyMsg{Type: k})
+		}
+		if !f.Done() {
+			return fmt.Errorf("form not finished:\n%s", f.View())
+		}
+		return nil
+	}
+	t.Cleanup(func() { targetVMsFn, targetRunFn = origVMs, origRun })
 }
 
 func TestMountArgValidation(t *testing.T) {
@@ -496,30 +546,61 @@ func TestMountResolveDest_ExplicitArgBypassesPicker(t *testing.T) {
 	assert.Equal(t, "/opt/app", remotePath)
 }
 
-// Task 3.3: zero-arg `pmox umount` runs the picker, then delegates to
-// the umountAll code path for the resolved VM. When nothing matches,
-// it reports friendly info to stderr and exits 0 (not an error).
-func TestRunUmount_ZeroArgs_PickerThenUmountAll(t *testing.T) {
+// Bare `pmox umount` offers the running mounts (read locally, no
+// cluster call); nothing running is success.
+func TestRunUmount_ZeroArgs_NothingRunning(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	called := false
-	orig := umountResolveVMFn
-	umountResolveVMFn = func(*cobra.Command) (string, error) {
-		called = true
-		return "web1", nil
-	}
-	t.Cleanup(func() { umountResolveVMFn = orig })
-
 	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
-
 	cmd := newTestUmountCmd()
 	var errbuf bytes.Buffer
 	cmd.SetErr(&errbuf)
+	require.NoError(t, runUmount(cmd, nil, false))
+	assert.Contains(t, errbuf.String(), "No active mounts")
+}
 
-	err := runUmount(cmd, nil, false)
-	require.NoError(t, err, "zero-arg umount with no active mounts is not an error")
-	assert.True(t, called, "picker must run for zero-arg umount")
-	assert.Contains(t, errbuf.String(), "No active mounts for web1")
+func TestRunUmount_ZeroArgs_OneRunningIsStopped(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := testMountStateDir(t)
+	pid := spawnDetachedSleep(t)
+	_, err := mount.Save(dir, mount.Record{VMName: "web1", LocalPath: "./src", RemotePath: "/opt/app", PID: pid})
+	require.NoError(t, err)
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+	require.NoError(t, runUmount(cmd, nil, false))
+	assert.Contains(t, errbuf.String(), "stopped mount")
+	left, _ := mount.List(dir)
+	assert.Empty(t, left)
+}
+
+func TestRunUmount_ZeroArgs_SeveralRunning(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := testMountStateDir(t)
+	for _, p := range []string{"/opt/a", "/opt/b"} {
+		_, err := mount.Save(dir, mount.Record{VMName: "web1", LocalPath: "./src" + p, RemotePath: p, PID: spawnDetachedSleep(t)})
+		require.NoError(t, err)
+	}
+
+	// Without a terminal: a usage error, nothing stopped.
+	err := runUmount(newTestUmountCmd(), nil, false)
+	require.True(t, errors.Is(err, exitcode.ErrUserInput), "err = %v", err)
+
+	// On a terminal: the chosen mount is stopped, the other keeps running.
+	forceInteractive(t)
+	orig := selectMountsFn
+	var offered []string
+	selectMountsFn = func(_ string, opts []huh.Option[string]) ([]string, error) {
+		for _, o := range opts {
+			offered = append(offered, o.Key)
+		}
+		return []string{opts[0].Value}, nil
+	}
+	t.Cleanup(func() { selectMountsFn = orig })
+	require.NoError(t, runUmount(newTestUmountCmd(), nil, false))
+	assert.Len(t, offered, 2)
+	assert.Contains(t, offered[0], "→ web1:/opt/")
+	left, _ := mount.List(dir)
+	assert.Len(t, left, 1)
 }
 
 // Task 3.4: explicit `pmox umount web1:/opt/app` still routes to
@@ -527,13 +608,6 @@ func TestRunUmount_ZeroArgs_PickerThenUmountAll(t *testing.T) {
 // message — and must not consult the picker.
 func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	orig := umountResolveVMFn
-	umountResolveVMFn = func(*cobra.Command) (string, error) {
-		t.Fatalf("picker must not run when an explicit arg is supplied")
-		return "", nil
-	}
-	t.Cleanup(func() { umountResolveVMFn = orig })
 
 	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
@@ -547,13 +621,6 @@ func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
 // Task 3.5: `pmox umount --all web1` still routes to umountAll.
 func TestRunUmount_AllFlag_RoutesToUmountAll(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	orig := umountResolveVMFn
-	umountResolveVMFn = func(*cobra.Command) (string, error) {
-		t.Fatalf("picker must not run when --all is used with an explicit VM")
-		return "", nil
-	}
-	t.Cleanup(func() { umountResolveVMFn = orig })
 
 	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 

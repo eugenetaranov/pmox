@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/tui/target"
 )
 
 func TestParseRemoteArg(t *testing.T) {
@@ -93,7 +98,7 @@ func TestResolveTransferArgs(t *testing.T) {
 
 func TestResolveCpSyncArgs(t *testing.T) {
 	t.Run("two args pass through to resolveTransferArgs, no client needed", func(t *testing.T) {
-		local, remote, localIsSrc, err := resolveCpSyncArgs(context.Background(), nil,
+		local, remote, localIsSrc, err := resolveCpSyncArgs(context.Background(), newCpCmd(), nil, &sshFlags{}, "", nil,
 			[]string{"./file.txt", "web1:/tmp/"}, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
 		require.NoError(t, err)
 		assert.Equal(t, "./file.txt", local)
@@ -107,12 +112,62 @@ func TestResolveCpSyncArgs(t *testing.T) {
 	// arguments is still a hard, immediate error, and the picker/prompts
 	// are never reached (nil client would otherwise panic).
 	t.Run("zero args non-interactively is an error", func(t *testing.T) {
-		_, _, _, err := resolveCpSyncArgs(context.Background(), nil,
+		_, _, _, err := resolveCpSyncArgs(context.Background(), newCpCmd(), nil, &sshFlags{}, "", nil,
 			nil, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expected 2 arguments, got 0")
 		assert.True(t, errors.Is(err, exitcode.ErrUserInput))
 	})
+
+	t.Run("interactive upload with one VM asks only for paths", func(t *testing.T) {
+		forceInteractive(t)
+		origSel := selectDirectionFn
+		selectDirectionFn = func(string, []huh.Option[string]) (string, error) { return "upload", nil }
+		t.Cleanup(func() { selectDirectionFn = origSel })
+		stubTargetFields(t, []target.VM{{Name: "web1", VMID: 101}}, tea.KeyEnter, tea.KeyEnter)
+		local, remote, localIsSrc, err := resolveCpSyncArgs(context.Background(), newSyncCmd(), nil, &sshFlags{}, "", nil,
+			nil, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/")
+		require.NoError(t, err)
+		wd, _ := os.Getwd()
+		assert.Equal(t, ".", local)
+		assert.Equal(t, "web1", remote.vmRef)
+		assert.Equal(t, "~/"+filepath.Base(wd), remote.remotePath)
+		assert.True(t, localIsSrc)
+	})
+
+	t.Run("interactive download asks for the remote side first", func(t *testing.T) {
+		forceInteractive(t)
+		origSel := selectDirectionFn
+		selectDirectionFn = func(string, []huh.Option[string]) (string, error) { return "download", nil }
+		t.Cleanup(func() { selectDirectionFn = origSel })
+		var order []string
+		origRun := targetRunFn
+		stubTargetFields(t, []target.VM{{Name: "web1", VMID: 101}}, tea.KeyRunes)
+		targetRunFn = func(ctx context.Context, fields ...target.Field) error {
+			for _, f := range fields {
+				switch f.(type) {
+				case *target.Remote:
+					order = append(order, "remote")
+				case *target.Local:
+					order = append(order, "local")
+				}
+			}
+			return nil
+		}
+		t.Cleanup(func() { targetRunFn = origRun })
+		_, _, localIsSrc, err := resolveCpSyncArgs(context.Background(), newCpCmd(), nil, &sshFlags{}, "", nil,
+			nil, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/")
+		require.NoError(t, err)
+		assert.False(t, localIsSrc)
+		assert.Equal(t, []string{"remote", "local"}, order)
+	})
+}
+
+func TestBuildRsyncArgsArchiveByDefault(t *testing.T) {
+	args := buildRsyncArgs("/usr/bin/rsync", &sshTarget{IP: "10.0.0.1", User: "pmox"}, ".", "~/project/pmox", true, true, testInsecureHostKeyOpts, []string{"--delete"})
+	assert.Equal(t, "-a", args[1], "sync must copy directories (no 'skipping directory')")
+	assert.Equal(t, "-e", args[2])
+	assert.Equal(t, []string{"--delete", ".", "pmox@10.0.0.1:~/project/pmox"}, args[len(args)-3:])
 }
 
 func TestBuildScpArgs(t *testing.T) {
@@ -233,7 +288,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := buildRsyncArgs("/usr/bin/rsync", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, testInsecureHostKeyOpts, tt.extra)
+			args := buildRsyncArgs("/usr/bin/rsync", tt.target, tt.localPath, tt.remotePath, tt.localIsSrc, false, testInsecureHostKeyOpts, tt.extra)
 			assert.Equal(t, "/usr/bin/rsync", args[0])
 			assert.Equal(t, "-e", args[1])
 			assert.Equal(t, tt.wantE, args[2])
@@ -252,7 +307,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 }
 
 func TestBuildRsyncArgs_NoKeyInE(t *testing.T) {
-	args := buildRsyncArgs("/usr/bin/rsync", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, testInsecureHostKeyOpts, nil)
+	args := buildRsyncArgs("/usr/bin/rsync", &sshTarget{IP: "10.0.0.1", User: "pmox", Key: ""}, "./f", "/tmp/", true, false, testInsecureHostKeyOpts, nil)
 	assert.NotContains(t, args[2], "-i")
 }
 
