@@ -95,7 +95,7 @@ func TestInjectStarterTemplate(t *testing.T) {
 			t.Errorf("%s: decoded content differs", w.Path)
 		}
 	}
-	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/daemon.json"} {
+	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/completions.zsh", ShareDir + "/conf/daemon.json"} {
 		if _, ok := want[p]; !ok {
 			t.Errorf("missing %s", p)
 		}

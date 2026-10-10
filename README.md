@@ -453,8 +453,17 @@ last tab, Review, lists everything ticked.
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
    delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
    zsh + oh-my-zsh + powerlevel10k (with autosuggestions and syntax
-   highlighting), a curated vim config, man pages + tldr. "Shell niceties"
-   turns the CLI tools on (zoxide, fzf keys, direnv, eza/bat aliases) through
+   highlighting), a curated vim config, man pages + tldr. zsh's plugins
+   follow what's installed: git, wd, sudo, extract and fzf history search
+   always, and aws, terraform, opentofu, kubectl, kubectx, helm, docker, gh,
+   mise, rust and golang whenever the tool is on PATH, so a tool added later
+   completes in the next shell. Tools without an oh-my-zsh plugin (k9s, stern,
+   just, task, uv, terragrunt, vault, packer, …) get Tab completion from their
+   own scripts, cached in `~/.cache/devbox/zsh-completions` and refreshed only
+   when the tool is upgraded. "zsh fuzzy Tab completion" (fzf-tab) turns Tab
+   into an fzf list with directory previews. "Shell niceties"
+   turns the CLI tools on (zoxide, fzf keys, direnv, eza/bat aliases, a
+   shared Terraform/OpenTofu provider cache, kubecolor) through
    `~/.config/devbox/shell.sh`, sourced from `.zshrc` and `.bashrc`; "tmux
    config" writes `~/.tmux.conf`. The shell, vim and tmux entries replace your
    files, keeping the old ones as `.orig`.

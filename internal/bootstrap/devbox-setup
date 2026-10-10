@@ -34,7 +34,6 @@ ECC_VERSION=2.2.3
 # Kept in step with tack-roles: roles/devbox/defaults/main.yaml, plus
 # autosuggestions and syntax-highlighting (which must stay last).
 ZSH_THEME_NAME="powerlevel10k/powerlevel10k"
-ZSH_PLUGINS="git terraform kubectl aws wd zsh-fzf-history-search zsh-autosuggestions zsh-syntax-highlighting"
 # pmox's own config files (conf/ in the pmox repo).
 CONF=$SHARE/conf
 DROPIN_LINE='[ -r ~/.config/devbox/shell.sh ] && . ~/.config/devbox/shell.sh'
@@ -74,6 +73,7 @@ CATALOG_ROWS=(
   "shell|shell|zsh + oh-my-zsh + p10k (prompt wizard on first login)|fn|||apt zsh · git clone ~/.oh-my-zsh · .zshrc.orig kept"
   "vimcfg|shell|Vim config + plugins (writes .vimrc)|fn||editors|vim-plug · curated ~/.vimrc · .vimrc.orig kept"
   "shellcfg|shell|Shell niceties: z, fzf keys, direnv, eza/bat aliases|fn|||~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
+  "fzftab|shell|zsh fuzzy Tab completion (fzf-tab)|fn||shell cli|git clone Aloxaf/fzf-tab → ~/.oh-my-zsh/custom/plugins"
   "tmuxcfg|shell|tmux config (mouse, splits, 50k history)|fn||tmux|~/.tmux.conf · .tmux.conf.orig kept"
   "docs|shell|Man pages, completion, tldr|fn|||apt man-db manpages-dev bash-completion command-not-found plocate tealdeer · unminimize if needed"
 
@@ -622,12 +622,25 @@ install_shell() {
       as_user git clone -q --depth 1 "https://github.com/$repo.git" "$home/.oh-my-zsh/custom/plugins/${repo#*/}"
   done
   if [ -f "$home/.zshrc" ] && [ ! -f "$home/.zshrc.orig" ]; then cp -p "$home/.zshrc" "$home/.zshrc.orig"; fi
-  sed -e "s|{{ .devbox_zsh_theme }}|$ZSH_THEME_NAME|" -e "s|{{ .devbox_zsh_plugins }}|$ZSH_PLUGINS|" \
-    "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
+  # Plugins are chosen by the template at shell start (installed tools).
+  sed -e "s|{{ .devbox_zsh_theme }}|$ZSH_THEME_NAME|" "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
   chown -h "$A_USER:" "$home/.zshrc"
+  as_user install -D -m 0644 "$CONF/completions.zsh" "$home/.config/devbox/completions.zsh"
   # The template replaced .zshrc: keep the shell drop-in if it is set up.
   [ -f "$home/.config/devbox/shell.sh" ] && add_dropin "$home/.zshrc"
   return 0
+}
+
+install_fzftab() {
+  local home; home=$(user_home)
+  [ -d "$home/.oh-my-zsh/custom/plugins/fzf-tab" ] || \
+    as_user git clone -q --depth 1 https://github.com/Aloxaf/fzf-tab.git "$home/.oh-my-zsh/custom/plugins/fzf-tab"
+}
+
+# prime_zsh_completions — fill the completion cache once every tool of
+# this run is installed, so the first login doesn't pay for it.
+prime_zsh_completions() {
+  as_user zsh -c 'source ~/.config/devbox/completions.zsh && devbox_comp_refresh'
 }
 
 install_shellcfg() {
@@ -1144,6 +1157,10 @@ apply() {
   if [ -n "$RUN_MISE_EXTRA" ] && ! picked_failed mise; then
     # shellcheck disable=SC2086
     step mise-extra "mise: $RUN_MISE_EXTRA" mise_use $RUN_MISE_EXTRA
+  fi
+
+  if [ -f "$(user_home)/.config/devbox/completions.zsh" ] && command -v zsh >/dev/null; then
+    step zshcomp "zsh completions for installed tools" prime_zsh_completions
   fi
 
   if picked mcpjungle && ! picked_failed mcpjungle; then

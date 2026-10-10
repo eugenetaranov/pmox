@@ -32,6 +32,21 @@ if command -v eza >/dev/null 2>&1; then
 fi
 command -v bat >/dev/null 2>&1 && alias cat='bat --paging=never --style=plain'
 
+# Terraform/OpenTofu: download each provider once per VM, not once per
+# working directory.
+if command -v terraform >/dev/null 2>&1 || command -v tofu >/dev/null 2>&1; then
+  export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
+  [ -d "$TF_PLUGIN_CACHE_DIR" ] || mkdir -p "$TF_PLUGIN_CACHE_DIR"
+fi
+
+# kubecolor: colored kubectl output, keeping kubectl's completion.
+if command -v kubecolor >/dev/null 2>&1; then
+  alias kubectl=kubecolor
+  if [ "$_devbox_sh" = zsh ] && (( $+functions[compdef] )); then
+    compdef kubecolor=kubectl
+  fi
+fi
+
 if command -v nvim >/dev/null 2>&1; then
   export EDITOR=nvim VISUAL=nvim
 else
