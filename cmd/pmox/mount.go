@@ -525,7 +525,8 @@ func runMountDaemon(cmd *cobra.Command, localPath, vmName, remotePath, serverURL
 	// (dead or recycled pid) is cleared so the new daemon can take over.
 	if rec, ok, err := mount.Find(stateDir, localPath, remotePath); err == nil && ok {
 		if rec.Live() {
-			return fmt.Errorf("mount already active (pid %d) for %s → %s:%s", rec.PID, localPath, vmName, remotePath)
+			fmt.Fprintf(cmd.ErrOrStderr(), "✓ mount already running (pid %d) for %s → %s:%s\n", rec.PID, localPath, vmName, remotePath)
+			return nil
 		}
 		_ = mount.Remove(rec)
 	}
@@ -575,6 +576,17 @@ var umountResolveVMFn = func(cmd *cobra.Command) (string, error) {
 	return picked.Name, nil
 }
 
+// umountAllOrNone stops every mount for vmName; none running is success
+// (the goal already holds).
+func umountAllOrNone(cmd *cobra.Command, vmName string) error {
+	err := umountAll(cmd, vmName)
+	if errors.Is(err, errNoMountsFound) {
+		fmt.Fprintln(cmd.ErrOrStderr(), colorize(fmt.Sprintf("✓ No active mounts for %s", vmName), colorGreen))
+		return nil
+	}
+	return err
+}
+
 // umountGrace is how long a mount daemon is given to shut down
 // gracefully after SIGTERM before it is force-killed.
 const umountGrace = 10 * time.Second
@@ -585,14 +597,7 @@ func runUmount(cmd *cobra.Command, args []string, all bool) error {
 		if err != nil {
 			return err
 		}
-		if err := umountAll(cmd, vmName); err != nil {
-			if errors.Is(err, errNoMountsFound) {
-				fmt.Fprintln(cmd.ErrOrStderr(), colorize(fmt.Sprintf("No active mounts for %s", vmName), colorGreen))
-				return nil
-			}
-			return err
-		}
-		return nil
+		return umountAllOrNone(cmd, vmName)
 	}
 
 	arg := args[0]
@@ -602,7 +607,7 @@ func runUmount(cmd *cobra.Command, args []string, all bool) error {
 		if isRemote {
 			vmName = ref
 		}
-		return umountAll(cmd, vmName)
+		return umountAllOrNone(cmd, vmName)
 	}
 
 	ref, remotePath, isRemote := parseRemoteArg(arg)
@@ -615,7 +620,7 @@ func runUmount(cmd *cobra.Command, args []string, all bool) error {
 // stopRecord stops the daemon behind a record and removes the record.
 // A record whose process is already gone is treated as stale: removed
 // with a note, reported as not-stopped.
-func stopRecord(cmd *cobra.Command, rec mount.Record) (stopped bool) {
+func stopRecord(cmd *cobra.Command, rec mount.Record) (stopped bool, err error) {
 	if !rec.Live() {
 		// Either the process is gone, or the pid is alive but belongs to
 		// some other program — recycled since this record was written
@@ -627,19 +632,20 @@ func stopRecord(cmd *cobra.Command, rec mount.Record) (stopped bool) {
 			reason = fmt.Sprintf("pid %d now belongs to another process", rec.PID)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "removed stale mount record for %s:%s (%s)\n", rec.VMName, rec.RemotePath, reason)
-		return false
+		return false, nil
 	}
+	sp := startSpin(fmt.Sprintf("Stopping mount %s → %s:%s…", rec.LocalPath, rec.VMName, rec.RemotePath))
 	killed, err := mount.Stop(rec.PID, umountGrace)
+	sp.Stop()
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "failed to stop pid %d: %v\n", rec.PID, err)
-		return false
+		return false, fmt.Errorf("stop mount (pid %d): %w", rec.PID, err)
 	}
 	_ = mount.Remove(rec)
 	if killed {
 		fmt.Fprintf(cmd.ErrOrStderr(), "mount (pid %d) did not exit within %s; sent SIGKILL\n", rec.PID, umountGrace)
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "stopped mount (pid %d) %s → %s:%s\n", rec.PID, rec.LocalPath, rec.VMName, rec.RemotePath)
-	return true
+	fmt.Fprintf(cmd.ErrOrStderr(), "%sstopped mount (pid %d) %s → %s:%s\n", doneMark(sp != nil), rec.PID, rec.LocalPath, rec.VMName, rec.RemotePath)
+	return true, nil
 }
 
 // umountByRemote stops the single mount matching a VM name AND remote
@@ -650,17 +656,24 @@ func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	found := false
+	stopped := false
+	var errs []error
 	for _, rec := range records {
 		if rec.RemotePath != remotePath {
 			continue
 		}
-		if stopRecord(cmd, rec) {
-			found = true
+		ok, err := stopRecord(cmd, rec)
+		if err != nil {
+			errs = append(errs, err)
 		}
+		stopped = stopped || ok
 	}
-	if !found {
-		return fmt.Errorf("no mount found for %s:%s", vmName, remotePath)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	// Nothing was running: the goal (no mount there) already holds.
+	if !stopped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "✓ no mount is running for %s:%s\n", vmName, remotePath)
 	}
 	return nil
 }
@@ -704,10 +717,18 @@ func umountAll(cmd *cobra.Command, vmName string) error {
 		return err
 	}
 	stopped := 0
+	var errs []error
 	for _, rec := range records {
-		if stopRecord(cmd, rec) {
+		ok, err := stopRecord(cmd, rec)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if ok {
 			stopped++
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	if stopped == 0 {
 		return fmt.Errorf("%w for %s", errNoMountsFound, vmName)

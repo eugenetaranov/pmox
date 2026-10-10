@@ -164,7 +164,9 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	if err != nil {
 		return err
 	}
+	sp := startSpin(fmt.Sprintf("Looking up %s…", arg))
 	ref, err := vm.Resolve(ctx, client, arg)
+	sp.Stop()
 	if err != nil {
 		return err
 	}
@@ -177,7 +179,9 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 		return err
 	}
 
-	ip, err := getOrStartVM(ctx, cmd, client, ref)
+	sp = startSpin(fmt.Sprintf("Connecting to %s…", ref.Name))
+	defer sp.Stop()
+	ip, err := getOrStartVM(ctx, cmd, client, ref, sp)
 	if err != nil {
 		return err
 	}
@@ -192,6 +196,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	// Say up front which playbook is about to run and against what — the
 	// only other way to answer "what will a bare 'pmox apply <vm>' run?"
 	// is opening the tack-profile state file by hand.
+	sp.Stop()
 	fmt.Fprintf(cmd.ErrOrStderr(), "Applying %s (%s) to vm %d at %s\n", playbook, source, ref.VMID, ip)
 
 	// tack's own SSH client checks ~/.ssh/known_hosts and has no
@@ -202,7 +207,10 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 	// everywhere else, so a first 'pmox apply' doesn't require a manual
 	// ssh-keyscan. Best-effort: a pinning failure (e.g. host down) just
 	// falls through to tack's own, more specific connection error.
-	if pinned, err := tack.PinHostKey(ctx, ip, SSHInsecure()); err != nil {
+	sp = startSpin(fmt.Sprintf("Checking the SSH host key of %s…", ip))
+	pinned, err := tack.PinHostKey(ctx, ip, SSHInsecure())
+	sp.Stop()
+	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not pre-pin SSH host key: %v\n", err)
 	} else if pinned {
 		fmt.Fprintf(cmd.ErrOrStderr(), "pinned new SSH host key for %s into ~/.ssh/known_hosts\n", ip)
@@ -371,7 +379,9 @@ var fetchTackRolesFn = func(ctx context.Context) ([]tackroles.Role, error) {
 // no example role) — only Ctrl-C (tui.ErrAborted) or a fetch/parse
 // failure is treated as "didn't get an answer" by the caller.
 func pickTackRoles(ctx context.Context) ([]string, error) {
+	sp := startSpin("Loading tack roles…")
 	roles, err := fetchTackRolesFn(ctx)
+	sp.Stop()
 	if err != nil {
 		return nil, err
 	}

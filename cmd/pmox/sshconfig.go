@@ -87,6 +87,8 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 // resolveSSHConnInfo resolves a VM's connection details WITHOUT starting
 // it (unlike shell/exec). A stopped VM is an error, since there is no IP.
 func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg string, f *sshFlags, serverURL string, srv *config.Server, stderr io.Writer) (*sshConnInfo, error) {
+	sp := startSpin(fmt.Sprintf("Looking up %s…", arg))
+	defer sp.Stop()
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return nil, err
@@ -107,6 +109,7 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 	}
 
 	ifaces, err := client.AgentNetwork(ctx, ref.Node, ref.VMID)
+	sp.Stop() // before any note printed below
 	if err != nil {
 		return nil, fmt.Errorf("VM %q is running but the guest agent is not responding; is qemu-guest-agent installed?", ref.Name)
 	}

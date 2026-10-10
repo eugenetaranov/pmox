@@ -18,6 +18,7 @@ func newStopFake(t *testing.T) *pvetest.Server {
 	f.Handle("POST", "/status/shutdown", pvetest.JSON(`{"data":"UPID:pve1:shutdown:"}`))
 	f.Handle("POST", "/status/stop", pvetest.JSON(`{"data":"UPID:pve1:stop:"}`))
 	f.Handle("GET", "/tasks/", pvetest.TaskOK)
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"running"}}`))
 	return f
 }
 
@@ -33,7 +34,7 @@ func TestStop_DefaultRoutesToShutdown(t *testing.T) {
 	if f.Count("POST", "/status/stop") != 0 {
 		t.Errorf("stop hits = %d, want 0", f.Count("POST", "/status/stop"))
 	}
-	if !strings.Contains(out.String(), "shutdown web1") {
+	if !strings.Contains(out.String(), "web1 stopped") {
 		t.Errorf("stdout = %q", out.String())
 	}
 }
@@ -50,7 +51,7 @@ func TestStop_ForceRoutesToStop(t *testing.T) {
 	if f.Count("POST", "/status/shutdown") != 0 {
 		t.Errorf("shutdown hits = %d, want 0", f.Count("POST", "/status/shutdown"))
 	}
-	if !strings.Contains(out.String(), "stop web1") {
+	if !strings.Contains(out.String(), "web1 stopped") {
 		t.Errorf("stdout = %q", out.String())
 	}
 }
@@ -74,7 +75,7 @@ func TestStop_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	if err := executeStop(cmd.Context(), cmd, f.Client(), arg, &stopFlags{}); err != nil {
 		t.Fatalf("executeStop: %v", err)
 	}
-	if !strings.Contains(out.String(), "shutdown web1") {
+	if !strings.Contains(out.String(), "web1 stopped") {
 		t.Errorf("stdout = %q", out.String())
 	}
 }
@@ -87,5 +88,21 @@ func TestStop_NoWaitSkipsTaskPoll(t *testing.T) {
 	}
 	if f.Count("GET", "/tasks/") != 0 {
 		t.Errorf("--no-wait must skip task polls, got %d", f.Count("GET", "/tasks/"))
+	}
+}
+
+func TestStop_AlreadyStoppedIsSuccess(t *testing.T) {
+	f := pvetest.New(t)
+	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"stopped"}}`))
+	cmd, out, _ := newTestInfoCmd()
+	if err := executeStop(cmd.Context(), cmd, f.Client(), "web1", &stopFlags{}); err != nil {
+		t.Fatalf("executeStop: %v", err)
+	}
+	if !strings.Contains(out.String(), "web1 is already stopped") {
+		t.Errorf("stdout = %q", out.String())
+	}
+	if f.Count("POST", "/status/") != 0 {
+		t.Errorf("no stop task expected, got %d", f.Count("POST", "/status/"))
 	}
 }

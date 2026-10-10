@@ -98,3 +98,26 @@ func (p *stdPrompter) Printf(format string, args ...interface{}) {
 func (p *stdPrompter) Errf(format string, args ...interface{}) {
 	fmt.Fprint(p.err, tui.Warnf(fmt.Sprintf(format, args...)))
 }
+
+// spinPrompter routes a prompter's notes around a running spinner so they
+// don't land on the spinner's line. It must not be used for prompts.
+type spinPrompter struct {
+	prompter
+	sp *tui.Spinner
+}
+
+// withSpinner wraps p for use while sp runs (p itself when sp is nil).
+func withSpinner(p prompter, sp *tui.Spinner) prompter {
+	if sp == nil {
+		return p
+	}
+	return spinPrompter{prompter: p, sp: sp}
+}
+
+func (s spinPrompter) Printf(format string, args ...interface{}) {
+	fmt.Fprintf(s.sp.Writer(s.Out()), format, args...)
+}
+
+func (s spinPrompter) Errf(format string, args ...interface{}) {
+	fmt.Fprint(s.sp.Writer(os.Stderr), tui.Warnf(fmt.Sprintf(format, args...)))
+}

@@ -135,15 +135,20 @@ func establishEditConnection(ctx context.Context, p prompter, cfg *config.Config
 		return resolvedConn{}, fmt.Errorf("load stored token for %s: %w — run 'pmox init' to reconnect", canonical, err)
 	}
 
-	insecure, ok := probeURL(ctx, p, canonical)
+	sp := startSpin(fmt.Sprintf("Connecting to %s…", hostOnlyURL(canonical)))
+	insecure, ok := probeURL(ctx, withSpinner(p, sp), canonical)
+	sp.Stop()
 	if !ok {
 		return resolvedConn{}, fmt.Errorf("%w: %s is not reachable — run 'pmox init' to fix the connection", exitcode.ErrUserInput, canonical)
 	}
+	// No spinner here: a changed certificate asks before re-pinning.
 	pin, err := resolveInitPin(ctx, p, cfg, canonical, insecure, "")
 	if err != nil {
 		return resolvedConn{}, err
 	}
-	insecure, err = validateCredentials(ctx, p, canonical, srv.TokenID, secret, insecure, pin)
+	sp = startSpin("Checking the stored API token…")
+	insecure, err = validateCredentials(ctx, withSpinner(p, sp), canonical, srv.TokenID, secret, insecure, pin)
+	sp.Stop()
 	if err != nil {
 		return resolvedConn{}, fmt.Errorf("stored token for %s no longer works: %w — run 'pmox init' to reconnect", canonical, err)
 	}

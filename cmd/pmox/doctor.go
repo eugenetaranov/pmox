@@ -176,10 +176,14 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		rctx, rcancel := context.WithTimeout(parent, f.timeout)
 		defer rcancel()
 		cl2 := &doctor.Checklist{}
+		sp := startSpin(fmt.Sprintf("Checking %s…", hostOnlyURL(resolved.URL)))
 		executeDoctor(rctx, cl2, client, resolved, deps, f.strict, cmd, cfg)
+		sp.Stop()
 		return cl2.Finalize(resolved.URL, resolved.Source, f.strict)
 	}
+	sp := startSpin(fmt.Sprintf("Checking %s…", hostOnlyURL(resolved.URL)))
 	executeDoctor(ctx, cl, client, resolved, deps, f.strict, cmd, cfg)
+	sp.Stop()
 	return renderAndFinish(parent, cmd, f, cl.Finalize(resolved.URL, resolved.Source, f.strict), rerun)
 }
 

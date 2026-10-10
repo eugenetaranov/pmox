@@ -138,12 +138,18 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.UploadSnippet == nil {
 		return nil, errors.New("UploadSnippet is nil; this is a programming bug — the CLI layer must inject an SFTP upload closure")
 	}
-	if err := snippet.ValidateStorage(ctx, opts.Client, opts.Node, opts.SnippetStorage); err != nil {
-		return nil, err
+	opts.pStart("Checking snippet storage")
+	err = snippet.ValidateStorage(ctx, opts.Client, opts.Node, opts.SnippetStorage)
+	var snippetStoragePath string
+	if err == nil {
+		snippetStoragePath, err = opts.Client.GetStoragePath(ctx, opts.SnippetStorage)
+		if err != nil {
+			err = fmt.Errorf("resolve snippet storage path for %q: %w", opts.SnippetStorage, err)
+		}
 	}
-	snippetStoragePath, err := opts.Client.GetStoragePath(ctx, opts.SnippetStorage)
+	opts.pDone(err)
 	if err != nil {
-		return nil, fmt.Errorf("resolve snippet storage path for %q: %w", opts.SnippetStorage, err)
+		return nil, err
 	}
 	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
@@ -325,10 +331,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			if stderr == nil {
 				stderr = os.Stderr
 			}
-			opts.pStart(fmt.Sprintf("Running %s hook", opts.Hook.Name()))
+			// No spinner: the hook streams its own output, which a
+			// redrawn spinner line would garble.
+			fmt.Fprintf(stderr, "Running %s hook…\n", opts.Hook.Name())
 			hookErr := opts.Hook.Run(hookCtx, env, stdout, stderr)
 			cancel()
-			opts.pDone(hookErr)
+			if hookErr == nil {
+				fmt.Fprintf(stderr, "✓ %s hook finished\n", opts.Hook.Name())
+			}
 			if hookErr != nil {
 				if opts.Stderr != nil {
 					fmt.Fprintf(opts.Stderr, "warning: %s hook failed: %v\n", opts.Hook.Name(), hookErr)

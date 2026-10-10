@@ -43,6 +43,8 @@ func runInfo(cmd *cobra.Command, args []string) error {
 }
 
 func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string) error {
+	sp := startSpin(fmt.Sprintf("Loading %s…", arg))
+	defer sp.Stop()
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return err
@@ -65,6 +67,7 @@ func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 		}
 	}
 	info := vm.BuildInfo(ref, status, cfg, ifaces)
+	sp.Stop()
 
 	if outputMode == "json" {
 		return printJSON(cmd.OutOrStdout(), info)

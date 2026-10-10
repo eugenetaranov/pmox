@@ -60,7 +60,9 @@ func openAccessEnv(ctx context.Context, cmd *cobra.Command) (*accessEnv, error) 
 	if err != nil {
 		return nil, err
 	}
+	sp := startSpin("Connecting to the access registry…")
 	fs, closeFS, err := openRegistryFn(ctx, resolved)
+	sp.Stop()
 	if err != nil {
 		return nil, err
 	}
@@ -297,6 +299,11 @@ func runAccessChange(cmd *cobra.Command, args []string, f *accessFlags, grant bo
 	defer env.close()
 	if prompt {
 		if args, err = promptAccessChange(ctx, env, f, args, grant); err != nil {
+			var none errNothingToRevoke
+			if errors.As(err, &none) {
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ %s\n", none.msg)
+				return nil
+			}
 			return err
 		}
 	}
@@ -304,6 +311,8 @@ func runAccessChange(cmd *cobra.Command, args []string, f *accessFlags, grant bo
 		return fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
 	}
 
+	sp := startSpin(fmt.Sprintf("Updating access for %s…", f.to))
+	defer sp.Stop()
 	if grant {
 		if _, err := accessreg.GetKey(ctx, env.fs, f.to); errors.Is(err, accessreg.ErrNotPublished) {
 			return fmt.Errorf("%w: %q has no published key — they need to run 'pmox key publish' first", exitcode.ErrNotFound, f.to)
@@ -341,16 +350,19 @@ func runAccessChange(cmd *cobra.Command, args []string, f *accessFlags, grant bo
 	if err != nil {
 		return err
 	}
+	keys, _, err := accessreg.ListKeys(ctx, env.fs)
+	if err != nil {
+		return err
+	}
+	sp.Set("Updating the VMs…")
+	outcomes := syncVMs(ctx, env, acc, keys, targets)
+	sp.Stop()
 	if !grant && !f.allVMs {
 		if g := acc.People[f.to]; g != nil && g.AllVMs {
 			fmt.Fprintln(cmd.ErrOrStderr(), tui.Warnf(fmt.Sprintf("note: %s still has access to all pmox VMs; use --all-vms to revoke that", f.to)))
 		}
 	}
-	keys, _, err := accessreg.ListKeys(ctx, env.fs)
-	if err != nil {
-		return err
-	}
-	return printOutcomes(cmd.OutOrStdout(), syncVMs(ctx, env, acc, keys, targets))
+	return printOutcomes(cmd.OutOrStdout(), outcomes)
 }
 
 func newAccessSyncCmd() *cobra.Command {
@@ -365,6 +377,8 @@ func newAccessSyncCmd() *cobra.Command {
 				return err
 			}
 			defer env.close()
+			sp := startSpin("Syncing VMs with the access registry…")
+			defer sp.Stop()
 			acc, err := accessreg.ReadAccess(ctx, env.fs)
 			if err != nil {
 				return err
@@ -382,7 +396,9 @@ func newAccessSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printOutcomes(cmd.OutOrStdout(), syncVMs(ctx, env, acc, keys, targets))
+			outcomes := syncVMs(ctx, env, acc, keys, targets)
+			sp.Stop()
+			return printOutcomes(cmd.OutOrStdout(), outcomes)
 		},
 	}
 	cmd.Flags().BoolVar(&f.force, "force", false, "allow VMs without the pmox tag")
@@ -407,6 +423,8 @@ func runAccessList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer env.close()
+	sp := startSpin("Loading access…")
+	defer sp.Stop()
 	acc, err := accessreg.ReadAccess(ctx, env.fs)
 	if err != nil {
 		return err
@@ -424,6 +442,26 @@ func runAccessList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Read each running VM's block before printing, so the spinner never
+	// interleaves with the tables.
+	onVM := map[int]string{}
+	for _, r := range vms {
+		want, _ := acc.KeysFor(r.VMID, keys)
+		status := "not checked (stopped)"
+		if r.IsRunning() {
+			_, have, rerr := guestkeys.Read(ctx, env.agent, guestkeys.Target{Node: r.Node, VMID: r.VMID, User: guestUserFor(env, r.VMID)})
+			switch {
+			case rerr != nil:
+				status = "could not read: " + rerr.Error()
+			case strings.Join(have, "\n") == strings.Join(want, "\n"):
+				status = "up to date"
+			default:
+				status = "OUT OF SYNC — run 'pmox access sync " + r.Name + "'"
+			}
+		}
+		onVM[r.VMID] = status
+	}
+	sp.Stop()
 
 	published := map[string]accessreg.PublishedKey{}
 	names := map[string]bool{}
@@ -471,18 +509,7 @@ func runAccessList(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(tw, "  VM\tVMID\tSHARED WITH\tON THE VM")
 		for _, r := range vms {
 			want, _ := acc.KeysFor(r.VMID, keys)
-			status := "not checked (stopped)"
-			if r.IsRunning() {
-				_, have, rerr := guestkeys.Read(ctx, env.agent, guestkeys.Target{Node: r.Node, VMID: r.VMID, User: guestUserFor(env, r.VMID)})
-				switch {
-				case rerr != nil:
-					status = "could not read: " + rerr.Error()
-				case strings.Join(have, "\n") == strings.Join(want, "\n"):
-					status = "up to date"
-				default:
-					status = "OUT OF SYNC — run 'pmox access sync " + r.Name + "'"
-				}
-			}
+			status := onVM[r.VMID]
 			who := strings.Join(keyNames(want), ", ")
 			if who == "" {
 				who = "nobody"
@@ -544,19 +571,24 @@ func applySharedAccess(ctx context.Context, stderr io.Writer, client *pveclient.
 	warn := func(detail string) {
 		fmt.Fprintln(stderr, tui.Warnf(fmt.Sprintf("warning: could not apply shared access to %s: %s — run 'pmox access sync %s'", name, detail, name)))
 	}
+	sp := startSpin(fmt.Sprintf("Applying shared access to %s…", name))
+	defer sp.Stop()
 	fs, closeFS, err := openRegistryFn(ctx, r)
 	if err != nil {
+		sp.Stop()
 		warn(err.Error())
 		return
 	}
 	defer closeFS()
 	acc, err := accessreg.ReadAccess(ctx, fs)
 	if err != nil {
+		sp.Stop()
 		warn(err.Error())
 		return
 	}
 	keys, _, err := accessreg.ListKeys(ctx, fs)
 	if err != nil {
+		sp.Stop()
 		warn(err.Error())
 		return
 	}
@@ -565,6 +597,7 @@ func applySharedAccess(ctx context.Context, stderr io.Writer, client *pveclient.
 	}
 	env := &accessEnv{cfg: cfg, resolved: r, client: client, agent: guestAgentFn(client), fs: fs}
 	o := syncOne(ctx, env, acc, keys, pveclient.Resource{VMID: vmid, Node: node, Name: name, Status: "running"})
+	sp.Stop()
 	switch o.Status {
 	case "updated", "unchanged":
 		fmt.Fprintf(stderr, "shared access: %s\n", o.Detail)
@@ -579,19 +612,30 @@ var (
 	pickVMsFn    = tui.SelectMulti
 )
 
+// errNothingToRevoke means a revoke's goal already holds: success.
+type errNothingToRevoke struct{ msg string }
+
+func (e errNothingToRevoke) Error() string { return e.msg }
+
+func nothingToRevoke(msg string) error { return errNothingToRevoke{msg: msg} }
+
 // promptAccessChange asks for the person and VMs a grant/revoke didn't
 // name. Grant offers everyone with a published key and every pmox VM;
 // revoke offers only people with access and only what they can reach.
 func promptAccessChange(ctx context.Context, env *accessEnv, f *accessFlags, args []string, grant bool) ([]string, error) {
+	sp := startSpin("Loading people and VMs…")
 	keys, _, err := accessreg.ListKeys(ctx, env.fs)
 	if err != nil {
+		sp.Stop()
 		return nil, err
 	}
 	acc, err := accessreg.ReadAccess(ctx, env.fs)
 	if err != nil {
+		sp.Stop()
 		return nil, err
 	}
 	vms, err := pmoxVMs(ctx, env)
+	sp.Stop()
 	if err != nil {
 		return nil, err
 	}
@@ -615,7 +659,7 @@ func promptAccessChange(ctx context.Context, env *accessEnv, f *accessFlags, arg
 				opts = append(opts, huh.NewOption(fmt.Sprintf("%-12s %s", n, grantSummary(acc.People[n], vms)), n))
 			}
 			if len(opts) == 0 {
-				return nil, fmt.Errorf("%w: nobody has been granted access", exitcode.ErrNotFound)
+				return nil, nothingToRevoke("nobody has been granted access, so there is nothing to revoke")
 			}
 		}
 		verb := "Grant access to"
@@ -642,7 +686,7 @@ func promptAccessChange(ctx context.Context, env *accessEnv, f *accessFlags, arg
 		opts = append(opts, huh.NewOption(fmt.Sprintf("%-20s %-6d %s", r.Name, r.VMID, r.Status), strconv.Itoa(r.VMID)))
 	}
 	if len(opts) == 0 {
-		return nil, fmt.Errorf("%w: %s has no VM access to revoke", exitcode.ErrNotFound, f.to)
+		return nil, nothingToRevoke(fmt.Sprintf("%s has no VM access, so there is nothing to revoke", f.to))
 	}
 	title := fmt.Sprintf("VMs to give %s access to (space to select)", f.to)
 	if !grant {

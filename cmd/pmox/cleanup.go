@@ -313,7 +313,9 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	if err != nil {
 		return err
 	}
-	ew := cmd.ErrOrStderr()
+	sp := startSpin("Scanning for leftovers…")
+	defer sp.Stop()
+	ew := sp.Writer(cmd.ErrOrStderr())
 
 	var items []cleanupItem
 	liveIPs := map[string]bool{}
@@ -325,6 +327,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	for _, url := range cfg.ServerURLs() {
 		srv := cfg.Servers[url]
 		label := contextLabelFor(cfg, url)
+		sp.Set(fmt.Sprintf("Scanning %s…", label))
 		client, cerr := cleanupClient(ctx, url, srv)
 		if cerr != nil {
 			fmt.Fprintf(ew, "cleanup: skipping context %s: %v\n", label, cerr)
@@ -401,6 +404,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 	}
 
 	// --- Local categories ---
+	sp.Set("Scanning local files…")
 	items = append(items, localMountItems()...)
 	items = append(items, staleKnownHostItems(liveIPs, ipsComplete, ew)...)
 	items = append(items, cloudInitItems(cfg)...)
@@ -423,6 +427,8 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 			o.unscanned[k] = reason
 		}
 	}
+
+	sp.Stop() // before the category picker and the report
 
 	// --- Select which categories to act on ---
 	available := presentCategories(items)
@@ -921,7 +927,10 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive b
 
 	var failed int
 	for _, it := range items {
-		if err := it.apply(); err != nil {
+		sp := startSpin(fmt.Sprintf("Removing %s…", it.Detail))
+		err := it.apply()
+		sp.Stop()
+		if err != nil {
 			failed++
 			fmt.Fprintf(cmd.ErrOrStderr(), "failed to remove %q: %v\n", it.Detail, err)
 		}

@@ -119,7 +119,9 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 // pre-populated launch.Options (with Client/Node/Name/Template* left
 // blank), it resolves the source VM and drives launch.Run.
 func executeClone(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, srcArg, newName string, partial launch.Options) error {
+	sp := startSpin(fmt.Sprintf("Looking up %s…", srcArg))
 	ref, err := vm.Resolve(ctx, client, srcArg)
+	sp.Stop()
 	if err != nil {
 		return err
 	}
@@ -133,6 +135,6 @@ func executeClone(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	}
 	recordVMIdentity(cmd.ErrOrStderr(), partial.ServerURL, r.VMID, partial.CloudInitPath)
 	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, partial.ServerURL, r.VMID, ref.Node, newName)
-	fmt.Fprintf(cmd.OutOrStdout(), "cloned %s -> %s (vmid=%d, ip=%s)\n", ref.Name, newName, r.VMID, r.IP)
+	fmt.Fprintf(cmd.OutOrStdout(), "%scloned %s -> %s (vmid=%d, ip=%s)\n", doneMark(partial.Progress != nil), ref.Name, newName, r.VMID, r.IP)
 	return nil
 }

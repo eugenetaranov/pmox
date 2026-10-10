@@ -236,6 +236,8 @@ type sshTarget struct {
 }
 
 func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *sshFlags, serverURL string, srv *config.Server) (*sshTarget, error) {
+	sp := startSpin(fmt.Sprintf("Connecting to %s…", arg))
+	defer sp.Stop()
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return nil, err
@@ -245,10 +247,12 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 		return nil, err
 	}
 
-	ip, err := getOrStartVM(ctx, cmd, client, ref)
+	sp.Set(fmt.Sprintf("Connecting to %s…", ref.Name))
+	ip, err := getOrStartVM(ctx, cmd, client, ref, sp)
 	if err != nil {
 		return nil, err
 	}
+	sp.Stop()
 
 	waitForLoginsFn(ctx, cmd.ErrOrStderr(), client, ref)
 
@@ -269,7 +273,9 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 	}, nil
 }
 
-func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref) (string, error) {
+// getOrStartVM returns ref's IP, starting the VM first when it is
+// stopped. sp (may be nil) is relabelled for each wait.
+func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref, sp *tui.Spinner) (string, error) {
 	status, err := client.GetStatus(ctx, ref.Node, ref.VMID)
 	if err != nil {
 		if errors.Is(err, pveclient.ErrNotFound) {
@@ -279,7 +285,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	}
 
 	if status.State() == pveclient.StateStopped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Starting VM %q...\n", ref.Name)
+		progress(cmd, sp, fmt.Sprintf("Starting %s…", ref.Name))
 		upid, err := client.Start(ctx, ref.Node, ref.VMID)
 		if err != nil {
 			return "", fmt.Errorf("start vm %d: %w", ref.VMID, err)
@@ -288,13 +294,13 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 			return "", fmt.Errorf("start vm %d: %w", ref.VMID, err)
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for IP...\n")
+		progress(cmd, sp, fmt.Sprintf("Waiting for %s to get an IP…", ref.Name))
 		ip, err := vmwait.WaitForIP(ctx, client, ref.Node, ref.VMID, sshIPTimeout)
 		if err != nil {
 			return "", err
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for SSH...\n")
+		progress(cmd, sp, fmt.Sprintf("Waiting for SSH on %s…", ref.Name))
 		if err := vmwait.WaitForSSH(ctx, ip, sshReadyTimeout); err != nil {
 			return "", err
 		}
@@ -401,8 +407,23 @@ func waitForLogins(ctx context.Context, stderr io.Writer, client *pveclient.Clie
 	if _, _, err := client.AgentFileRead(ctx, ref.Node, ref.VMID, "/run/nologin"); err != nil {
 		return // gone (booted) or can't tell
 	}
-	fmt.Fprintf(stderr, "%s is still booting — waiting for logins to open…\n", ref.Name)
-	if _, err := vmwait.WaitForBoot(ctx, client, ref.Node, ref.VMID, 2*time.Minute); err != nil {
+	sp := startSpin(fmt.Sprintf("%s is still booting — waiting for logins to open…", ref.Name))
+	if sp == nil {
+		fmt.Fprintf(stderr, "%s is still booting — waiting for logins to open…\n", ref.Name)
+	}
+	_, err := vmwait.WaitForBoot(ctx, client, ref.Node, ref.VMID, 2*time.Minute)
+	sp.Stop()
+	if err != nil {
 		fmt.Fprintf(stderr, "%s\n", tui.Warnf(fmt.Sprintf("warning: %s is still booting; trying anyway", ref.Name)))
 	}
+}
+
+// progress shows a step of a longer wait: on the spinner when there is
+// one, else as a plain stderr line (piped or verbose output).
+func progress(cmd *cobra.Command, sp *tui.Spinner, label string) {
+	if sp != nil {
+		sp.Set(label)
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), label)
 }

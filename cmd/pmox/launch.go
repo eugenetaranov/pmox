@@ -283,7 +283,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 	recordVMIdentity(cmd.ErrOrStderr(), resolved.URL, r.VMID, opts.CloudInitPath)
 	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, resolved.URL, r.VMID, opts.Node, name)
-	fmt.Fprintf(cmd.OutOrStdout(), "launched %s (vmid=%d, ip=%s)\n", name, r.VMID, r.IP)
+	fmt.Fprintf(cmd.OutOrStdout(), "%slaunched %s (vmid=%d, ip=%s)\n", doneMark(opts.Progress != nil), name, r.VMID, r.IP)
 	if opts.DevboxSetup {
 		fmt.Fprintf(cmd.ErrOrStderr(), "next: pmox shell %s, then 'sudo devbox-setup' to pick tools, languages and AI setup\n", name)
 	}
@@ -512,7 +512,9 @@ func resolveTemplate(ctx context.Context, client *pveclient.Client, node, raw st
 	if id, err := strconv.Atoi(raw); err == nil {
 		return id, "", nil
 	}
+	sp := startSpin("Loading templates…")
 	tmpls, _, err := client.ListTemplates(ctx, node)
+	sp.Stop()
 	if err != nil {
 		return 0, "", fmt.Errorf("list templates on %s: %w", node, err)
 	}

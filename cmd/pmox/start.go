@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -57,25 +58,49 @@ func runStart(cmd *cobra.Command, args []string, f *startFlags) error {
 }
 
 func executeStart(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *startFlags) error {
+	sp := startSpin(fmt.Sprintf("Starting %s…", arg))
+	defer sp.Stop()
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return err
 	}
-	upid, err := client.Start(ctx, ref.Node, ref.VMID)
-	if err != nil {
-		return fmt.Errorf("start vm %d: %w", ref.VMID, err)
+	sp.Set(fmt.Sprintf("Starting %s…", ref.Name))
+	// Best effort: an unreadable status falls through to the start task.
+	already := false
+	if st, err := client.GetStatus(ctx, ref.Node, ref.VMID); err == nil && st.IsRunning() {
+		already = true
 	}
-	if err := client.WaitTask(ctx, ref.Node, upid, startTaskTimeout); err != nil {
-		return fmt.Errorf("start vm %d: %w", ref.VMID, err)
+	if !already {
+		upid, err := client.Start(ctx, ref.Node, ref.VMID)
+		if err == nil {
+			err = client.WaitTask(ctx, ref.Node, upid, startTaskTimeout)
+		}
+		switch {
+		case isAlreadyErr(err, "already running"):
+			already = true
+		case err != nil:
+			return fmt.Errorf("start vm %d: %w", ref.VMID, err)
+		}
+	}
+	verb := "started"
+	if already {
+		verb = "is already running"
 	}
 	if f.noWait {
-		fmt.Fprintf(cmd.OutOrStdout(), "started %s (vmid=%d)\n", ref.Name, ref.VMID)
+		finishSpin(cmd, sp, fmt.Sprintf("%s %s (vmid %d)", ref.Name, verb, ref.VMID))
 		return nil
 	}
+	sp.Set(fmt.Sprintf("Waiting for %s to get an IP…", ref.Name))
 	ip, err := vmwait.WaitForIP(ctx, client, ref.Node, ref.VMID, f.wait)
 	if err != nil {
 		return fmt.Errorf("wait for ip on vm %d: %w", ref.VMID, err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "started %s (vmid=%d, ip=%s)\n", ref.Name, ref.VMID, ip)
+	finishSpin(cmd, sp, fmt.Sprintf("%s %s (vmid %d, ip %s)", ref.Name, verb, ref.VMID, ip))
 	return nil
+}
+
+// isAlreadyErr reports whether err is Proxmox saying the VM is already in
+// the requested state (a race with our own status check).
+func isAlreadyErr(err error, text string) bool {
+	return err != nil && strings.Contains(err.Error(), text)
 }

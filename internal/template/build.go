@@ -159,7 +159,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// Canonical's catalogue paths (/server/releases/...) now answer with
 	// a redirect; hand PVE the final URL so its downloader never depends
 	// on following it.
+	opts.pStart("Resolving the image download URL")
 	imgURL := resolveFinalURLFn(ctx, img.URL)
+	opts.pDone(nil)
 	downloadParams := map[string]string{
 		"url":                imgURL,
 		"content":            "import",
@@ -195,7 +197,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", imgURL, err)
 	}
+	opts.pStart("Removing older downloads of this image")
 	pruneOldImages(ctx, opts, snippetsStorage, img, imgFilename)
+	opts.pDone(nil)
 
 	// Phase 8 — create the VM with import-from pointing at the
 	// just-downloaded image.

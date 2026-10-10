@@ -69,9 +69,15 @@ func runStop(cmd *cobra.Command, args []string, f *stopFlags) error {
 }
 
 func executeStop(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *stopFlags) error {
+	sp := startSpin(fmt.Sprintf("Stopping %s…", arg))
+	defer sp.Stop()
 	ref, err := vm.Resolve(ctx, client, arg)
 	if err != nil {
 		return err
+	}
+	if st, err := client.GetStatus(ctx, ref.Node, ref.VMID); err == nil && st.State() == pveclient.StateStopped {
+		finishSpin(cmd, sp, fmt.Sprintf("%s is already stopped (vmid %d)", ref.Name, ref.VMID))
+		return nil
 	}
 	var (
 		upid  string
@@ -79,19 +85,30 @@ func executeStop(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	)
 	if f.force {
 		label = "stop"
+		sp.Set(fmt.Sprintf("Stopping %s…", ref.Name))
 		upid, err = client.Stop(ctx, ref.Node, ref.VMID)
 	} else {
 		label = "shutdown"
+		sp.Set(fmt.Sprintf("Shutting down %s…", ref.Name))
 		upid, err = client.Shutdown(ctx, ref.Node, ref.VMID)
 	}
-	if err != nil {
+	if err == nil && !f.noWait {
+		err = client.WaitTask(ctx, ref.Node, upid, stopTaskTimeout)
+	}
+	switch {
+	case isAlreadyErr(err, "not running"):
+		finishSpin(cmd, sp, fmt.Sprintf("%s is already stopped (vmid %d)", ref.Name, ref.VMID))
+		return nil
+	case err != nil:
 		return fmt.Errorf("%s vm %d: %w", label, ref.VMID, err)
 	}
-	if !f.noWait {
-		if err := client.WaitTask(ctx, ref.Node, upid, stopTaskTimeout); err != nil {
-			return fmt.Errorf("%s vm %d: %w", label, ref.VMID, err)
+	msg := fmt.Sprintf("%s stopped (vmid %d)", ref.Name, ref.VMID)
+	if f.noWait {
+		msg = fmt.Sprintf("%s is shutting down (vmid %d)", ref.Name, ref.VMID)
+		if f.force {
+			msg = fmt.Sprintf("%s is stopping (vmid %d)", ref.Name, ref.VMID)
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s %s (vmid=%d)\n", label, ref.Name, ref.VMID)
+	finishSpin(cmd, sp, msg)
 	return nil
 }

@@ -356,9 +356,12 @@ func TestRunMountDaemon_RefusesLiveDuplicate(t *testing.T) {
 	}
 	t.Cleanup(func() { mountStartDaemonFn = orig })
 
-	err = runMountDaemon(newTestUmountCmd(), "./src", "web1", "/opt/app", "", &mountFlags{debounce: 300 * time.Millisecond})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mount already active")
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+	err = runMountDaemon(cmd, "./src", "web1", "/opt/app", "", &mountFlags{debounce: 300 * time.Millisecond})
+	require.NoError(t, err, "an already-running mount is the goal, not an error")
+	assert.Contains(t, errbuf.String(), "mount already running")
 }
 
 func TestResolveMountArgs(t *testing.T) {
@@ -520,8 +523,8 @@ func TestRunUmount_ZeroArgs_PickerThenUmountAll(t *testing.T) {
 }
 
 // Task 3.4: explicit `pmox umount web1:/opt/app` still routes to
-// umountByRemote — recognizable by its "no mount found for <vm>:<path>"
-// error message — and must not consult the picker.
+// umountByRemote — recognizable by its "no mount is running for <vm>:<path>"
+// message — and must not consult the picker.
 func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -534,9 +537,11 @@ func TestRunUmount_ExplicitRemote_RoutesToUmountByRemote(t *testing.T) {
 
 	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
-	err := runUmount(newTestUmountCmd(), []string{"web1:/opt/app"}, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no mount found for web1:/opt/app")
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+	require.NoError(t, runUmount(cmd, []string{"web1:/opt/app"}, false))
+	assert.Contains(t, errbuf.String(), "no mount is running for web1:/opt/app")
 }
 
 // Task 3.5: `pmox umount --all web1` still routes to umountAll.
@@ -552,9 +557,11 @@ func TestRunUmount_AllFlag_RoutesToUmountAll(t *testing.T) {
 
 	require.NoError(t, os.MkdirAll(testMountStateDir(t), 0o700))
 
-	err := runUmount(newTestUmountCmd(), []string{"web1"}, true)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no mounts found for web1")
+	cmd := newTestUmountCmd()
+	var errbuf bytes.Buffer
+	cmd.SetErr(&errbuf)
+	require.NoError(t, runUmount(cmd, []string{"web1"}, true))
+	assert.Contains(t, errbuf.String(), "No active mounts for web1")
 }
 
 // Task 3.6: help-text includes the new bare-form examples for both

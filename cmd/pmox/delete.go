@@ -174,6 +174,8 @@ func executeDelete(ctx context.Context, cmd *cobra.Command, client *pveclient.Cl
 // resolveDeleteRefs resolves every target and enforces the pmox-tag guard
 // (unless --force) before anything is destroyed.
 func resolveDeleteRefs(ctx context.Context, client *pveclient.Client, args []string, f *deleteFlags) ([]*vm.Ref, error) {
+	sp := startSpin("Looking up VMs…")
+	defer sp.Stop() // before the confirmation prompt
 	refs := make([]*vm.Ref, 0, len(args))
 	for _, arg := range args {
 		ref, err := vm.Resolve(ctx, client, arg)
@@ -234,10 +236,12 @@ func confirmDelete(ctx context.Context, cmd *cobra.Command, refs []*vm.Ref, f *d
 
 // destroyVM stops (if running), cleans the snippet, and destroys one VM.
 func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref, f *deleteFlags, spinner stepProgress) error {
+	sp := startSpin(fmt.Sprintf("Checking %s…", ref.Name))
 	status, err := client.GetStatus(ctx, ref.Node, ref.VMID)
 	if err != nil {
+		sp.Stop()
 		if errors.Is(err, pveclient.ErrNotFound) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "VM %q (vmid %d) is already gone\n", ref.Name, ref.VMID)
+			fmt.Fprintf(cmd.ErrOrStderr(), "✓ VM %q (vmid %d) is already gone\n", ref.Name, ref.VMID)
 			forgetTackProfile(cmd, f.serverURL, ref.VMID)
 			forgetVMIdentity(cmd, f.serverURL, ref.VMID)
 			return nil
@@ -252,6 +256,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 	if cfg, cfgErr := client.GetConfig(ctx, ref.Node, ref.VMID); cfgErr == nil {
 		cicustom = cfg["cicustom"]
 	}
+	sp.Stop()
 
 	if status.IsRunning() {
 		label := fmt.Sprintf("Shutting down VM %d", ref.VMID)
@@ -274,7 +279,10 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 	// Cleanup is idempotent (a missing snippet is swallowed), so a re-run
 	// before destroy completes is harmless.
 	if cicustom != "" {
-		if err := snippet.Cleanup(ctx, client, ref.Node, cicustom); err != nil {
+		sp := startSpin(fmt.Sprintf("Removing the cloud-init snippet of VM %d…", ref.VMID))
+		err := snippet.Cleanup(ctx, client, ref.Node, cicustom)
+		sp.Stop()
+		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove snippet for vm %d: %v\n", ref.VMID, err)
 		}
 	}
@@ -288,7 +296,11 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 
 	forgetTackProfile(cmd, f.serverURL, ref.VMID)
 	forgetVMIdentity(cmd, f.serverURL, ref.VMID)
-	fmt.Fprintf(cmd.OutOrStdout(), "Deleted VM %q (vmid %d)\n", ref.Name, ref.VMID)
+	mark := ""
+	if spinner != nil {
+		mark = "✓ "
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%sDeleted VM %q (vmid %d)\n", mark, ref.Name, ref.VMID)
 	return nil
 }
 

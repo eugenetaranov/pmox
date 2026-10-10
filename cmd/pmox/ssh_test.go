@@ -247,7 +247,7 @@ func TestSSH_GetOrStartVM_Running(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	ref := &vm.Ref{VMID: 100, Node: "pve1", Name: "web1"}
-	ip, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref)
+	ip, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref, nil)
 	if err != nil {
 		t.Fatalf("getOrStartVM: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestSSH_GetOrStartVM_AgentNoIP(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	ref := &vm.Ref{VMID: 100, Node: "pve1", Name: "web1"}
-	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref)
+	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -285,7 +285,7 @@ func TestSSH_GetOrStartVM_AgentNotResponding(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	ref := &vm.Ref{VMID: 100, Node: "pve1", Name: "web1"}
-	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref)
+	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -301,7 +301,7 @@ func TestSSH_GetOrStartVM_NotFound(t *testing.T) {
 
 	cmd, _, _ := newTestSSHCmd()
 	ref := &vm.Ref{VMID: 100, Node: "pve1", Name: "web1"}
-	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref)
+	_, err := getOrStartVM(cmd.Context(), cmd, f.client(), ref, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

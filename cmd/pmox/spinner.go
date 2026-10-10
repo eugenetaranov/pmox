@@ -5,93 +5,82 @@ import (
 	"io"
 	"os"
 	"sync"
-	"time"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/eugenetaranov/pmox/internal/launch"
 	"github.com/eugenetaranov/pmox/internal/template"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
-// stepSpinner renders a single-line braille spinner for launch phases
-// on a TTY. On Done(nil) it clears the line and prints "✓ <step>".
-// On Done(err) it clears the line and lets the caller surface the
-// error. Safe for sequential Start/Done calls.
-type stepSpinner struct {
-	w      io.Writer
-	mu     sync.Mutex
-	frames []rune
-	step   string
-	stop   chan struct{}
-	doneCh chan struct{}
-}
+// Progress feedback (openspec/specs/cli-progress-feedback): every wait on
+// the cluster shows a delayed spinner on a terminal, and ends in a "✓"
+// result line or is cleared before an error or a prompt.
 
-func newStepSpinner(w io.Writer) *stepSpinner {
-	return &stepSpinner{
-		w:      w,
-		frames: []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'},
+// startSpin starts a spinner labelled label on stderr; nil (a valid,
+// no-op spinner) when stderr isn't a terminal or spinners are off.
+func startSpin(label string) *tui.Spinner { return tui.StartSpinner(label) }
+
+// finishSpin stops sp and prints msg as the command's result on stdout,
+// with a "✓" when a spinner was running.
+func finishSpin(cmd *cobra.Command, sp *tui.Spinner, msg string) {
+	if sp == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), msg)
+		return
 	}
+	sp.Stop()
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ %s\n", msg)
 }
 
-// Start begins a new spinner frame loop for the given step label.
-// A previously-started step must be ended with Done before calling Start again.
+// doneMark is the "✓ " prefix for a result line when progress was shown.
+func doneMark(shown bool) string {
+	if shown {
+		return "✓ "
+	}
+	return ""
+}
+
+// stepSpinner is the launch.Progress / template.Progress implementation:
+// one spinner per step, leaving "✓ <step>" when the step succeeds and a
+// cleared line when it fails (the caller reports the error). Sequential
+// Start/Done calls only.
+type stepSpinner struct {
+	w    io.Writer
+	mu   sync.Mutex
+	sp   *tui.Spinner
+	step string
+}
+
+func newStepSpinner(w io.Writer) *stepSpinner { return &stepSpinner{w: w} }
+
+// Start begins the spinner for step. A previous step must be ended with
+// Done first.
 func (s *stepSpinner) Start(step string) {
 	s.mu.Lock()
-	s.step = step
-	s.stop = make(chan struct{})
-	s.doneCh = make(chan struct{})
-	stopCh := s.stop
-	doneCh := s.doneCh
-	s.mu.Unlock()
-
-	go func() {
-		defer close(doneCh)
-		i := 0
-		t := time.NewTicker(120 * time.Millisecond)
-		defer t.Stop()
-		for {
-			s.mu.Lock()
-			fmt.Fprintf(s.w, "\r\033[K%c %s", s.frames[i%len(s.frames)], s.step)
-			s.mu.Unlock()
-			select {
-			case <-stopCh:
-				return
-			case <-t.C:
-				i++
-			}
-		}
-	}()
+	defer s.mu.Unlock()
+	s.step, s.sp = step, tui.NewSpinner(s.w, step)
 }
 
-// Done stops the active spinner. On success it prints "✓ <step>";
-// on error it clears the line so the caller's error message (usually
-// printed by main) stands alone.
+// Done ends the current step: "✓ <step>" on success, a cleared line on
+// error.
 func (s *stepSpinner) Done(err error) {
 	s.mu.Lock()
-	stopCh := s.stop
-	doneCh := s.doneCh
-	step := s.step
-	s.stop = nil
-	s.doneCh = nil
+	sp, step := s.sp, s.step
+	s.sp = nil
 	s.mu.Unlock()
-
-	if stopCh == nil {
+	if sp == nil {
 		return
 	}
-	close(stopCh)
-	<-doneCh
-
 	if err != nil {
-		fmt.Fprint(s.w, "\r\033[K")
+		sp.Stop()
 		return
 	}
-	fmt.Fprintf(s.w, "\r\033[K✓ %s\n", step)
+	sp.Succeed(step)
 }
 
-// newLaunchProgress returns a launch.Progress suitable for the current
-// invocation. It returns a TTY spinner when stderr is a terminal and
-// -v is NOT set (verbose output would interleave badly with the
-// redrawn spinner line). Otherwise it returns a no-op.
+// newLaunchProgress returns a launch.Progress for this invocation: a
+// spinner when stderr is a terminal and spinners are on, else nil.
 func newLaunchProgress(stderr io.Writer) launch.Progress {
 	if s := newTTYSpinner(stderr); s != nil {
 		return s
@@ -99,9 +88,7 @@ func newLaunchProgress(stderr io.Writer) launch.Progress {
 	return nil
 }
 
-// newTemplateProgress returns a template.Progress suitable for the
-// current invocation, following the same TTY/verbose rules as
-// newLaunchProgress.
+// newTemplateProgress is newLaunchProgress for template builds.
 func newTemplateProgress(stderr io.Writer) template.Progress {
 	if s := newTTYSpinner(stderr); s != nil {
 		return s
@@ -109,17 +96,14 @@ func newTemplateProgress(stderr io.Writer) template.Progress {
 	return nil
 }
 
-// newTTYSpinner returns a stepSpinner when stderr is a TTY and verbose
-// is off; otherwise nil. Shared by launch and create-template.
+// newTTYSpinner returns a stepSpinner when stderr is a terminal and
+// verbose is off; otherwise nil.
 func newTTYSpinner(stderr io.Writer) *stepSpinner {
-	if verbose {
+	if verbose || debug {
 		return nil
 	}
 	f, ok := stderr.(*os.File)
-	if !ok {
-		return nil
-	}
-	if !term.IsTerminal(int(f.Fd())) {
+	if !ok || !term.IsTerminal(int(f.Fd())) {
 		return nil
 	}
 	return newStepSpinner(stderr)

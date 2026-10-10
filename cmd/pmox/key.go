@@ -147,6 +147,8 @@ func publishTo(cmd *cobra.Command, r *server.Resolved, label, name string, repla
 	if err != nil {
 		return err
 	}
+	sp := startSpin(fmt.Sprintf("Publishing %s to %s…", name, label))
+	defer sp.Stop()
 	fs, closeFS, err := openRegistryFn(ctx, r)
 	if err != nil {
 		return err
@@ -159,6 +161,7 @@ func publishTo(cmd *cobra.Command, r *server.Resolved, label, name string, repla
 	case err != nil:
 		return err
 	case !accessreg.SameKey(existing, k):
+		sp.Stop() // before the replace prompt
 		if !replace {
 			if !tui.Interactive() {
 				return fmt.Errorf("%w: a different key is already published as %q (%s, from %s); pass --replace to overwrite it",
@@ -177,6 +180,7 @@ func publishTo(cmd *cobra.Command, r *server.Resolved, label, name string, repla
 	if err := accessreg.PublishKey(ctx, fs, k); err != nil {
 		return err
 	}
+	sp.Stop()
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ published %s (%s) to %s → %s/%s.pub\n", name, k.Fingerprint, label, accessreg.KeysDir, name)
 	return nil
 }
@@ -192,16 +196,19 @@ func runKeyUnpublish(cmd *cobra.Command, f *keyFlags) error {
 		return err
 	}
 	for _, r := range targets {
+		label := targetLabel(cfg, r)
+		sp := startSpin(fmt.Sprintf("Unpublishing %s from %s…", name, label))
 		fs, closeFS, err := openRegistryFn(ctx, r)
 		if err != nil {
+			sp.Stop()
 			return err
 		}
 		err = accessreg.UnpublishKey(ctx, fs, name)
 		closeFS()
-		label := targetLabel(cfg, r)
+		sp.Stop()
 		switch {
 		case errors.Is(err, accessreg.ErrNotPublished):
-			fmt.Fprintf(cmd.OutOrStdout(), "= %s: nothing published as %s\n", label, name)
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ nothing is published as %s on %s\n", name, label)
 		case err != nil:
 			return err
 		default:
@@ -235,13 +242,16 @@ func runKeyShow(cmd *cobra.Command, f *keyFlags) error {
 }
 
 func printPublishStatus(cmd *cobra.Command, out io.Writer, r *server.Resolved, name string, k accessreg.PublishedKey) {
+	sp := startSpin("Checking the access registry…")
 	fs, closeFS, err := openRegistryFn(cmd.Context(), r)
 	if err != nil {
+		sp.Stop()
 		fmt.Fprintf(out, "  status: unknown (%v)\n", err)
 		return
 	}
 	defer closeFS()
 	existing, err := accessreg.GetKey(cmd.Context(), fs, name)
+	sp.Stop()
 	switch {
 	case errors.Is(err, accessreg.ErrNotPublished):
 		fmt.Fprintf(out, "  status: not published — run 'pmox key publish'\n")
@@ -284,13 +294,16 @@ func runKeyList(cmd *cobra.Command, f *keyFlags) error {
 	}
 	rows := []row{}
 	for _, r := range targets {
+		sp := startSpin(fmt.Sprintf("Loading keys from %s…", targetLabel(cfg, r)))
 		fs, closeFS, err := openRegistryFn(ctx, r)
 		if err != nil {
+			sp.Stop()
 			return err
 		}
 		keys, badKeys, kerr := accessreg.ListKeys(ctx, fs)
 		acc, aerr := accessreg.ReadAccess(ctx, fs)
 		closeFS()
+		sp.Stop()
 		if kerr != nil {
 			return kerr
 		}

@@ -30,7 +30,9 @@ const buildNewTemplate = "\x00pmox-build-template"
 func ensureLaunchTemplate(cmd *cobra.Command, client *pveclient.Client, resolved *server.Resolved) error {
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
+	sp := startSpin("Loading templates…")
 	all, err := client.ClusterResources(ctx, "vm")
+	sp.Stop()
 	if err != nil {
 		return fmt.Errorf("list templates: %w", err)
 	}

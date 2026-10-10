@@ -85,7 +85,9 @@ type pickerCandidates struct {
 // sorted picker candidates, or ErrPickerNonTTY when no picker can be
 // drawn. Zero VMs → ErrNoPMOXVMs.
 func loadPickerCandidates(ctx context.Context, client *pveclient.Client) (single *Ref, c *pickerCandidates, err error) {
+	sp := tui.StartSpinner("Loading VMs…")
 	resources, err := client.ClusterResources(ctx, "vm")
+	sp.Stop()
 	if err != nil {
 		return nil, nil, fmt.Errorf("list cluster resources: %w", err)
 	}

@@ -81,6 +81,8 @@ Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
 	// pmox stays script/CI-safe and never corrupts JSON on stdout.
 	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		tui.SetNoInput(noInput || envBool("PMOX_NO_INPUT") || outputMode == "json")
+		// Verbose/debug log lines would interleave with a redrawn spinner.
+		tui.SetSpinners(!verbose && !debug)
 	},
 	// With RunE set, cobra routes a bare 'pmox' (no positional args —
 	// any subcommand-shaped input still resolves to that subcommand and

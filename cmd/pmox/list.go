@@ -50,6 +50,8 @@ func runListCmd(cmd *cobra.Command, f *listFlags) error {
 }
 
 func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, f *listFlags) error {
+	sp := startSpin("Loading VMs…")
+	defer sp.Stop()
 	resources, err := client.ClusterResources(ctx, "vm")
 	if err != nil {
 		return fmt.Errorf("list cluster resources: %w", err)
@@ -67,6 +69,7 @@ func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 		})
 	}
 	fetchIPs(ctx, client, rows)
+	sp.Stop()
 
 	if outputMode == "json" {
 		return printJSON(cmd.OutOrStdout(), rows)

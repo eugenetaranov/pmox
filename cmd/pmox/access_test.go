@@ -381,6 +381,11 @@ func TestAccessGrantPromptsWhenBare(t *testing.T) {
 	if got := guests.managed(101); len(got) != 0 {
 		t.Errorf("after revoke web1 = %v", got)
 	}
+	// Nothing left to revoke: the goal already holds, so it's success.
+	out, err := runCmd(t, "access", "revoke")
+	if err != nil || !strings.Contains(out, "✓ nobody has been granted access") {
+		t.Errorf("revoke with nothing granted: err=%v\n%s", err, out)
+	}
 }
 
 // forceInteractive makes tui.Interactive report a terminal for the test.

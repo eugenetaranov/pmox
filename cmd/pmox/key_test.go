@@ -181,4 +181,9 @@ func TestKeyUnpublishAndShow(t *testing.T) {
 	if !strings.Contains(out, "not published") {
 		t.Errorf("show after unpublish:\n%s", out)
 	}
+	// Unpublishing again: the goal already holds, so it's success.
+	out, err := runCmd(t, "key", "unpublish")
+	if err != nil || !strings.Contains(out, "✓ nothing is published as bob") {
+		t.Errorf("second unpublish: err=%v\n%s", err, out)
+	}
 }

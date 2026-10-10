@@ -22,7 +22,9 @@ func newTemplateListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sp := startSpin("Loading templates…")
 			all, err := client.ClusterResources(ctx, "vm")
+			sp.Stop()
 			if err != nil {
 				return fmt.Errorf("list templates: %w", err)
 			}

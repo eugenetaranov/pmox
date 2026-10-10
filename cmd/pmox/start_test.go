@@ -18,6 +18,7 @@ func TestStart_HappyPathWaitsForIP(t *testing.T) {
 	f := pvetest.New(t)
 	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
 	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"stopped"}}`))
 	f.Handle("GET", "/tasks/", pvetest.TaskOK)
 	f.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(web1AgentNet))
 
@@ -26,7 +27,7 @@ func TestStart_HappyPathWaitsForIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeStart: %v", err)
 	}
-	if !strings.Contains(out.String(), "started web1") {
+	if !strings.Contains(out.String(), "web1 started") {
 		t.Errorf("stdout = %q", out.String())
 	}
 	if !strings.Contains(out.String(), "192.168.1.43") {
@@ -49,6 +50,7 @@ func TestStart_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	f := pvetest.New(t)
 	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
 	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"stopped"}}`))
 	f.Handle("GET", "/tasks/", pvetest.TaskOK)
 	f.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(web1AgentNet))
 
@@ -66,7 +68,7 @@ func TestStart_ZeroArgs_OneVMAutoSelect(t *testing.T) {
 	if err := executeStart(cmd.Context(), cmd, f.Client(), arg, &startFlags{wait: 5 * time.Second}); err != nil {
 		t.Fatalf("executeStart: %v", err)
 	}
-	if !strings.Contains(out.String(), "started web1") {
+	if !strings.Contains(out.String(), "web1 started") {
 		t.Errorf("stdout = %q", out.String())
 	}
 }
@@ -75,6 +77,7 @@ func TestStart_NoWaitSkipsAgent(t *testing.T) {
 	f := pvetest.New(t)
 	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
 	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"stopped"}}`))
 	f.Handle("GET", "/tasks/", pvetest.TaskOK)
 	var agentCalls int32
 	f.Handle("GET", "/agent/network-get-interfaces", func(_ http.ResponseWriter, _ *http.Request, _ string) {
@@ -86,10 +89,44 @@ func TestStart_NoWaitSkipsAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeStart: %v", err)
 	}
-	if !strings.Contains(out.String(), "started web1") {
+	if !strings.Contains(out.String(), "web1 started") {
 		t.Errorf("stdout = %q", out.String())
 	}
 	if atomic.LoadInt32(&agentCalls) != 0 {
 		t.Errorf("--no-wait must skip agent calls, got %d", agentCalls)
+	}
+}
+
+func TestStart_AlreadyRunningIsSuccess(t *testing.T) {
+	f := pvetest.New(t)
+	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"running"}}`))
+	f.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(web1AgentNet))
+	cmd, out, _ := newTestInfoCmd()
+	if err := executeStart(cmd.Context(), cmd, f.Client(), "web1", &startFlags{wait: 5 * time.Second}); err != nil {
+		t.Fatalf("executeStart: %v", err)
+	}
+	if !strings.Contains(out.String(), "web1 is already running") || !strings.Contains(out.String(), "192.168.1.43") {
+		t.Errorf("stdout = %q", out.String())
+	}
+	if f.Count("POST", "/status/start") != 0 {
+		t.Errorf("no start task expected, got %d", f.Count("POST", "/status/start"))
+	}
+}
+
+// The VM came up between the status check and the start task: Proxmox
+// fails the task with "already running", which is still success.
+func TestStart_AlreadyRunningRaceIsSuccess(t *testing.T) {
+	f := pvetest.New(t)
+	f.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
+	f.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"stopped"}}`))
+	f.Handle("POST", "/status/start", pvetest.JSON(`{"data":"UPID:pve1:start:"}`))
+	f.Handle("GET", "/tasks/", pvetest.JSON(`{"data":{"status":"stopped","exitstatus":"VM 104 already running"}}`))
+	cmd, out, _ := newTestInfoCmd()
+	if err := executeStart(cmd.Context(), cmd, f.Client(), "web1", &startFlags{noWait: true}); err != nil {
+		t.Fatalf("executeStart: %v", err)
+	}
+	if !strings.Contains(out.String(), "web1 is already running") {
+		t.Errorf("stdout = %q", out.String())
 	}
 }
