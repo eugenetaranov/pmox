@@ -1,9 +1,6 @@
 package bootstrap
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -113,21 +110,8 @@ func TestZshItems(t *testing.T) {
 		}
 	}
 
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not installed")
-	}
-	fn := script[strings.Index(script, "\nload_answers() {")+1:]
-	fn = fn[:strings.Index(fn, "\n}\n")+3]
-	answers := filepath.Join(t.TempDir(), "answers")
-	if err := os.WriteFile(answers, []byte("A_PICKS='cli shell fzftab'\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(bash, "-c", fn+`A_WIRE_AGENTS=x ANSWERS=$1; load_answers; echo "$A_PICKS"`, "-", answers).CombinedOutput()
-	if err != nil {
-		t.Fatalf("load_answers: %v\n%s", err, out)
-	}
-	if got := strings.TrimSpace(string(out)); got != "cli zsh zshcfg p10k fzftab" {
+	vals := loadAnswers(t, writeLegacy(t, "A_PICKS='cli shell fzftab'\n"))
+	if got := vals["A_PICKS"]; got != "cli zsh zshcfg p10k fzftab" {
 		t.Errorf("migrated picks = %q, want %q", got, "cli zsh zshcfg p10k fzftab")
 	}
 }

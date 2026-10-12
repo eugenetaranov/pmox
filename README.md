@@ -443,8 +443,10 @@ to rewrite the cloud-init file with the new key.
 ## Setting up the VM from inside: devbox-setup
 
 Every VM pmox launches gets `devbox-setup`, an interactive installer you run
-on the VM itself. It's the alternative to provisioning from outside with
-tack. Run `pmox shell web1`, then `sudo devbox-setup`. Categories are tabs
+on the VM itself. It's a parallel path to provisioning from outside with
+tack: the same result (MCPJungle wired into your agents with its MCP
+servers, dev tools installed and configured) with no playbooks or roles to
+maintain. Run `pmox shell web1`, then `sudo devbox-setup`. Categories are tabs
 across the top (←/→ or 1–9 to switch) above a checklist: nothing is
 preselected and only space ticks an item. Every item shows how it will be
 installed, e.g. `mise use -g terraform`, wrapped to fit the terminal. The
@@ -462,8 +464,9 @@ clears the search; Esc on an empty search quits.
    Docker (with log rotation and 10.200.0.0/16 networks), Podman + skopeo +
    buildah, container tools (lazydocker, dive, hadolint, crane, cosign),
    Tailscale, NFS/SMB clients, node_exporter + glances. Settings: dev limits
-   (inotify, open files), zram swap, a journal size cap, timezone + locale,
-   chrony synced to the Proxmox host clock. Opt-in hardening: automatic
+   (inotify, open files), zram swap, a journal size cap, timezone + locale
+   (the clock itself is set up by pmox at launch; see
+   [Clock sync](#clock-sync)). Opt-in hardening: automatic
    security updates, quiet needrestart, SSH keys only, ufw, fail2ban.
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
    delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
@@ -517,12 +520,19 @@ tools, git name and email, timezone, and MCP server keys (stored in
 installed, with how to update or remove it.
 
 Run it again any time to add more. Choices accumulate in
-`/var/lib/devbox-setup/answers` (no secrets), and `sudo devbox-setup --yes`
-re-applies all of them without asking.
+`/var/lib/devbox-setup/answers.json` (no secrets), and `sudo devbox-setup --yes`
+re-applies all of them without asking. The file is only read as data, never
+run; an `answers` file from an older version is converted once and kept as
+`answers.old`.
 
-The script is embedded in pmox and added to the VM's cloud-init at launch.
-Your cloud-init file is not changed, and nothing is downloaded at boot. The
-same injection turns off unattended-upgrades and the apt-daily timers:
+devbox-setup is embedded in pmox. Once a new VM answers SSH, pmox copies it
+over (before any `--post-create`/`--tack` hook, so a hook can run
+`sudo devbox-setup --yes`). It isn't part of the user-data, and nothing is
+downloaded for it at boot. A failed copy only warns. With `--no-wait-ssh`
+nothing is copied. `pmox devbox push web1` installs it, or refreshes it to
+your pmox version, on an existing VM; saved choices are kept.
+
+pmox also adds a line to the VM's cloud-init that turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security
 updates on these VMs are then up to you (`sudo apt upgrade`), or tick
 "Automatic security updates" in devbox-setup: it turns them back on and
@@ -537,6 +547,16 @@ carries the same `bootcmd` line, visible and editable, so it applies with
 set `devbox_setup: false`. An older cloud-init file doesn't have the line, or
 has it without the opt-in check. With devbox-setup on, pmox swaps in the
 current line at launch; otherwise regenerate the file.
+
+## Clock sync
+
+Every launched VM's cloud-init also gets chrony, set to follow the Proxmox
+host's clock through the KVM PTP device (`/dev/ptp0`). The clock is stepped
+whenever it's more than a second off, so it's right again straight after a
+snapshot rollback. Without the PTP device, chrony uses its default NTP pools.
+Your cloud-init file is not changed. Turn it off per launch with
+`--no-clock-sync`, or for a server with `clock_sync: false` under that server
+in `config.yaml`.
 
 ## Post-create hooks
 

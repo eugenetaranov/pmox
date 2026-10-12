@@ -59,9 +59,16 @@ type Options struct {
 	Wait          time.Duration
 	NoWaitSSH     bool
 	CloudInitPath string
-	// DevboxSetup adds the devbox-setup installer (internal/bootstrap) to
+	// DevboxSetup installs devbox-setup (internal/bootstrap) once the VM
+	// answers SSH, via PushDevboxFn, and turns unattended upgrades off in
 	// the uploaded user-data. The user's cloud-init file is not changed.
 	DevboxSetup bool
+	// PushDevboxFn copies bootstrap.Tarball to the VM at ip and installs
+	// it. The CLI wires it to ssh; nil skips the push.
+	PushDevboxFn func(ctx context.Context, ip string) error
+	// ClockSync adds chrony following the Proxmox host's clock to the
+	// uploaded user-data (bootstrap.ClockSync).
+	ClockSync bool
 	// Hook is an optional post-SSH-ready hook (--post-create, --tack,
 	// --ansible). Nil means no hook phase.
 	Hook hook.Hook
@@ -155,7 +162,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
 	}
 	if opts.DevboxSetup {
-		cloudInitBytes = withDevboxSetup(cloudInitBytes, opts.CloudInitPath, opts.Stderr)
+		cloudInitBytes = withUserDataEdit(cloudInitBytes, bootstrap.Inject, "automatic updates left on", opts.CloudInitPath, opts.Stderr)
+	}
+	if opts.ClockSync {
+		cloudInitBytes = withUserDataEdit(cloudInitBytes, bootstrap.ClockSync, "clock sync not added", opts.CloudInitPath, opts.Stderr)
 	}
 
 	// Phase 1 — allocate VMID.
@@ -293,6 +303,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
+	// Phase 8c — install devbox-setup over SSH, before any hook so a hook
+	// can run it. Best-effort: the VM is fine without it.
+	if opts.DevboxSetup {
+		pushDevbox(ctx, opts, ip)
+	}
+
 	// Phase 9 — mark ready: the VM is cloned, tagged, resized, cloud-init
 	// pushed, started, and confirmed reachable. Set before any hook, so
 	// a hook failure (which --strict-hooks can turn into a launch
@@ -370,19 +386,36 @@ func bridgedNet0(ctx context.Context, opts Options, vmid int) (string, error) {
 	return next, nil
 }
 
-// withDevboxSetup returns userData with the devbox-setup installer added.
-// It never fails a launch: when the file can't take it, it warns and
-// returns userData unchanged.
-func withDevboxSetup(userData []byte, path string, stderr io.Writer) []byte {
-	out, err := bootstrap.Inject(userData)
+// withUserDataEdit returns change(userData). It never fails a launch:
+// when the edit fails or the result would not fit in a snippet, it warns
+// (what names the effect) and returns userData unchanged.
+func withUserDataEdit(userData []byte, change func([]byte) ([]byte, error), what, path string, stderr io.Writer) []byte {
+	out, err := change(userData)
 	if err == nil && len(out) > snippet.MaxBytes {
 		err = fmt.Errorf("user-data would be %d bytes, over the %d KiB snippet limit", len(out), snippet.MaxBytes/1024)
 	}
 	if err != nil {
 		if stderr != nil {
-			fmt.Fprintf(stderr, "warning: devbox-setup not added to the VM (%s: %v)\n", path, err)
+			fmt.Fprintf(stderr, "warning: %s (%s: %v)\n", what, path, err)
 		}
 		return userData
 	}
 	return out
+}
+
+// pushDevbox installs devbox-setup on the VM, warning on failure.
+func pushDevbox(ctx context.Context, opts Options, ip string) {
+	hint := "pmox devbox push " + opts.Name
+	if opts.NoWaitSSH || opts.PushDevboxFn == nil {
+		if opts.NoWaitSSH && opts.Stderr != nil {
+			fmt.Fprintf(opts.Stderr, "note: --no-wait-ssh set; devbox-setup not installed. Once the VM is up: %s\n", hint)
+		}
+		return
+	}
+	opts.pStart("Installing devbox-setup")
+	err := opts.PushDevboxFn(ctx, ip)
+	opts.pDone(nil)
+	if err != nil && opts.Stderr != nil {
+		fmt.Fprintf(opts.Stderr, "warning: devbox-setup not installed on %s: %v. Retry with: %s\n", opts.Name, err, hint)
+	}
 }

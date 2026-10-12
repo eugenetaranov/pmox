@@ -22,7 +22,7 @@ func readEmbedded(t *testing.T, p string) string {
 // runs compinit), builds plugins from installed tools, and keeps
 // zsh-syntax-highlighting last.
 func TestZshrcTemplateOrder(t *testing.T) {
-	tmpl := readEmbedded(t, "assets/zshrc.tmpl")
+	tmpl := readEmbedded(t, "conf/zshrc.tmpl")
 	comp := strings.Index(tmpl, "source ~/.config/devbox/completions.zsh")
 	omz := strings.Index(tmpl, `source "$ZSH/oh-my-zsh.sh"`)
 	if comp < 0 || omz < 0 || comp > omz {
@@ -54,7 +54,7 @@ func needZsh(t *testing.T) string {
 
 func TestZshFilesParse(t *testing.T) {
 	z := needZsh(t)
-	for _, p := range []string{"conf/completions.zsh", "assets/zshrc.tmpl", "conf/shell.sh", "conf/p10k-devbox.zsh"} {
+	for _, p := range []string{"conf/completions.zsh", "conf/zshrc.tmpl", "conf/shell.sh", "conf/p10k-devbox.zsh"} {
 		f := filepath.Join(t.TempDir(), filepath.Base(p))
 		if err := os.WriteFile(f, []byte(readEmbedded(t, p)), 0o644); err != nil {
 			t.Fatal(err)
@@ -164,7 +164,7 @@ func TestP10kConfig(t *testing.T) {
 
 // The instant prompt runs first, and only for the p10k theme.
 func TestZshrcInstantPrompt(t *testing.T) {
-	tmpl := readEmbedded(t, "assets/zshrc.tmpl")
+	tmpl := readEmbedded(t, "conf/zshrc.tmpl")
 	ip := strings.Index(tmpl, "p10k-instant-prompt-")
 	comp := strings.Index(tmpl, "source ~/.config/devbox/completions.zsh")
 	if ip < 0 || ip > comp {

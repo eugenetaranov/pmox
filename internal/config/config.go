@@ -46,12 +46,19 @@ type Server struct {
 	TLSPinSHA256 string `yaml:"tls_pin_sha256,omitempty"`
 
 	// DevboxSetup controls whether launched VMs get the devbox-setup
-	// installer in their cloud-init. Nil (unset) means yes.
+	// installer (copied over SSH once the VM is up). Nil (unset) means yes.
 	DevboxSetup *bool `yaml:"devbox_setup,omitempty"`
+
+	// ClockSync controls whether launched VMs get chrony following the
+	// Proxmox host's clock (KVM PTP) in their cloud-init. Nil means yes.
+	ClockSync *bool `yaml:"clock_sync,omitempty"`
 }
 
 // DevboxSetupEnabled reports whether launched VMs get devbox-setup.
 func (s *Server) DevboxSetupEnabled() bool { return s.DevboxSetup == nil || *s.DevboxSetup }
+
+// ClockSyncEnabled reports whether launched VMs get host clock sync.
+func (s *Server) ClockSyncEnabled() bool { return s.ClockSync == nil || *s.ClockSync }
 
 // NodeSSHAuth is the node-SSH authentication mode persisted in config.
 type NodeSSHAuth string

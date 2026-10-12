@@ -60,6 +60,7 @@ the new-name prompt.`,
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the clone's net0 (default: keep the source VM's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
+	addClockSyncFlag(cmd, f)
 	addHookFlags(cmd, f)
 	return cmd
 }
@@ -112,6 +113,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	partial.UploadSnippet = upload
 	partial.Progress = newLaunchProgress(cmd.ErrOrStderr())
 	applyHookOptions(&partial, hk, f, resolved.Server, resolved.URL, SSHInsecure())
+	applyDevboxPush(&partial)
 	return executeClone(ctx, cmd, client, srcArg, newName, partial)
 }
 

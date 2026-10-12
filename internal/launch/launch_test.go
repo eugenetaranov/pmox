@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/bootstrap"
 	"github.com/eugenetaranov/pmox/internal/hook"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
@@ -666,3 +667,90 @@ func TestRun_WaitsForBootAfterSSH(t *testing.T) {
 		t.Errorf("order = %v, want ssh then boot", order)
 	}
 }
+
+// TestRun_PushesDevboxBeforeHook: devbox-setup is installed over SSH
+// after the SSH wait and before the hook, and never in user-data.
+func TestRun_PushesDevboxBeforeHook(t *testing.T) {
+	f := newLaunchFake(t)
+	var order []string
+	opts, stub := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = func(context.Context, string, time.Duration) error { order = append(order, "ssh"); return nil }
+	opts.DevboxSetup = true
+	opts.PushDevboxFn = func(_ context.Context, ip string) error {
+		order = append(order, "push:"+ip)
+		return nil
+	}
+	opts.Hook = hookFunc(func() { order = append(order, "hook") })
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "ssh,push:10.9.8.7,hook" {
+		t.Errorf("order = %s, want ssh,push:10.9.8.7,hook", got)
+	}
+	if bytes.Contains(stub.content, []byte(bootstrap.ScriptPath)) {
+		t.Errorf("user-data carries devbox-setup:\n%s", stub.content)
+	}
+	if !bytes.Contains(stub.content, []byte("20auto-upgrades")) {
+		t.Errorf("user-data lacks the auto-upgrades switch-off:\n%s", stub.content)
+	}
+}
+
+// TestRun_PushFailureWarns: a failed push warns with the retry command
+// and leaves the launch successful and the VM ready.
+func TestRun_PushFailureWarns(t *testing.T) {
+	f := newLaunchFake(t)
+	var stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.NoWaitSSH = false
+	opts.WaitForSSHFn = fakeWaitSSH()
+	opts.DevboxSetup = true
+	opts.PushDevboxFn = func(context.Context, string) error { return errors.New("sudo: a password is required") }
+	opts.Stderr = &stderr
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "pmox devbox push web1") {
+		t.Errorf("stderr = %q, want the push hint", stderr.String())
+	}
+	bodies := f.configBodies()
+	if len(bodies) == 0 || !strings.Contains(bodies[len(bodies)-1], "pmox-ready") {
+		t.Errorf("config bodies = %v, want the ready tag", bodies)
+	}
+}
+
+func TestRun_NoWaitSSHSkipsPush(t *testing.T) {
+	f := newLaunchFake(t)
+	var stderr bytes.Buffer
+	opts, _ := baseOpts(t, f.client())
+	opts.DevboxSetup = true
+	opts.PushDevboxFn = func(context.Context, string) error { t.Error("pushed with --no-wait-ssh"); return nil }
+	opts.Stderr = &stderr
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "devbox-setup not installed") || !strings.Contains(stderr.String(), "pmox devbox push web1") {
+		t.Errorf("stderr = %q, want the not-installed note", stderr.String())
+	}
+}
+
+func TestRun_ClockSync(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		f := newLaunchFake(t)
+		opts, stub := baseOpts(t, f.client())
+		opts.ClockSync = on
+		if _, err := Run(context.Background(), opts); err != nil {
+			t.Fatalf("Run err: %v", err)
+		}
+		if got := bytes.Contains(stub.content, []byte(bootstrap.ClockSyncCommand)); got != on {
+			t.Errorf("ClockSync=%v: user-data has the clock-sync command = %v:\n%s", on, got, stub.content)
+		}
+	}
+}
+
+// hookFunc is a hook that calls fn.
+type hookFunc func()
+
+func (h hookFunc) Name() string { return "func" }
+
+func (h hookFunc) Run(context.Context, hook.Env, io.Writer, io.Writer) error { h(); return nil }

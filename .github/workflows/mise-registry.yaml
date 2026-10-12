@@ -1,0 +1,48 @@
+name: Refresh mise registry
+
+# devbox-setup's picker searches mise's registry. VMs fetch this file from
+# main (cached for a week), so new mise tools show up without a release.
+on:
+  schedule:
+    - cron: '17 4 * * 1' # Mondays 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up mise (latest)
+        uses: jdx/mise-action@v2
+        with:
+          install: false
+
+      - name: Set up Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Regenerate the snapshot
+        run: task bootstrap:mise-registry
+
+      - name: Check the snapshot
+        run: |
+          rows=$(wc -l < internal/bootstrap/mise-registry.tsv)
+          echo "rows: $rows"
+          if [ "$rows" -lt 500 ]; then
+            echo "::error::only $rows rows; mise's registry looks broken, not committing"
+            exit 1
+          fi
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet -- internal/bootstrap/mise-registry.tsv && { echo "no change"; exit 0; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add internal/bootstrap/mise-registry.tsv
+          git commit -m 'chore: refresh mise registry'
+          git push

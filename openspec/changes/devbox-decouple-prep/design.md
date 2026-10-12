@@ -15,9 +15,9 @@ This change keeps bash. It prepares the ground so the Go rewrite (`devbox-go-rew
 - **Push after the boot wait, before hooks.** A new launch phase "Installing devbox-setup" runs after Phase 8b. It streams a gzip tar of the files over the launch's SSH connection to `sudo tar -xzf - -C /`. Running it before hooks lets a `--post-create` hook call `devbox-setup --yes`. As before, a failure is a warning, not a launch failure: the VM is fine without it, and `pmox devbox push` retries.
   - `launch.Options` gets a `PushDevboxFn`, like `WaitForSSHFn`, so tests stub it and `cmd/pmox` wires it to the same SSH target code `pmox cp` uses.
   - *Alternative:* keep user-data and compress harder. Rejected: it only delays the limit, and a Go binary won't fit at all.
-- **One tarball builder.** `bootstrap.Tarball()` returns the files with their paths and modes, and both launch and `devbox push` use it. `Inject` and the size check in `withDevboxSetup` go away.
+- **One tarball builder.** `bootstrap.Tarball()` returns the files with their paths and modes (file entries only, so extracting at `/` never changes directory modes), and both launch and `devbox push` use it. The install command replaces the share directory and leaves `/var/lib/devbox-setup` alone. `Inject` keeps only the boot-time unattended-upgrades switch-off, which has to be in user-data. The snippet size check stays for the user-data edits.
 - **`pmox devbox push <vm>`** is a new `devbox` noun (noun-verb, as in `cli-command-tree`), so Phase 2 can add `devbox profile …` next to it. It needs sudo on the VM, like devbox-setup itself.
-- **answers.json, handled by picker.py.** python3 is already a dependency, so `picker.py answers read` prints shell-safe `A_X=…` assignments, and `picker.py answers write` writes the JSON. The script uses `declare` on known names only and never runs `eval` or `.` on file content. Format:
+- **answers.json, handled by picker.py.** python3 is already a dependency. `picker.py answers read STATE` prints NUL-separated name/value pairs, which bash assigns with `printf -v` for known names only. `picker.py answers write STATE` takes the same pairs on stdin and writes the JSON (0600, atomically). Nothing runs `eval` or `.` on file content. Format:
   ```json
   {"version": 1, "user": "ubuntu", "picks": ["cli", "zsh"], "mise_extra": ["starship"],
    "mcp_listen": "", "mcp_servers": [], "wire_agents": true,
@@ -36,7 +36,7 @@ This change keeps bash. It prepares the ground so the Go rewrite (`devbox-go-rew
   - The VM's live fetch from main (7-day cache) picks it up without a pmox release.
   - Per the decision, no pinning. A sanity check skips the commit when the new file has fewer than 500 rows, so a broken mise can't empty the list.
 - **Full snapshot on the VM:** `registryNames()` is dropped. The VM gets names, aliases and descriptions, so search can show descriptions offline.
-- **Clock sync in cloud-init:** a `clocksync` package merges the following into the user-data:
+- **Clock sync in cloud-init:** `bootstrap.ClockSync`, next to `Inject` so the two share the YAML helpers, merges the following into the user-data:
   - `packages: [chrony]`
   - write_files: `/etc/modules-load.d/ptp_kvm.conf` and `/usr/local/share/pmox/chrony-ptp.conf`
   - a `runcmd` that runs `modprobe ptp_kvm`, installs the drop-in only if `/dev/ptp0` exists, and restarts chrony

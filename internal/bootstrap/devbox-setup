@@ -10,14 +10,13 @@
 #   devbox-setup --dry-run        ask, then show what would happen
 #
 # Nothing is preselected. Everything ever chosen (no secrets) accumulates in
-# /var/lib/devbox-setup/answers, and ~/devbox-setup.txt lists how each tool
+# /var/lib/devbox-setup/answers.json, and ~/devbox-setup.txt lists how each tool
 # was installed and how to manage it. MCP credentials live only in
 # ~/.mcp/<name>/env.
 set -euo pipefail
 
 SHARE=${DEVBOX_SETUP_SHARE:-/usr/local/share/devbox-setup}
 STATE=${DEVBOX_SETUP_STATE:-/var/lib/devbox-setup}
-ANSWERS=$STATE/answers
 LOG=$STATE/last-run.log
 BIN=/usr/local/bin
 KEYRINGS=/etc/apt/keyrings
@@ -27,6 +26,9 @@ AUTO_UPGRADES_MARKER=/etc/devbox-setup/auto-upgrades
 
 # 0.17: gum 2 multi-selects no longer toggle with space.
 GUM_VERSION=0.17.0
+# SHA-256 of gum's Linux tarballs (from the release's checksums.txt).
+GUM_SHA256_x86_64=69ee169bd6387331928864e94d47ed01ef649fbfe875baed1bbf27b5377a6fdb
+GUM_SHA256_arm64=b0b9ed95cbf7c8b7073f17b9591811f5c001e33c7cfd066ca83ce8a07c576f9c
 MCPJUNGLE_VERSION=0.4.6
 MCPJUNGLE_PORT=8080
 ECC_VERSION=2.2.3
@@ -59,7 +61,6 @@ CATALOG_ROWS=(
   "zram|system|Compressed swap in RAM (zram)|fn|||apt systemd-zram-generator · zram0 = half of RAM, max 8 GB"
   "journald|system|Cap the journal at 200 MB|fn|||/etc/systemd/journald.conf.d/60-devbox.conf"
   "tzlocale|system|Timezone + en_US.UTF-8 locale|ask|||timedatectl set-timezone · locale-gen · apt locales-all"
-  "chrony|system|Clock from the Proxmox host (chrony + PTP)|fn|||apt chrony · ptp_kvm refclock · steps after snapshot rollbacks"
   "autoupdates|system|Automatic security updates (no auto-reboot)|fn|||unattended-upgrades · undoes pmox's boot-time switch-off"
   "needrestart|system|needrestart: restart services quietly after apt|fn|||/etc/needrestart/conf.d/devbox.conf · no kernel pop-ups"
   "sshharden|system|SSH: keys only, no root login (advanced)|fn|||/etc/ssh/sshd_config.d/10-devbox.conf · refuses if you have no authorized key"
@@ -214,39 +215,24 @@ source_of() {
 # --- Saved answers -----------------------------------------------------------
 
 A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_AGENTS= A_GIT_NAME= A_GIT_EMAIL= A_TZ=
-A_WIRE_CLAUDE= # saved before v0.32; read into A_WIRE_AGENTS
 ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_AGENTS A_GIT_NAME A_GIT_EMAIL A_TZ"
+# Saved answers are data ($STATE/answers.json): picker.py parses them (and converts
+# the shell-format file older versions wrote, without running it) and hands
+# back NUL-separated name/value pairs. Nothing from the file is executed.
 load_answers() {
-  # shellcheck disable=SC1090
-  [ -r "$ANSWERS" ] && . "$ANSWERS"
-  # Entries renamed or merged since v0.29.
-  local id out=
-  for id in $A_PICKS; do
-    case "$id" in
-      kubectl|kubectx|helm|k9s) out="$out k8s" ;;
-      devbox) out="$out essentials cli editors tmux zellij" ;;
-      shell) out="$out zsh zshcfg p10k" ;; # split into three in v0.38
-      typescript) out="$out node" ;;
-      kotlin) out="$out java" ;;
-      editors) out="$out editors neovim" ;; # Neovim moved to its own (mise) item
-      *) out="$out $id" ;;
-    esac
-  done
-  A_PICKS=$(printf '%s\n' $out | awk '!seen[$0]++' | tr '\n' ' ')
-  A_PICKS=$(echo $A_PICKS)
-  [ -z "$A_WIRE_AGENTS" ] && [ -n "$A_WIRE_CLAUDE" ] && A_WIRE_AGENTS=$A_WIRE_CLAUDE
+  local k v
+  while IFS= read -r -d '' k && IFS= read -r -d '' v; do
+    case " $ANSWER_VARS " in *" $k "*) printf -v "$k" '%s' "$v" ;; esac
+  done < <(python3 "$SHARE/picker.py" answers read "$STATE")
   return 0
 }
 save_answers() {
   A_PICKS=$(merge "$A_PICKS" "$RUN_PICKS")
   A_MISE_EXTRA=$(merge "$A_MISE_EXTRA" "$RUN_MISE_EXTRA")
   mkdir -p "$STATE"; chmod 700 "$STATE"
-  {
-    echo "# devbox-setup choices ($(date -u +%Y-%m-%dT%H:%M:%SZ)). No secrets here."
-    local v
-    for v in $ANSWER_VARS; do printf '%s=%q\n' "$v" "${!v}"; done
-  } > "$ANSWERS"
-  chmod 600 "$ANSWERS"
+  local v
+  for v in $ANSWER_VARS; do printf '%s\0%s\0' "$v" "${!v}"; done \
+    | python3 "$SHARE/picker.py" answers write "$STATE"
 }
 
 picked() { case " $PLAN " in *" $1 "*) return 0 ;; esac; return 1; }
@@ -286,9 +272,14 @@ ensure_gum() {
   [[ "$v" == *"v$GUM_VERSION"* ]] && return 0
   [ "$(id -u)" = 0 ] || die "gum is not installed; run 'sudo devbox-setup' once"
   say "Installing gum $GUM_VERSION (the menu UI)…"
-  local t; t=$(mktemp -d)
-  curl -fsSL "https://github.com/charmbracelet/gum/releases/download/v$GUM_VERSION/gum_${GUM_VERSION}_Linux_$(rel_arch).tar.gz" \
-    | tar -xzf - -C "$t"
+  local t arch sum; t=$(mktemp -d); arch=$(rel_arch)
+  local tgz="gum_${GUM_VERSION}_Linux_$arch.tar.gz"
+  sum=GUM_SHA256_$arch
+  curl -fsSL -o "$t/$tgz" "https://github.com/charmbracelet/gum/releases/download/v$GUM_VERSION/$tgz" \
+    || { rm -rf "$t"; die "could not download $tgz"; }
+  echo "${!sum}  $t/$tgz" | sha256sum -c --status \
+    || { rm -rf "$t"; die "$tgz does not match its pinned SHA-256; not installing gum"; }
+  tar -xzf "$t/$tgz" -C "$t"
   install -m 0755 "$t"/gum_*/gum "$BIN/gum"
   rm -rf "$t"
 }
@@ -679,7 +670,7 @@ install_zshcfg() {
   # Re-rendering keeps the prompt: the theme follows the p10k clone.
   [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] && theme=$P10K_THEME
   # Plugins are chosen by the template at shell start (installed tools).
-  sed -e "s|{{ .devbox_zsh_theme }}|$theme|" "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
+  sed -e "s|{{ .devbox_zsh_theme }}|$theme|" "$CONF/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
   chown -h "$A_USER:" "$home/.zshrc"
   as_user install -D -m 0644 "$CONF/completions.zsh" "$home/.config/devbox/completions.zsh"
   # The template replaced .zshrc: keep the shell drop-in if it is set up.
@@ -726,7 +717,7 @@ install_vimcfg() {
   [ -f "$home/.vim/autoload/plug.vim" ] || \
     as_user curl -fsSL --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim -o "$home/.vim/autoload/plug.vim"
   if [ -f "$home/.vimrc" ] && [ ! -f "$home/.vimrc.orig" ]; then cp -p "$home/.vimrc" "$home/.vimrc.orig"; fi
-  put_file "$home/.vimrc" 0644 < "$SHARE/vimrc" || true
+  put_file "$home/.vimrc" 0644 < "$CONF/vimrc" || true
   chown -h "$A_USER:" "$home/.vimrc"
   as_user vim -es -u "$home/.vimrc" +PlugInstall +qall </dev/null || true
 }
@@ -799,19 +790,6 @@ install_tzlocale() {
   apt_install locales locales-all
   locale-gen en_US.UTF-8
   update-locale LANG=en_US.UTF-8
-}
-
-install_chrony() {
-  apt_install chrony
-  echo ptp_kvm | put_file /etc/modules-load.d/ptp_kvm.conf 0644 || true
-  modprobe ptp_kvm 2>/dev/null || true
-  if [ -e /dev/ptp0 ]; then
-    install -D -m 0644 "$CONF/chrony-pmox.conf" /etc/chrony/conf.d/pmox.conf
-  else
-    rm -f /etc/chrony/conf.d/pmox.conf
-    note "chrony: no /dev/ptp0 (KVM PTP clock), so it syncs from the default NTP pools."
-  fi
-  systemctl restart chrony
 }
 
 install_autoupdates() {

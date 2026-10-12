@@ -1,10 +1,13 @@
 package bootstrap
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"fmt"
 	"io"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"testing"
@@ -12,7 +15,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/eugenetaranov/pmox/internal/config"
-	"github.com/eugenetaranov/pmox/internal/snippet"
 )
 
 type writeFile struct {
@@ -66,40 +68,19 @@ func TestInjectStarterTemplate(t *testing.T) {
 	if !bytes.HasPrefix(out, []byte("#cloud-config\n")) {
 		t.Errorf("missing #cloud-config header:\n%.80s", out)
 	}
-	if len(out) > snippet.MaxBytes {
-		t.Errorf("user-data is %d bytes, over the %d snippet limit", len(out), snippet.MaxBytes)
-	}
 	doc, wfs := parse(t, out)
 	if doc["package_update"] != true || doc["runcmd"] == nil || doc["users"] == nil {
 		t.Errorf("original keys lost: %v", doc)
 	}
-	want := map[string]File{noAutoUpgrades.Path: noAutoUpgrades}
-	for _, f := range Files() {
-		want[f.Path] = f
-	}
 	if boot, _ := doc["bootcmd"].([]any); len(boot) != 1 || boot[0] != stopAutoUpgrades {
 		t.Errorf("bootcmd = %v", doc["bootcmd"])
 	}
-	if len(wfs) != len(want) {
-		t.Fatalf("got %d write_files, want %d", len(wfs), len(want))
+	// devbox-setup itself is pushed over SSH, never put in user-data.
+	if len(wfs) != 1 || wfs[0].Path != noAutoUpgrades.Path || wfs[0].Permissions != "0644" || wfs[0].Encoding != "gz+b64" {
+		t.Fatalf("write_files = %+v, want only %s", wfs, noAutoUpgrades.Path)
 	}
-	for _, w := range wfs {
-		f, ok := want[w.Path]
-		if !ok {
-			t.Errorf("unexpected path %s", w.Path)
-			continue
-		}
-		if w.Encoding != "gz+b64" || w.Permissions != f.Permissions {
-			t.Errorf("%s: encoding %q permissions %q", w.Path, w.Encoding, w.Permissions)
-		}
-		if !bytes.Equal(decode(t, w.Content), f.Content) {
-			t.Errorf("%s: decoded content differs", w.Path)
-		}
-	}
-	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mise-registry.tsv", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/completions.zsh", ShareDir + "/conf/daemon.json"} {
-		if _, ok := want[p]; !ok {
-			t.Errorf("missing %s", p)
-		}
+	if !bytes.Equal(decode(t, wfs[0].Content), noAutoUpgrades.Content) {
+		t.Errorf("decoded content differs")
 	}
 }
 
@@ -110,8 +91,8 @@ func TestInjectKeepsExistingWriteFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, wfs := parse(t, out)
-	if wfs[0].Path != "/etc/motd" || len(wfs) != len(Files())+2 {
-		t.Errorf("existing entry not kept first: %+v", wfs[0])
+	if len(wfs) != 2 || wfs[0].Path != "/etc/motd" {
+		t.Errorf("existing entry not kept first: %+v", wfs)
 	}
 	if !strings.Contains(string(out), "# my comment") {
 		t.Errorf("comment lost:\n%s", out)
@@ -123,7 +104,7 @@ func TestInjectEmptyWriteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, wfs := parse(t, out); len(wfs) != len(Files())+1 {
+	if _, wfs := parse(t, out); len(wfs) != 1 {
 		t.Errorf("got %d entries", len(wfs))
 	}
 }
@@ -205,14 +186,75 @@ func TestPickerPy(t *testing.T) {
 	}
 }
 
-func TestRegistryNamesDropsDescriptions(t *testing.T) {
-	got := string(registryNames([]byte("op\t1password,op-cli\tPassword manager\nfd\t\tfind, but fast\n\tno name\tx\n")))
-	if want := "op\t1password,op-cli\t\nfd\t\t\n"; got != want {
-		t.Errorf("registryNames = %q, want %q", got, want)
+func TestTarball(t *testing.T) {
+	tgz, err := Tarball()
+	if err != nil {
+		t.Fatal(err)
 	}
+	zr, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]File{}
 	for _, f := range Files() {
-		if strings.HasSuffix(f.Path, "/mise-registry.tsv") && bytes.Contains(f.Content, []byte("alternative to 'find'")) {
-			t.Errorf("%s carries descriptions; they do not fit in user-data", f.Path)
+		want[strings.TrimPrefix(f.Path, "/")] = f
+	}
+	tr := tar.NewReader(zr)
+	seen := 0
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, ok := want[h.Name]
+		if !ok || h.Typeflag != tar.TypeReg {
+			t.Errorf("unexpected entry %s (type %c); only files, so / and /usr keep their modes", h.Name, h.Typeflag)
+			continue
+		}
+		seen++
+		if got := fmt.Sprintf("%04o", h.Mode); got != f.Permissions || h.Uid != 0 || h.Gid != 0 {
+			t.Errorf("%s: mode %s uid %d gid %d, want %s root", h.Name, got, h.Uid, h.Gid, f.Permissions)
+		}
+		b, _ := io.ReadAll(tr)
+		if !bytes.Equal(b, f.Content) {
+			t.Errorf("%s: content differs", h.Name)
 		}
 	}
+	if seen != len(want) {
+		t.Errorf("tarball has %d of %d files", seen, len(want))
+	}
+	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mise-registry.tsv", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/conf/zshrc.tmpl", ShareDir + "/conf/vimrc", ShareDir + "/conf/shell.sh", ShareDir + "/conf/completions.zsh", ShareDir + "/conf/daemon.json"} {
+		if _, ok := want[strings.TrimPrefix(p, "/")]; !ok {
+			t.Errorf("missing %s", p)
+		}
+	}
+	if want[ScriptPath[1:]].Permissions != "0755" || want[strings.TrimPrefix(ShareDir, "/")+"/mcp-sync"].Permissions != "0755" {
+		t.Errorf("script or mcp-sync not executable")
+	}
+}
+
+// TestFullRegistryShipped: with no user-data limit, the VM gets the
+// snapshot with descriptions, so search shows them offline.
+func TestFullRegistryShipped(t *testing.T) {
+	src, _ := files.ReadFile("mise-registry.tsv")
+	for _, f := range Files() {
+		if strings.HasSuffix(f.Path, "/mise-registry.tsv") && !bytes.Equal(f.Content, src) {
+			t.Errorf("%s differs from the snapshot", f.Path)
+		}
+	}
+}
+
+func TestAssetsOnlySynced(t *testing.T) {
+	_ = fs.WalkDir(files, "assets", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if p != "assets/mcp-sync" && p != "assets/SOURCE" && !strings.HasPrefix(p, "assets/mcp-catalog/") {
+			t.Errorf("%s is in assets/, which bootstrap:sync owns; devbox-setup's own files go in conf/", p)
+		}
+		return nil
+	})
 }

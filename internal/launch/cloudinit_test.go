@@ -96,20 +96,23 @@ func TestSetNet0Bridge(t *testing.T) {
 	}
 }
 
-func TestWithDevboxSetup(t *testing.T) {
+func TestWithUserDataEdit(t *testing.T) {
 	var warn bytes.Buffer
 	in := []byte("#cloud-config\npackages: [curl]\n")
-	out := withDevboxSetup(in, "ci.yaml", &warn)
-	if !bytes.Contains(out, []byte(bootstrap.ScriptPath)) || warn.Len() != 0 {
+	out := withUserDataEdit(in, bootstrap.Inject, "automatic updates left on", "ci.yaml", &warn)
+	if !bytes.Contains(out, []byte("20auto-upgrades")) || warn.Len() != 0 {
 		t.Errorf("not injected (warn %q):\n%s", warn.String(), out)
+	}
+	if bytes.Contains(out, []byte(bootstrap.ScriptPath)) {
+		t.Errorf("devbox-setup itself is in user-data; it is pushed over SSH:\n%s", out)
 	}
 
 	warn.Reset()
 	bad := []byte("#cloud-config\nwrite_files: nope\n")
-	if got := withDevboxSetup(bad, "ci.yaml", &warn); !bytes.Equal(got, bad) {
+	if got := withUserDataEdit(bad, bootstrap.ClockSync, "clock sync not added", "ci.yaml", &warn); !bytes.Equal(got, bad) {
 		t.Errorf("user-data changed on failure:\n%s", got)
 	}
-	if !strings.Contains(warn.String(), "devbox-setup not added") {
+	if !strings.Contains(warn.String(), "clock sync not added") {
 		t.Errorf("warning = %q", warn.String())
 	}
 }

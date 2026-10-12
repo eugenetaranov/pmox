@@ -21,6 +21,7 @@ review. Only space changes a selection.
 import argparse
 import curses
 import json
+import os
 import re
 import sys
 import textwrap
@@ -402,7 +403,251 @@ class Picker:
                 self.set_query(chr(k))
 
 
+# --- Saved answers -------------------------------------------------------------
+#
+# devbox-setup's choices live in STATE/answers.json. They are only ever
+# parsed, never run: the bash side reads them as NUL-separated name/value
+# pairs (`answers read`) and hands them back the same way (`answers write`).
+
+ANSWER_VARS = ["A_USER", "A_PICKS", "A_MISE_EXTRA", "A_MCP_LISTEN", "A_MCP_SERVERS",
+               "A_WIRE_AGENTS", "A_GIT_NAME", "A_GIT_EMAIL", "A_TZ"]
+LEGACY_VARS = set(ANSWER_VARS) | {"A_WIRE_CLAUDE"}  # A_WIRE_CLAUDE: saved before v0.32
+ANSWERS_VERSION = 1
+
+# Catalog ids renamed, merged or removed since v0.29.
+PICK_MAP = {
+    "kubectl": ["k8s"], "kubectx": ["k8s"], "helm": ["k8s"], "k9s": ["k8s"],
+    "devbox": ["essentials", "cli", "editors", "tmux", "zellij"],
+    "shell": ["zsh", "zshcfg", "p10k"],  # split into three in v0.38
+    "typescript": ["node"],
+    "kotlin": ["java"],
+    "editors": ["editors", "neovim"],  # Neovim moved to its own (mise) item
+    "chrony": [],  # pmox sets the clock up at launch since v0.39
+}
+PICK_NOTES = {
+    "chrony": "chrony is now set up by pmox at launch (clock sync); this VM keeps the chrony it has.",
+}
+
+
+def migrate_picks(picks, notes=None):
+    out = []
+    for p in picks:
+        for q in PICK_MAP.get(p, [p]):
+            if q not in out:
+                out.append(q)
+        if notes is not None and p in PICK_NOTES and PICK_NOTES[p] not in notes:
+            notes.append(PICK_NOTES[p])
+    return out
+
+
+class Unsafe(ValueError):
+    pass
+
+
+C_ESCAPES = {"n": 10, "t": 9, "r": 13, "a": 7, "b": 8, "e": 27, "E": 27, "f": 12, "v": 11,
+             "\\": 92, "'": 39, '"': 34, "?": 63}
+
+
+def unquote(v):
+    """Decode a value as bash's printf %q (or plain quoting) wrote it, without
+    running anything: anything that would expand or start a command raises
+    Unsafe."""
+    out = bytearray()
+    lit = lambda c: out.extend(c.encode("utf-8"))
+    i, n = 0, len(v)
+    while i < n:
+        c = v[i]
+        if c == "\\":
+            if i + 1 < n:
+                lit(v[i + 1])
+            i += 2
+        elif c == "'":
+            j = v.find("'", i + 1)
+            if j < 0:
+                raise Unsafe("unterminated quote")
+            lit(v[i + 1:j])
+            i = j + 1
+        elif v.startswith("$'", i):
+            i += 2
+            while True:
+                if i >= n:
+                    raise Unsafe("unterminated $'")
+                c = v[i]
+                if c == "'":
+                    i += 1
+                    break
+                if c != "\\" or i + 1 >= n:
+                    lit(c)
+                    i += 1
+                    continue
+                e = v[i + 1]
+                i += 2
+                if e in C_ESCAPES:
+                    out.append(C_ESCAPES[e])
+                elif e in "01234567":
+                    m = re.match(r"[0-7]{0,2}", v[i:]).group(0)
+                    out.append(int(e + m, 8) & 0xFF)
+                    i += len(m)
+                elif e == "x":
+                    m = re.match(r"[0-9a-fA-F]{1,2}", v[i:])
+                    if not m:
+                        raise Unsafe("bad \\x escape")
+                    out.append(int(m.group(0), 16))
+                    i += len(m.group(0))
+                elif e in "uU":
+                    m = re.match(r"[0-9a-fA-F]{1,%d}" % (4 if e == "u" else 8), v[i:])
+                    if not m:
+                        raise Unsafe("bad \\u escape")
+                    lit(chr(int(m.group(0), 16)))
+                    i += len(m.group(0))
+                else:
+                    lit("\\" + e)
+        elif c == '"':
+            i += 1
+            while True:
+                if i >= n:
+                    raise Unsafe("unterminated double quote")
+                c = v[i]
+                if c == '"':
+                    i += 1
+                    break
+                if c in "$`":
+                    raise Unsafe("expansion in double quotes")
+                if c == "\\" and i + 1 < n and v[i + 1] in '$`"\\':
+                    lit(v[i + 1])
+                    i += 2
+                    continue
+                lit(c)
+                i += 1
+        elif c in "$`;&|<>(){} \t\n":
+            raise Unsafe("unquoted %r" % c)
+        else:
+            lit(c)
+            i += 1
+    return out.decode("utf-8", "replace")
+
+
+def read_legacy(path, warn):
+    """The shell-format answers file devbox-setup wrote before v0.39, decoded
+    line by line; unknown or unsafe lines are skipped with a warning."""
+    vals = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for no, line in enumerate(f, 1):
+            line = line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
+            if not m or m.group(1) not in LEGACY_VARS:
+                warn("%s:%d: ignored (not a devbox-setup answer): %s" % (path, no, line[:80]))
+                continue
+            try:
+                vals[m.group(1)] = unquote(m.group(2))
+            except Unsafe as e:
+                warn("%s:%d: ignored %s (%s)" % (path, no, m.group(1), e))
+    if not vals.get("A_WIRE_AGENTS") and vals.get("A_WIRE_CLAUDE"):
+        vals["A_WIRE_AGENTS"] = vals["A_WIRE_CLAUDE"]
+    return vals_to_doc(vals)
+
+
+def words(s):
+    return [w for w in (s or "").split() if w]
+
+
+def vals_to_doc(vals):
+    wire = vals.get("A_WIRE_AGENTS", "")
+    return {
+        "version": ANSWERS_VERSION,
+        "user": vals.get("A_USER", ""),
+        "picks": words(vals.get("A_PICKS")),
+        "mise_extra": words(vals.get("A_MISE_EXTRA")),
+        "mcp_listen": vals.get("A_MCP_LISTEN", ""),
+        "mcp_servers": words(vals.get("A_MCP_SERVERS")),
+        "wire_agents": True if wire == "yes" else False if wire == "no" else None,
+        "git": {"name": vals.get("A_GIT_NAME", ""), "email": vals.get("A_GIT_EMAIL", "")},
+        "tz": vals.get("A_TZ", ""),
+    }
+
+
+def doc_to_vals(doc):
+    if not isinstance(doc, dict):
+        raise ValueError("answers.json is not an object")
+    if doc.get("version") != ANSWERS_VERSION:
+        raise ValueError("answers.json version %r; this devbox-setup reads %d" % (doc.get("version"), ANSWERS_VERSION))
+    s = lambda k, d=doc: d.get(k) if isinstance(d.get(k), str) else ""
+    lst = lambda k: " ".join(x for x in doc.get(k) or [] if isinstance(x, str) and x.strip() == x and " " not in x)
+    git = doc.get("git") if isinstance(doc.get("git"), dict) else {}
+    wire = doc.get("wire_agents")
+    return {
+        "A_USER": s("user"), "A_PICKS": lst("picks"), "A_MISE_EXTRA": lst("mise_extra"),
+        "A_MCP_LISTEN": s("mcp_listen"), "A_MCP_SERVERS": lst("mcp_servers"),
+        "A_WIRE_AGENTS": "yes" if wire is True else "no" if wire is False else "",
+        "A_GIT_NAME": s("name", git), "A_GIT_EMAIL": s("email", git), "A_TZ": s("tz"),
+    }
+
+
+def write_json(path, doc):
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def answers_read(state, warn):
+    """The saved answers as A_* values, migrated. Converts a legacy file to
+    answers.json (keeping it as answers.old) when the directory is writable."""
+    path, legacy = os.path.join(state, "answers.json"), os.path.join(state, "answers")
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError) as e:
+            warn("%s: %s" % (path, e))
+            return {}
+    elif os.access(legacy, os.R_OK):
+        doc = read_legacy(legacy, warn)
+        if os.access(state, os.W_OK):
+            write_json(path, doc)
+            os.replace(legacy, legacy + ".old")
+    else:
+        return {}
+    try:
+        vals = doc_to_vals(doc)
+    except ValueError as e:
+        warn("%s: %s" % (path, e))
+        return {}
+    notes = []
+    vals["A_PICKS"] = " ".join(migrate_picks(words(vals["A_PICKS"]), notes))
+    for n in notes:
+        warn(n)
+    return vals
+
+
+def answers_main(argv):
+    if len(argv) != 2 or argv[0] not in ("read", "write"):
+        raise SystemExit("usage: picker.py answers read|write STATE_DIR")
+    op, state = argv
+    warn = lambda m: print("devbox-setup: " + m, file=sys.stderr)
+    if op == "read":
+        out = sys.stdout.buffer
+        for k, v in answers_read(state, warn).items():
+            out.write(k.encode() + b"\0" + v.replace("\0", "").encode("utf-8") + b"\0")
+        return
+    raw = sys.stdin.buffer.read().split(b"\0")
+    vals = {}
+    for k, v in zip(raw[0::2], raw[1::2]):
+        k = k.decode()
+        if k in ANSWER_VARS:
+            vals[k] = v.decode("utf-8", "replace")
+    write_json(os.path.join(state, "answers.json"), vals_to_doc(vals))
+
+
 def main():
+    if sys.argv[1:2] == ["answers"]:
+        answers_main(sys.argv[2:])
+        return
     ap = argparse.ArgumentParser()
     ap.add_argument("items", nargs="?")
     ap.add_argument("--out")

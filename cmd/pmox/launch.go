@@ -49,6 +49,7 @@ type launchFlags struct {
 	bridge         string
 	wait           time.Duration
 	noWaitSSH      bool
+	noClockSync    bool
 	postCreate     string
 	tack           string
 	ansible        string
@@ -120,8 +121,14 @@ automatic rollback. If anything after clone fails, run
 	cmd.Flags().StringVar(&f.bridge, "bridge", "", "network bridge for the VM's net0 (default: keep the template's bridge)")
 	cmd.Flags().DurationVar(&f.wait, "wait", 0, "total wait budget for IP + SSH readiness (default 3m)")
 	cmd.Flags().BoolVar(&f.noWaitSSH, "no-wait-ssh", false, "return as soon as an IP is known; skip the SSH handshake")
+	addClockSyncFlag(cmd, f)
 	addHookFlags(cmd, f)
 	return cmd
+}
+
+// addClockSyncFlag registers --no-clock-sync on launch and clone.
+func addClockSyncFlag(cmd *cobra.Command, f *launchFlags) {
+	cmd.Flags().BoolVar(&f.noClockSync, "no-clock-sync", false, "don't add chrony following the Proxmox host's clock to the VM's cloud-init (config: clock_sync: false)")
 }
 
 // addHookFlags registers the post-create hook flags on a launch-style
@@ -271,6 +278,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 	applyHookOptions(&opts, hk, f, resolved.Server, resolved.URL, SSHInsecure())
+	applyDevboxPush(&opts)
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)
@@ -472,6 +480,7 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
 		DevboxSetup:    srv.DevboxSetupEnabled(),
+		ClockSync:      srv.ClockSyncEnabled() && !f.noClockSync,
 		Stderr:         stderr,
 	}, nil
 }

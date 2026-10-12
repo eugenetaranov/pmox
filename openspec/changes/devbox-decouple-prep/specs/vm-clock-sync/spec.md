@@ -5,7 +5,7 @@ By default, pmox SHALL add to each launched VM's cloud-init: the `chrony` packag
 
 #### Scenario: After snapshot rollback
 - **WHEN** a launched VM resumes from a snapshot with its clock several minutes off
-- **THEN** chrony steps the clock to the host time within one poll interval
+- **THEN** chrony steps the clock to the host time within 15 seconds
 
 #### Scenario: No PTP device
 - **WHEN** the VM has no `/dev/ptp0`
