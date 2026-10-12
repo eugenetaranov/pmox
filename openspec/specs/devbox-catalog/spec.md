@@ -90,7 +90,6 @@ Every label SHALL say what the item is, without the user needing to know the too
 - `omp` → "omp (oh-my-pi coding agent)"
 - `docker` → "Docker Engine + Compose", with the docker-group note kept in the source column
 - `essentials` → "Essentials (recommended)"
-- `shell` → "zsh + oh-my-zsh + p10k (prompt wizard on first login)"
 - `azure` and `gcloud` → "(large)" appended
 
 #### Scenario: Large items marked
@@ -112,3 +111,4 @@ Each registration SHALL be skipped when that agent already has an `mcpjungle` en
 #### Scenario: Re-run
 - **WHEN** devbox-setup runs again with the same picks
 - **THEN** no duplicate mcpjungle entries are created
+

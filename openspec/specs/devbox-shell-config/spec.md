@@ -28,8 +28,8 @@ A single guarded `source` line SHALL be added to the end of `.zshrc` and `.bashr
 - **WHEN** devbox-setup runs `shellcfg` twice
 - **THEN** `.zshrc` and `.bashrc` each contain the source line exactly once
 
-#### Scenario: Shell item rewrites zshrc
-- **WHEN** `shell` and `shellcfg` are both in the plan
+#### Scenario: zsh config rewrites zshrc
+- **WHEN** `zshcfg` and `shellcfg` are both in the plan
 - **THEN** the rendered `.zshrc` still ends with the drop-in source line
 
 #### Scenario: Terraform providers cached per VM
@@ -37,7 +37,7 @@ A single guarded `source` line SHALL be added to the end of `.zshrc` and `.bashr
 - **THEN** the provider is downloaded once, into `~/.terraform.d/plugin-cache`
 
 ### Requirement: zsh plugins
-The `shell` item SHALL install zsh-autosuggestions, zsh-syntax-highlighting and zsh-fzf-history-search into oh-my-zsh's `custom/plugins`.
+The `zshcfg` item SHALL install zsh-autosuggestions, zsh-syntax-highlighting and zsh-fzf-history-search into oh-my-zsh's `custom/plugins`.
 
 The rendered `.zshrc` SHALL build `plugins=()` when the shell starts, before sourcing oh-my-zsh:
 - **Always:** `git wd sudo extract colored-man-pages zsh-fzf-history-search`.
@@ -48,22 +48,22 @@ The rendered `.zshrc` SHALL build `plugins=()` when the shell starts, before sou
   - `rust` (rustup), `golang` (go)
 - **Then, in this order:** `fzf-tab` when installed, `zsh-autosuggestions`, and `zsh-syntax-highlighting` last.
 
-A tool installed after `shell` SHALL get its plugin in the next new shell, without re-running devbox-setup.
+A tool installed after `zshcfg` SHALL get its plugin in the next new shell, without re-running devbox-setup.
 
 #### Scenario: Plugins enabled
-- **WHEN** `shell` is installed and the user opens zsh
+- **WHEN** `zshcfg` is installed and the user opens zsh
 - **THEN** gray history suggestions and command syntax highlighting are active
 
 #### Scenario: AWS completion
-- **WHEN** `shell` and `aws` are installed and the user types `aws s3 ` and presses Tab
+- **WHEN** `zshcfg` and `aws` are installed and the user types `aws s3 ` and presses Tab
 - **THEN** the s3 subcommands are offered
 
 #### Scenario: Tool plugin follows installation
-- **WHEN** `shell` is installed without `k8s`, then `k8s` is installed later, and the user opens a new zsh
+- **WHEN** `zshcfg` is installed without `k8s`, then `k8s` is installed later, and the user opens a new zsh
 - **THEN** `kubectl ` + Tab and `helm ` + Tab complete their subcommands
 
 #### Scenario: No plugin for a missing tool
-- **WHEN** `shell` is installed and terraform is not
+- **WHEN** `zshcfg` is installed and terraform is not
 - **THEN** `terraform` is not in the shell's `plugins` array and the shell starts without errors
 
 ### Requirement: Git defaults
@@ -93,7 +93,7 @@ A `tmuxcfg` item, needing `tmux`, SHALL write `~/.tmux.conf` from `conf/tmux.con
 - **THEN** the old file is saved as `~/.tmux.conf.orig` and the new one is in place
 
 ### Requirement: Completions for tools without an oh-my-zsh plugin
-The `shell` item SHALL install `~/.config/devbox/completions.zsh`, and the rendered `.zshrc` SHALL source it before oh-my-zsh.
+The `zshcfg` item SHALL install `~/.config/devbox/completions.zsh`, and the rendered `.zshrc` SHALL source it before oh-my-zsh.
 
 **The cache.** For each tool in its table that is on PATH, the drop-in SHALL keep `~/.cache/devbox/zsh-completions/_<tool>`:
 - It SHALL generate the file with the tool's own completion command when the file is missing or older than the tool's binary.
@@ -104,10 +104,10 @@ The `shell` item SHALL install `~/.config/devbox/completions.zsh`, and the rende
 
 **HashiCorp-style tools.** For `terragrunt`, `vault` and `packer` when present, it SHALL register `complete -o nospace -C <bin> <bin>` through `bashcompinit`, after `compinit`.
 
-**Priming.** devbox-setup SHALL fill the cache when it installs `shell`, and again on every later run that includes `shell`.
+**Priming.** devbox-setup SHALL fill the cache when it installs `zshcfg`, and again on every later run that includes `zshcfg`.
 
 #### Scenario: Tool without a plugin completes
-- **WHEN** `shell` and `k8s` are installed and the user types `k9s ` and presses Tab
+- **WHEN** `zshcfg` and `k8s` are installed and the user types `k9s ` and presses Tab
 - **THEN** k9s's subcommands are offered
 
 #### Scenario: Upgrade refreshes the completion
@@ -123,14 +123,14 @@ The `shell` item SHALL install `~/.config/devbox/completions.zsh`, and the rende
 - **THEN** no completion command is run
 
 #### Scenario: terragrunt completes
-- **WHEN** `shell` and `iaclint` are installed and the user types `terragrunt ` and presses Tab
+- **WHEN** `zshcfg` and `iaclint` are installed and the user types `terragrunt ` and presses Tab
 - **THEN** terragrunt's commands are offered
 
 ### Requirement: Fuzzy Tab completion item
 The catalog SHALL offer `fzftab`:
 - tab: Shell & CLI
 - label: "zsh fuzzy Tab completion (fzf-tab)"
-- needs: `shell` and `cli`
+- needs: `zshcfg` and `cli`
 
 It SHALL clone `Aloxaf/fzf-tab` into oh-my-zsh's `custom/plugins`. While it is installed, the rendered `.zshrc` SHALL:
 - enable it before `zsh-autosuggestions`
@@ -146,6 +146,48 @@ It SHALL clone `Aloxaf/fzf-tab` into oh-my-zsh's `custom/plugins`. While it is i
 - **THEN** Tab still opens fzf-tab's list, and `**` + Tab still triggers fzf's fuzzy path completion
 
 #### Scenario: Not installed
-- **WHEN** `shell` is installed without `fzftab`
+- **WHEN** `zshcfg` is installed without `fzftab`
 - **THEN** Tab shows zsh's normal completion menu
+
+### Requirement: Separate zsh items
+The Shell & CLI tab SHALL offer zsh as separate items, in this order, each of whose labels contains "zsh" so that searching `zsh` lists them all, together with `fzftab` and `shellcfg`:
+- `zsh` — "zsh (login shell)": installs zsh and makes it the user's login shell; nothing else.
+- `zshcfg` — "zsh config: oh-my-zsh + autosuggestions, syntax highlighting, history search, completions", needing `zsh`: installs oh-my-zsh and its plugins and writes `.zshrc` from the template, keeping an existing one as `.zshrc.orig`. The theme SHALL be powerlevel10k when it is installed and oh-my-zsh's default otherwise, so re-running `zshcfg` keeps the prompt.
+- `p10k` — "Powerlevel10k zsh prompt (lean, one line, Nerd Font icons)", needing `zshcfg`: see the next requirement.
+
+The `shellcfg` label SHALL read "Shell niceties for zsh and bash: z, fzf keys, direnv, eza/bat aliases".
+
+Saved answers containing the former `shell` item SHALL be read as `zsh zshcfg p10k`.
+
+#### Scenario: zsh only
+- **WHEN** only `zsh` is picked
+- **THEN** the user's login shell is zsh and no oh-my-zsh, `.zshrc` template or prompt theme is installed
+
+#### Scenario: Prompt pulls in the rest
+- **WHEN** only `p10k` is picked
+- **THEN** the plan contains `zsh`, `zshcfg` and `p10k`, in that order
+
+#### Scenario: Searching zsh
+- **WHEN** the user types `zsh` in the picker
+- **THEN** `zsh`, `zshcfg`, `p10k`, `fzftab` and `shellcfg` are the first five results
+
+#### Scenario: Old answers
+- **WHEN** saved answers contain `shell` and devbox-setup runs with `--yes`
+- **THEN** it applies `zsh`, `zshcfg` and `p10k`
+
+### Requirement: Powerlevel10k prompt preset
+The `p10k` item SHALL install powerlevel10k into oh-my-zsh's `custom/themes` and set `ZSH_THEME` to it in `.zshrc`. When `~/.p10k.zsh` does not exist, it SHALL write one that sources powerlevel10k's own `config/p10k-lean.zsh` and then sets:
+- left prompt: `os_icon dir vcs prompt_char` on one line; right prompt: lean's segments without `newline`, plus `time`
+- `POWERLEVEL9K_MODE=nerdfont-v3`, `PROMPT_ADD_NEWLINE=false`, ruler and gap colour 242, a branch icon, Nerd Font battery stages
+- `TRANSIENT_PROMPT=always`, `INSTANT_PROMPT=quiet`
+
+An existing `~/.p10k.zsh` (for example from `p10k configure`) SHALL be kept. The rendered `.zshrc` SHALL start p10k's instant prompt when its cache file exists, and do nothing otherwise.
+
+#### Scenario: No wizard
+- **WHEN** `p10k` is installed and the user opens zsh for the first time
+- **THEN** a one-line lean prompt with the OS icon and the time is shown, and the configuration wizard does not start
+
+#### Scenario: Own config kept
+- **WHEN** `~/.p10k.zsh` already exists and `p10k` is installed
+- **THEN** the file is unchanged
 
