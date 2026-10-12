@@ -467,9 +467,13 @@ clears the search; Esc on an empty search quits.
    security updates, quiet needrestart, SSH keys only, ufw, fail2ban.
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
    delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
-   zsh + oh-my-zsh + powerlevel10k (with autosuggestions and syntax
-   highlighting), a curated vim config, man pages + tldr. zsh's plugins
-   follow what's installed: git, wd, sudo, extract and fzf history search
+   a curated vim config, man pages + tldr. zsh comes as separate items (type
+   `zsh` to see them all): zsh itself as the login shell; "zsh config"
+   (oh-my-zsh with autosuggestions, syntax highlighting, fzf history search
+   and completions); and the Powerlevel10k prompt, which comes ready in a
+   one-line lean style with the OS icon, time and Nerd Font icons (needs a
+   Nerd Font in your terminal; `p10k configure` restyles it, and an existing
+   `~/.p10k.zsh` is kept). zsh's plugins follow what's installed: git, wd, sudo, extract and fzf history search
    always, and aws, terraform, opentofu, kubectl, kubectx, helm, docker, gh,
    mise, rust and golang whenever the tool is on PATH, so a tool added later
    completes in the next shell. Tools without an oh-my-zsh plugin (k9s, stern,

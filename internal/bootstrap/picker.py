@@ -162,7 +162,7 @@ def score(it, q):
     q = q.lower()
     primary, secondary = names_of(it)
     cands = [name_score(q, n) for n in primary]
-    cands += [s - 200 for s in (name_score(q, n) for n in secondary) if s is not None]
+    cands += [s - 150 for s in (name_score(q, n) for n in secondary) if s is not None]
     if it["tab"] == MISE:  # the label holds the description: names only
         cands += [fuzzy(q, n) for n in primary + secondary]
     else:
@@ -172,13 +172,13 @@ def score(it, q):
     cands = [c for c in cands if c is not None]
     if not cands:
         return None
-    return max(cands) + (0 if it["tab"] == MISE else 150)
+    return max(cands) + (0 if it["tab"] == MISE else 200)
 
 
 def search(items, q, limit=MAX_RESULTS):
     scored = [(score(it, q), n, it) for n, it in enumerate(items)]
     scored = [x for x in scored if x[0] is not None]
-    scored.sort(key=lambda x: (-x[0], len(x[2]["label"]), x[1]))
+    scored.sort(key=lambda x: (-x[0], x[2]["tab"] == MISE, len(x[2]["label"]), x[1]))
     return [it for _, _, it in scored[:limit]]
 
 

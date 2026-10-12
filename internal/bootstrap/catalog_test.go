@@ -1,6 +1,9 @@
 package bootstrap
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -78,5 +81,53 @@ func TestCatalogConsistent(t *testing.T) {
 		if !used[s] {
 			t.Errorf("screen %s has no items", s)
 		}
+	}
+}
+
+// zsh is three items: the shell, its config, and the prompt, each pulling
+// in the one before; saved answers with the old "shell" item get all three.
+func TestZshItems(t *testing.T) {
+	b, _ := files.ReadFile("devbox-setup")
+	script := string(b)
+	needs, order, labels := map[string]string{}, map[string]int{}, map[string]string{}
+	for n, r := range catalogRows(t, script, "CATALOG_ROWS") {
+		needs[r[0]], order[r[0]], labels[r[0]] = r[5], n, r[2]
+	}
+	if _, ok := needs["shell"]; ok {
+		t.Error(`the old "shell" item is still in the catalog`)
+	}
+	for id, want := range map[string]string{"zsh": "", "zshcfg": "zsh", "p10k": "zshcfg", "fzftab": "zshcfg cli"} {
+		if got, ok := needs[id]; !ok || got != want {
+			t.Errorf("%s: needs %q, want %q (present %v)", id, got, want, ok)
+		}
+	}
+	seq := []string{"zsh", "zshcfg", "p10k", "fzftab"}
+	for i := 1; i < len(seq); i++ {
+		if order[seq[i-1]] >= order[seq[i]] {
+			t.Errorf("%s must come before %s in the catalog", seq[i-1], seq[i])
+		}
+	}
+	for _, id := range []string{"zsh", "zshcfg", "p10k", "fzftab", "shellcfg"} {
+		if !strings.Contains(strings.ToLower(labels[id]), "zsh") {
+			t.Errorf("%s: label %q must mention zsh so searching zsh finds it", id, labels[id])
+		}
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+	fn := script[strings.Index(script, "\nload_answers() {")+1:]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	answers := filepath.Join(t.TempDir(), "answers")
+	if err := os.WriteFile(answers, []byte("A_PICKS='cli shell fzftab'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bash, "-c", fn+`A_WIRE_AGENTS=x ANSWERS=$1; load_answers; echo "$A_PICKS"`, "-", answers).CombinedOutput()
+	if err != nil {
+		t.Fatalf("load_answers: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "cli zsh zshcfg p10k fzftab" {
+		t.Errorf("migrated picks = %q, want %q", got, "cli zsh zshcfg p10k fzftab")
 	}
 }

@@ -1,6 +1,12 @@
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="{{ .devbox_zsh_theme }}"
 
+# Powerlevel10k instant prompt: the prompt appears at once while the rest
+# loads. Only with the p10k theme and once p10k has written its cache.
+if [[ $ZSH_THEME == powerlevel10k/* && -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 # Completions for installed tools that have no oh-my-zsh plugin (cached;
 # see the file). Before oh-my-zsh, which runs compinit.
 [ -f ~/.config/devbox/completions.zsh ] && source ~/.config/devbox/completions.zsh

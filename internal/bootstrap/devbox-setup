@@ -33,9 +33,9 @@ ECC_VERSION=2.2.3
 # pmox's snapshot of mise's registry, with descriptions (see mise_registry_file).
 MISE_REGISTRY_URL=https://raw.githubusercontent.com/eugenetaranov/pmox/main/internal/bootstrap/mise-registry.tsv
 
-# Kept in step with tack-roles: roles/devbox/defaults/main.yaml, plus
-# autosuggestions and syntax-highlighting (which must stay last).
-ZSH_THEME_NAME="powerlevel10k/powerlevel10k"
+# The oh-my-zsh theme: powerlevel10k once the p10k item has cloned it.
+P10K_THEME="powerlevel10k/powerlevel10k"
+DEFAULT_ZSH_THEME="robbyrussell"
 # pmox's own config files (conf/ in the pmox repo).
 CONF=$SHARE/conf
 DROPIN_LINE='[ -r ~/.config/devbox/shell.sh ] && . ~/.config/devbox/shell.sh'
@@ -72,10 +72,12 @@ CATALOG_ROWS=(
   "tmux|shell|tmux|apt|tmux||"
   "zellij|shell|zellij (tmux alternative)|mise|zellij@latest||"
   "mosh|shell|mosh (SSH that survives sleep and roaming)|apt|mosh||"
-  "shell|shell|zsh + oh-my-zsh + p10k (prompt wizard on first login)|fn|||apt zsh · git clone ~/.oh-my-zsh · .zshrc.orig kept"
+  "zsh|shell|zsh (login shell)|fn|||apt zsh · chsh to zsh"
+  "zshcfg|shell|zsh config: oh-my-zsh + autosuggestions, syntax highlighting, history search, completions|fn||zsh|git clone ~/.oh-my-zsh + plugins · ~/.zshrc (.zshrc.orig kept)"
+  "p10k|shell|Powerlevel10k zsh prompt (lean, one line, Nerd Font icons)|fn||zshcfg|git clone powerlevel10k · ~/.p10k.zsh if absent · p10k configure to restyle"
   "vimcfg|shell|Vim config + plugins (writes .vimrc)|fn||editors|vim-plug · curated ~/.vimrc · .vimrc.orig kept"
-  "shellcfg|shell|Shell niceties: z, fzf keys, direnv, eza/bat aliases|fn|||~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
-  "fzftab|shell|zsh fuzzy Tab completion (fzf-tab)|fn||shell cli|git clone Aloxaf/fzf-tab → ~/.oh-my-zsh/custom/plugins"
+  "shellcfg|shell|Shell niceties for zsh and bash: z, fzf keys, direnv, eza/bat aliases|fn|||~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
+  "fzftab|shell|zsh fuzzy Tab completion (fzf-tab)|fn||zshcfg cli|git clone Aloxaf/fzf-tab → ~/.oh-my-zsh/custom/plugins"
   "tmuxcfg|shell|tmux config (mouse, splits, 50k history)|fn||tmux|~/.tmux.conf · .tmux.conf.orig kept"
   "docs|shell|Man pages, completion, tldr|fn|||apt man-db manpages-dev bash-completion command-not-found plocate tealdeer · unminimize if needed"
 
@@ -223,7 +225,7 @@ load_answers() {
     case "$id" in
       kubectl|kubectx|helm|k9s) out="$out k8s" ;;
       devbox) out="$out essentials cli editors tmux zellij" ;;
-      shell) out="$out shell vimcfg" ;;
+      shell) out="$out zsh zshcfg p10k" ;; # split into three in v0.38
       typescript) out="$out node" ;;
       kotlin) out="$out java" ;;
       editors) out="$out editors neovim" ;; # Neovim moved to its own (mise) item
@@ -657,25 +659,42 @@ install_cli() {
   ln -sfn /usr/bin/batcat "$BIN/bat"
 }
 
-install_shell() {
+install_zsh() {
   local home; home=$(user_home)
   apt_install zsh git
   usermod -s /usr/bin/zsh "$A_USER"
+  # Without a .zshrc, zsh opens its new-user menu at first login.
+  [ -e "$home/.zshrc" ] || as_user touch "$home/.zshrc"
+}
+
+install_zshcfg() {
+  local home theme=$DEFAULT_ZSH_THEME; home=$(user_home)
   [ -d "$home/.oh-my-zsh" ] || as_user git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$home/.oh-my-zsh"
-  [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] || \
-    as_user git clone -q --depth 1 https://github.com/romkatv/powerlevel10k.git "$home/.oh-my-zsh/custom/themes/powerlevel10k"
   local repo
   for repo in joshskidmore/zsh-fzf-history-search zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting; do
     [ -d "$home/.oh-my-zsh/custom/plugins/${repo#*/}" ] || \
       as_user git clone -q --depth 1 "https://github.com/$repo.git" "$home/.oh-my-zsh/custom/plugins/${repo#*/}"
   done
   if [ -f "$home/.zshrc" ] && [ ! -f "$home/.zshrc.orig" ]; then cp -p "$home/.zshrc" "$home/.zshrc.orig"; fi
+  # Re-rendering keeps the prompt: the theme follows the p10k clone.
+  [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] && theme=$P10K_THEME
   # Plugins are chosen by the template at shell start (installed tools).
-  sed -e "s|{{ .devbox_zsh_theme }}|$ZSH_THEME_NAME|" "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
+  sed -e "s|{{ .devbox_zsh_theme }}|$theme|" "$SHARE/zshrc.tmpl" | put_file "$home/.zshrc" 0644 || true
   chown -h "$A_USER:" "$home/.zshrc"
   as_user install -D -m 0644 "$CONF/completions.zsh" "$home/.config/devbox/completions.zsh"
   # The template replaced .zshrc: keep the shell drop-in if it is set up.
   [ -f "$home/.config/devbox/shell.sh" ] && add_dropin "$home/.zshrc"
+  return 0
+}
+
+# install_p10k — the theme, a ready ~/.p10k.zsh (lean preset + our style;
+# kept if the user already has one), and the theme line in .zshrc.
+install_p10k() {
+  local home; home=$(user_home)
+  [ -d "$home/.oh-my-zsh/custom/themes/powerlevel10k" ] || \
+    as_user git clone -q --depth 1 https://github.com/romkatv/powerlevel10k.git "$home/.oh-my-zsh/custom/themes/powerlevel10k"
+  [ -e "$home/.p10k.zsh" ] || as_user install -m 0644 "$CONF/p10k-devbox.zsh" "$home/.p10k.zsh"
+  [ -f "$home/.zshrc" ] && as_user sed -i "s|^ZSH_THEME=.*|ZSH_THEME=\"$P10K_THEME\"|" "$home/.zshrc"
   return 0
 }
 

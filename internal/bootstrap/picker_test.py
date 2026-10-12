@@ -43,15 +43,16 @@ class SearchTest(unittest.TestCase):
         cls.items = everything()
 
     def test_zsh_catalog_first(self):
-        top = ids(picker.search(self.items, "zsh"), 2)
-        self.assertCountEqual(top, ["shell", "fzftab"])
+        top = ids(picker.search(self.items, "zsh"), 5)
+        self.assertCountEqual(top, ["zsh", "zshcfg", "p10k", "fzftab", "shellcfg"])
+        self.assertEqual(top[0], "zsh")
 
     def test_catalog_before_mise(self):
         res = picker.search(self.items, "zsh")
         kinds = [i["tab"] == picker.MISE for i in res]
         first_mise = kinds.index(True)
         self.assertTrue(all(kinds[first_mise:first_mise + 1]))
-        self.assertIn("shell", ids(res, first_mise))
+        self.assertIn("zsh", ids(res, first_mise))
 
     def test_tool_inside_catalog_item(self):
         self.assertEqual(ids(picker.search(self.items, "k9s"), 1), ["k8s"])

@@ -54,7 +54,7 @@ func needZsh(t *testing.T) string {
 
 func TestZshFilesParse(t *testing.T) {
 	z := needZsh(t)
-	for _, p := range []string{"conf/completions.zsh", "assets/zshrc.tmpl", "conf/shell.sh"} {
+	for _, p := range []string{"conf/completions.zsh", "assets/zshrc.tmpl", "conf/shell.sh", "conf/p10k-devbox.zsh"} {
 		f := filepath.Join(t.TempDir(), filepath.Base(p))
 		if err := os.WriteFile(f, []byte(readEmbedded(t, p)), 0o644); err != nil {
 			t.Fatal(err)
@@ -127,5 +127,81 @@ func TestCompletionCache(t *testing.T) {
 	run()
 	if n := countCalls("just"); n != 2 {
 		t.Errorf("just ran %d times after an upgrade, want 2", n)
+	}
+}
+
+// The p10k item's config is the lean preset from the clone plus our
+// overrides; `p10k configure` must still write ~/.p10k.zsh, not the preset.
+func TestP10kConfig(t *testing.T) {
+	c := readEmbedded(t, "conf/p10k-devbox.zsh")
+	src := strings.Index(c, "source ~/.oh-my-zsh/custom/themes/powerlevel10k/config/p10k-lean.zsh")
+	if src < 0 {
+		t.Fatal("must source p10k's lean preset from the clone")
+	}
+	for _, want := range []string{
+		"POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(os_icon dir vcs prompt_char)",
+		"(${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS:#newline} time)",
+		"POWERLEVEL9K_MODE=nerdfont-v3",
+		"POWERLEVEL9K_PROMPT_ADD_NEWLINE=false",
+		"POWERLEVEL9K_TRANSIENT_PROMPT=always",
+		"POWERLEVEL9K_INSTANT_PROMPT=quiet",
+	} {
+		if i := strings.Index(c, want); i < src {
+			t.Errorf("missing (after the preset): %s", want)
+		}
+	}
+	if i := strings.Index(c, "POWERLEVEL9K_CONFIG_FILE=${${(%):-%x}:a}"); i < src {
+		t.Error("POWERLEVEL9K_CONFIG_FILE must be reset after the preset sets it to itself")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(c), "p10k reload") {
+		t.Error("must end with p10k reload so the overrides take effect")
+	}
+	script := readEmbedded(t, "devbox-setup")
+	if !strings.Contains(script, `[ -e "$home/.p10k.zsh" ] || `) {
+		t.Error("install_p10k must keep an existing ~/.p10k.zsh")
+	}
+}
+
+// The instant prompt runs first, and only for the p10k theme.
+func TestZshrcInstantPrompt(t *testing.T) {
+	tmpl := readEmbedded(t, "assets/zshrc.tmpl")
+	ip := strings.Index(tmpl, "p10k-instant-prompt-")
+	comp := strings.Index(tmpl, "source ~/.config/devbox/completions.zsh")
+	if ip < 0 || ip > comp {
+		t.Fatalf("instant prompt must come before everything else (ip=%d comp=%d)", ip, comp)
+	}
+	if !strings.Contains(tmpl, "$ZSH_THEME == powerlevel10k/*") {
+		t.Error("instant prompt must be guarded on the p10k theme")
+	}
+}
+
+// Sourced after a preset that defines BATTERY_STAGES as an array (as
+// p10k-lean.zsh does), the overrides must not stop with a type error.
+func TestP10kConfigSources(t *testing.T) {
+	z := needZsh(t)
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".oh-my-zsh/custom/themes/powerlevel10k/config")
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preset := "typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status newline)\n" +
+		"typeset -g POWERLEVEL9K_BATTERY_STAGES=('a' 'b')\n" +
+		"typeset -g POWERLEVEL9K_CONFIG_FILE=${${(%):-%x}:a}\n"
+	if err := os.WriteFile(filepath.Join(cfg, "p10k-lean.zsh"), []byte(preset), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p10k := filepath.Join(home, ".p10k.zsh")
+	if err := os.WriteFile(p10k, []byte(readEmbedded(t, "conf/p10k-devbox.zsh")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(z, "-f", "-c", `source ~/.p10k.zsh && print -r -- "$POWERLEVEL9K_CONFIG_FILE|${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[*]}"`)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sourcing failed: %v\n%s", err, out)
+	}
+	want := p10k + "|status time"
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
