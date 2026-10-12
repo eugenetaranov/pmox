@@ -31,3 +31,21 @@ devbox-setup SHALL load `/etc/devbox-setup/catalog.d/*.toml` after the embedded 
 #### Scenario: Local item
 - **WHEN** `/etc/devbox-setup/catalog.d/team.toml` defines an item `teamtools` on the `dev` tab
 - **THEN** the Dev tools tab lists it and search finds it
+
+### Requirement: Credential step type
+The catalog SHALL support a `cred` step. It declares a target file, a mode, keys (each with name, whether it is secret, where to get it and whether it is required), an optional apply command and an optional logged-in check. It SHALL behave as the `devbox-credentials` capability specifies: ask or skip, write at the mode, and add a note when values are empty. It SHALL never store values outside the target file.
+
+#### Scenario: Ported item
+- **WHEN** `npmrc` is defined as a `cred` step
+- **THEN** its behaviour matches the `devbox-credentials` scenarios for `npmrc`
+
+### Requirement: Downloads are pinned or declared unverified
+Every `apt_repo` step SHALL declare `key_fingerprint`. The key SHALL be checked against it before it is installed, and a mismatch fails the item. Every step that downloads a file SHALL declare `sha256` or `unverified = "<reason>"`. Catalog validation SHALL reject a download with neither.
+
+#### Scenario: Missing pin
+- **WHEN** a catalog item downloads a release binary without `sha256` or `unverified`
+- **THEN** catalog validation fails naming the item
+
+#### Scenario: Wrong apt key
+- **WHEN** a vendor apt key's fingerprint does not match
+- **THEN** the item fails naming the repository, and the key is not installed

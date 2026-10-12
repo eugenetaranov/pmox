@@ -29,7 +29,7 @@ All `apt_repo` steps in a plan SHALL be applied before a single `apt-get update`
 - **THEN** `starship` is reported missing and the exit code is 1
 
 ### Requirement: Log and summary
-Every command the runner executes SHALL be appended with its output to `/var/log/devbox-setup.log`. On failure, the terminal SHALL show the last lines of the failing command's output. The run SHALL write `~/devbox-setup-summary.txt`, grouping what it installed by mise, apt, and other sources.
+Every command the runner executes SHALL be appended with its output to `/var/log/devbox-setup.log`. On failure, the terminal SHALL show the last lines of the failing command's output. The run SHALL write `~/devbox-setup.txt`, grouping what it installed by mise, apt, and other sources, followed by the "Secrets to fill in" section from `devbox-credentials`.
 
 #### Scenario: Failure output
 - **WHEN** a step's command fails
