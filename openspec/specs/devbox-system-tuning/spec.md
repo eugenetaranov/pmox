@@ -69,16 +69,10 @@ An `etckeeper` item SHALL install etckeeper and SHALL be ordered first among the
 - **WHEN** `etckeeper` and `journald` are installed in the same run
 - **THEN** `git -C /etc log` contains a commit that adds the journald drop-in
 
-### Requirement: Host-synced clock
-A `chrony` item SHALL install chrony, load `ptp_kvm` at boot, and configure `refclock PHC /dev/ptp0 … prefer` and `makestep 1 -1` in a chrony drop-in, so the host clock is the selected source. When `/dev/ptp0` is absent, it SHALL fall back to the default NTP pools and print a note.
-
-#### Scenario: After snapshot rollback
-- **WHEN** a VM with `chrony` installed resumes with a clock several minutes off
-- **THEN** chrony steps the clock to the host time within one poll interval
-
 ### Requirement: Admin package list hygiene
 The `debug` item SHALL install `bind9-dnsutils` instead of `dnsutils` and `iotop-c` instead of `iotop`, and SHALL add `iperf3 ethtool traceroute nmap iftop pv ltrace lnav duf`. `htop` SHALL be removed from `cli`, since `btop` in `debug` covers it, and `build-essential` SHALL be listed only in `essentials`.
 
 #### Scenario: Package list
 - **WHEN** the picker shows the `debug` item
 - **THEN** its source column lists `bind9-dnsutils` and `iotop-c`, and lists neither `dnsutils` nor `iotop`
+
