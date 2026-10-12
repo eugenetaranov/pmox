@@ -1,0 +1,1012 @@
+1password	1password-cli,op	Password manager developed by AgileBits Inc
+7zip	7z	7-Zip is a file archiver with a high compression ratio
+aapt2		Android Asset Packaging Tool (aapt)
+acli		Software to interact with Atlassian Cloud from the terminal
+act		Run your GitHub Actions locally
+action-validator		Tool to validate GitHub Action and Workflow YAML files
+actionlint		:octocat: Static checker for GitHub Actions workflow files
+adr-tools		Command-line tools for working with Architecture Decision Records
+ag		The Silver Searcher: A code searching tool similar to ack, with a focus on speed
+age		A simple, modern and secure encryption tool (and Go library) with small explicit keys, no config options, and UNIX-style composability
+age-plugin-yubikey		age-plugin-yubikey is a plugin for age clients like age and rage, which enables files to be encrypted to age identities stored on YubiKeys
+agebox		Age based repository file encryption gitops tool
+agent-browser		Browser automation CLI for AI agents
+aichat		Use GPT-4(V), Gemini, LocalAI, Ollama and other LLMs in the terminal
+air		Live reload for Go apps
+aks-engine		AKS Engine deploys and manages Kubernetes clusters in Azure
+allure		Allure Report is a popular open source tool for visualizing the results of a test run
+allurectl		allurectl is the command line wrapper of Allure TestOps' API allowing you to upload the test results in real time from a build job, and managing entities on Allure TestOps side (test cases, launches, projects)
+alp		Access Log Profiler
+amass		In-depth attack surface mapping and asset discovery
+amazon-ecr-credential-helper		Automatically gets credentials for Amazon ECR on docker push/docker pull
+amazon-ecs-cli	ecs-cli	The Amazon ECS CLI enables users to run their applications on ECS/Fargate using the Docker Compose file format, quickly provision resources, push/pull images in ECR, and monitor running applications on ECS/Fargate.
+amp		An agentic coding tool built by Sourcegraph
+android-cli		Official Android command-line tool for creating, building, and running Android apps, managing emulators, and installing SDK packages
+android-sdk		Android Command-line tools
+ansible		ansible python package contains the core runtime and CLI tools, such as ansible and ansible-playbook and extra modules, plugins, and roles
+ansible-core	ansible-base	ansible-core python package contains the core runtime and CLI tools, such as ansible and ansible-playbook
+ant		Apache Ant is a Java library and command-line tool whose mission is to drive processes described in build files as targets and extension points dependent upon each other
+antigravity-cli	agy	Google's agentic development platform CLI companion
+apko		Build OCI images from APK packages directly without Dockerfile
+apm		Agent Package Manager
+apollo-ios	apollo-ios-cli	Apollo iOS Code Generation
+apollo-router		A configurable, high-performance routing runtime for Apollo Federation
+apollo-rover		The CLI for Apollo GraphOS
+aqua		Declarative CLI Version manager written in Go. Support Lazy Install, Registry, and continuous update with Renovate. CLI version is switched seamlessly
+arduino	arduino-cli	Arduino command line tool
+argc		A Bash CLI framework, also a Bash command runner
+argo		Argo Workflows CLI. Workflow engine for Kubernetes
+argo-rollouts		Progressive Delivery for Kubernetes
+argocd		Declarative continuous deployment for Kubernetes
+asciidoctorj		AsciidoctorJ is the official library for running Asciidoctor on the JVM. Using AsciidoctorJ, you can convert AsciiDoc content or analyze the structure of a parsed AsciiDoc document from Java and other JVM languages
+aspire		Aspire is the tool for code-first, extensible, observable dev and deploy.
+assh		make your ssh client smarter
+ast-grep		A CLI tool for code structural search, lint and rewriting. Written in Rust
+astro		CLI that makes it easy to create, test and deploy Airflow DAGs to Astronomer
+atlas		A modern tool for managing database schemas
+atlas-community		A modern tool for managing database schemas (Community Edition)
+atmos		Workflow automation tool for DevOps. Keep configuration DRY with hierarchical imports of configurations, inheritance, and WAY more. Native support for Terraform and Helmfile
+atuin		✨ Magical shell history
+aube		A fast Node.js package manager
+auto-doc		GitHub action that turns your reusable workflows and custom actions into easy to read markdown tables
+aws-amplify	amplify	The AWS Amplify CLI is a toolchain for simplifying serverless web and mobile development
+aws-cdk	cdk	AWS CDK CLI, the command line tool for CDK apps
+aws-cli	aws,awscli	The AWS Command Line Interface (AWS CLI v2) is a unified tool that provides a consistent interface for interacting with all parts of Amazon Web Services
+aws-copilot		The AWS Copilot CLI is a tool for developers to build, release and operate production ready containerized applications on AWS App Runner, Amazon ECS, and AWS Fargate
+aws-iam-authenticator		A tool to use AWS IAM credentials to authenticate to a Kubernetes cluster
+aws-nuke		Remove all the resources from an AWS account
+aws-sam	aws-sam-cli	CLI tool to build, test, debug, and deploy Serverless applications using AWS SAM
+aws-sso		A powerful tool for using AWS Identity Center for the CLI and web console
+aws-vault		A vault for securely storing and accessing AWS credentials in development environments
+awscli-local		This package provides the awslocal command, which is a thin wrapper around the aws command line interface for use with LocalStack
+awsebcli		The AWS Elastic Beanstalk Command Line Interface (EB CLI) is a tool that helps you deploy and manage your Elastic Beanstalk applications and environments. It also provides integration with Git
+awsls		A list command for AWS resources
+awsrm		A remove command for AWS resources
+awsweeper		A tool for cleaning your AWS account
+azd		Azure Developer CLI - developer-centric command-line tool for creating Azure applications
+azure	azure-cli	azure-cli (az)
+azure-functions-core-tools		Command line tools for Azure Functions
+azure-kubelogin		A Kubernetes credential (exec) plugin implementing azure authentication
+babashka		Native, fast starting Clojure interpreter for scripting
+balena	balena-cli	The balena CLI is a Command Line Interface for balenaCloud or openBalena
+basecamp		Official command-line interface for Basecamp
+bashbot		A slack-bot written in golang for infrastructure/devops teams
+bashly		Bashly is a command line application (written in Ruby) that lets you generate feature-rich bash command line tools
+bat		A cat(1) clone with wings
+bat-extras		Bash scripts that integrate bat with various command line tools
+bats		Bash Automated Testing System
+bazel		a fast, scalable, multi-language and extensible build system
+bazel-watcher		Tools for building Bazel targets when source files change
+bazelisk		A user-friendly launcher for Bazel
+betterleaks		Betterleaks scans code, past or present, for secrets
+bfs		Breadth-first search for your files
+bibtex-tidy		Cleaner and Formatter for BibTeX files
+binnacle		An opinionated tool to interact with Kubernetes' Helm
+biome		A toolchain for web projects, aimed to provide functionalities to maintain them. Biome offers formatter and linter, usable via CLI and LSP
+bitwarden		Bitwarden CLI
+bitwarden-secrets-manager		CLI for interacting with the Bitwarden Secrets Manager
+black		The uncompromising Python code formatter
+blender		Blender is a free and open-source 3D computer graphics software
+bob		A version manager for neovim
+boilerplate		A tool for generating files and folders ("boilerplate") from a set of templates
+bombardier		Fast cross-platform HTTP benchmarking tool written in Go
+borg		Deduplicating archiver with compression and authenticated encryption
+bosh		The bosh CLI is the command line tool used for interacting with all things BOSH, from deployment operations to software release management
+bottom		Yet another cross-platform graphical process/system monitor
+boundary		Boundary enables identity-based access management for dynamic infrastructure
+bpkg		Lightweight bash package manager
+broot		A new way to see and navigate directory trees
+btop		A monitor of resources
+buck2		A fast, hermetic, multi-language build system
+buf		The best way of working with Protocol Buffers
+buildifier		buildifier: For formatting BUILD, BUILD.bazel and BUCK files in a standard way
+buildpack	pack,buildpacks	CLI for building apps using Cloud Native Buildpacks
+bun		Bun is a fast JavaScript all-in-one toolkit
+bundler		The best way to manage a Ruby application's gems
+cabal		Cabal(haskell): Common Architecture for Building Applications and Libraries
+caddy		Fast, multi-platform web server with automatic HTTPS
+calendarsync		Stateless CLI tool to sync calendars across different calendaring systems
+calicoctl		Cloud native networking and network security
+carapace		A multi-shell completion binary
+cargo-binstall		Binary installation for rust projects
+cargo-deny		Cargo plugin for linting your dependencies
+cargo-dist		📦 shippable application packaging
+cargo-insta		A snapshot testing library for rust
+cargo-make		Rust task runner and build tool
+cargo-msrv		Find the minimum supported Rust version for your project
+cargo-release		Cargo subcommand for releasing crates
+carthage		A simple, decentralized dependency manager for Cocoa
+ccache		ccache – a fast compiler cache
+certstrap		Tools to bootstrap CAs, certificate requests, and signed certificates
+cf		The official command line client for Cloud Foundry
+cfn-lint		Checks CloudFormation templates for practices and behaviour that could potentially be improved
+cfssl		CFSSL: Cloudflare's PKI and TLS toolkit
+cfssljson		cfssljson: Takes the JSON output from Cloudflare's cfssl and multirootca programs and writes certificates, keys, CSRs, and bundles to disk.
+chamber		CLI for managing secrets
+changie		Automated changelog tool for preparing releases with lots of customization options
+cheat		cheat allows you to create and view interactive cheatsheets on the command-line. It was designed to help remind *nix system administrators of options for commands that they use frequently, but not frequently enough to remember
+checkmake		Linter/analyzer for Makefiles
+checkov		Prevent cloud misconfigurations and find vulnerabilities during build-time in infrastructure as code, container images and open source packages with Checkov by Bridgecrew
+checkstyle		Checks Java source code against a coding standard
+chezmoi		Manage your dotfiles across multiple diverse machines, securely
+chezscheme		Chez Scheme is both a programming language and an implementation of that language, with supporting tools and documentation
+chicken		CHICKEN is a compiler for the Scheme programming language
+chisel		A fast TCP/UDP tunnel over HTTP
+choose		A human-friendly and fast alternative to cut (and sometimes awk)
+chromedriver		ChromeDriver is a standalone server that implements the W3C WebDriver and WebDriver BiDi standards
+cidr-merger		A simple command line tool to merge ip/ip cidr/ip range, supports IPv4/IPv6
+cidrchk		CLI tool for CIDR range operations (check, generate)
+cilium-cli		CLI to install, manage & troubleshoot Kubernetes clusters running Cilium
+cilium-hubble		Hubble - Network, Service & Security Observability for Kubernetes using eBPF
+circleci	circleci-cli	Use CircleCI from the command line
+clang		Clang is an 'LLVM native' C/C++/Objective-C compiler, which aims to deliver amazingly fast compiles, extremely useful error and warning messages and to provide a platform for building great source level tools
+clang-format		format C/C++/Java/JavaScript/JSON/Objective-C/Protobuf/C# code
+claude	claude-code	Claude Code is an agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster by executing routine tasks, explaining complex code, and handling git workflows -- all through natural language commands
+claude-powerline		Beautiful vim-style powerline statusline for Claude Code
+claude-squad		Manage multiple AI agents like Claude Code, Aider, Codex, and Amp. 10x your productivity
+cliamp		Retro terminal music player inspired by Winamp
+clickhouse		ClickHouse® is a high-performance, column-oriented SQL database management system (DBMS) for online analytical processing (OLAP)
+clipboard		Cut, copy, and paste anything, anytime, anywhere
+clj-kondo		Static analyzer and linter for Clojure code that sparks joy
+cljstyle		A tool for formatting Clojure code
+cloc		Count Lines of Code
+clojure		The Clojure Programming Language
+cloud-sql-proxy		A utility for connecting securely to your Cloud SQL instances
+cloudflare-cf		The agentic CLI for the entire Cloudflare API
+cloudflared		cloudflared connects your machine or user identity to Cloudflare's global network
+clusterawsadm		clusterawsadm provides helpers for bootstrapping Kubernetes Cluster API Provider AWS
+clusterctl		Home for Cluster API, a subproject of sig-cluster-lifecycle
+cmake		CMake is a tool to manage building of source code. Originally, CMake was designed as a generator for various dialects of Makefile, today CMake generates modern buildsystems such as Ninja as well as project files for IDEs such as Visual Studio and Xcode
+cmctl		the command line utility that makes cert-manager'ing easier
+cmdx		Task runner. It provides useful help messages and supports interactive prompts and validation of arguments
+cockroach		A distributed SQL database designed for speed, scale, and survival
+cocoapods		CocoaPods is a dependency manager for Swift and Objective-C Cocoa projects
+cocogitto		The Conventional Commits toolbox
+code		Fast, effective, mind-blowing, coding CLI. Browser integration, multi-agents, theming, and reasoning control. Orchestrate agents from OpenAI, Claude, Gemini or any provider.
+code-review-graph		code-review-graph: Stop burning tokens. Start reviewing smarter.
+codebuff		Codebuff is a CLI tool that writes code for you
+codefresh		The Codefresh CLI provides a full and flexible interface to interact with Codefresh
+codegraph		Pre-indexed code knowledge graph for coding agents
+codeql		CodeQL CLI
+coder		Provision remote development environments via Terraform
+codex		Lightweight coding agent that runs in your terminal
+codon		A high-performance, zero-overhead, extensible Python compiler with built-in NumPy support
+colima		Container runtimes on macOS (and Linux) with minimal setup
+committed		Nitpicking commit history since beabf39
+communique		Editorialized release notes powered by AI
+conan		Decentralized, open-source (MIT), C/C++ package manager
+conform		Policy enforcement for your pipelines
+conftest		Write tests against structured configuration data using the Open Policy Agent Rego query language
+consul		Consul is a distributed, highly available, and data center aware solution to connect and configure applications across dynamic, distributed infrastructure
+container		A tool for creating and running Linux containers using lightweight virtual machines on a Mac.
+container-structure-test		validate the structure of your container images
+container-use		Development environments for coding agents. Enable multiple agents to work safely and independently with your preferred stack.
+cookiecutter		Create projects swiftly from cookiecutters (project templates) with this command-line utility. Ideal for generating Python package projects and more
+copier		A library and CLI app for rendering project templates
+copilot	copilot-cli	GitHub Copilot CLI brings the power of Copilot coding agent directly to your terminal.
+coredns		CoreDNS: DNS and Service Discovery
+coreutils		Cross-platform Rust rewrite of the GNU coreutils
+cosign		Code signing and transparency for containers and binaries
+coursier		Pure Scala Artifact Fetching
+cowsay		cowsay is a configurable talking cow, originally written in Perl by Tony Monroe
+cpz		A zippy alternative to cp, a tool to copy files and directories
+crane		Go library and CLIs for working with container registries
+crictl		crictl is a command-line interface for CRI-compatible container runtimes. You can use it to inspect and debug container runtimes and applications on a Kubernetes node
+croc		Easily and securely send things from one computer to another 🐊 📦
+crossplane	crossplane-cli	The Crossplane CLI extends kubectl with functionality to build, push, and install Crossplane packages
+crush		The glamourous AI coding agent for your favourite terminal
+crystal		Crystal: A language for humans and computers
+cspell		A Spell Checker for Code!
+ctlptl		Making local Kubernetes clusters fun and easy to set up
+ctop		Top-like interface for container metrics
+cue		The home of the CUE language! Validate and define text-based and dynamic configuration
+curlie		The power of curl, the ease of use of httpie
+cursor-agent	cursor-cli	Cursor Agent is Cursor's terminal coding agent that can write, review, and modify code from the command line
+cyclonedx		CycloneDX CLI tool for SBOM analysis, merging, diffs and format conversions
+d2		Modern diagram scripting language that turns text to diagrams
+dagger		A portable devkit for CI/CD pipelines
+dagu		Yet another cron alternative with a Web UI, but with much more capabilities. It aims to solve greater problems
+danger-js		Danger runs during your CI process, and gives teams the chance to automate common code review chores
+danger-swift		Stop saying 'you forgot to …' in code review
+dapr		Command-line tools for Dapr
+dart		An approachable, portable, and productive language for high-quality apps on any platform
+dasel		Select, put and delete data from JSON, TOML, YAML, XML and CSV files with a single tool. Supports conversion between formats and can be used as a Go package
+databricks-cli		Databricks CLI
+daytona		Daytona is a Secure and Elastic Infrastructure for Running AI-Generated Code
+dbmate		A lightweight, framework-agnostic database migration tool
+dbt-fusion		dbt Fusion is a fast, integrated dbt runtime
+deck		decK: Configuration management and drift detection for Kong
+dekit	mprocs	Run multiple commands in parallel
+delta		A syntax-highlighting pager for git, diff, and grep output
+deno		A modern runtime for JavaScript and TypeScript (Builtin plugin)
+dependency-check		Software composition analysis utility that detects publicly disclosed vulnerabilities in application dependencies
+depot		Depot CLI, build your Docker images in the cloud
+desk		A lightweight workspace manager for the shell
+devcontainer-cli		CLI for creating and configuring dev containers from devcontainer.json
+devspace		DevSpace - The Fastest Developer Tool for Kubernetes Automate your deployment workflow with DevSpace and develop software directly inside Kubernetes
+dhall		Maintainable configuration files (haskell)
+diffoci		diff for Docker and OCI container images
+difftastic		a structural diff that understands syntax
+direnv		unclutter your .profile
+dive		A tool for exploring each layer in a docker image
+docker-cli		Docker CE CLI
+docker-compose		Define and run multi-container applications with Docker
+docker-slim		minT(oolkit): Mint awesome, secure and production ready containers just the way you need them! Don't change anything in your container image and minify it by up to 30x (and for compiled languages even more) making it secure too! (free and open source)
+dockle		Container Image Linter for Security, Helping build the Best-Practice Docker Image, Easy to start
+doctl		The official command line interface for the DigitalOcean API
+docuum		Docuum performs least recently used (LRU) eviction of Docker images
+doggo		:dog: Command-line DNS Client for Humans. Written in Golang
+doppler		The official CLI for interacting with your Doppler secrets and configuration
+dotenv-linter		Lightning-fast linter for .env files. Written in Rust
+dotenvx		a secure dotenv–from the creator of `dotenv`
+dotnet	dotnet-core	.NET SDK
+dotslash		Simplified executable deployment
+dprint		Pluggable and configurable code formatting platform written in Rust
+driftctl		Detect, track and alert on infrastructure drift
+drone		Command Line Tools for Drone CI
+dt		dt - duct tape for your unix pipes
+dua		View disk space usage and delete unwanted data, fast
+duckdb		DuckDB is an analytical in-process SQL database management system
+duf		Disk Usage/Free Utility - a better 'df' alternative
+dust		A more intuitive version of du in rust
+dvc		Data Versioning and ML Experiments
+dyff		A diff tool for YAML files, and sometimes JSON
+dynatrace-monaco		Monaco—This is the native Dynatrace Configuration as Code tool. Monaco is also the recommended tool for migrating from Dynatrace Managed to Dynatrace SaaS
+e1s		E1S - Easily Manage AWS ECS Resources in Terminal(~k9s for ECS)
+earthly		Repeatable builds
+ecspresso		ecspresso is a deployment tool for Amazon ECS
+edit		We all edit
+editorconfig-checker		A tool to verify that your files are in harmony with your .editorconfig
+ejson		EJSON is a small library to manage encrypted secrets using asymmetric encryption
+eksctl		The official CLI for Amazon EKS
+elasticsearch		Elasticsearch is an open source, distributed search and analytics engine built for speed, scale, and AI applications
+elixir		Elixir is a dynamic, functional language for building scalable and maintainable applications
+elixir-ls		A frontend-independent IDE 'smartness' server for Elixir. Implements the 'Language Server Protocol' standard and provides debugger support via the 'Debug Adapter Protocol'
+elm		Compiler for Elm, a functional language for reliable webapps
+emsdk		Emscripten is a complete compiler toolchain to WebAssembly, using LLVM, with a special focus on speed, size, and the Web platform
+engram		Persistent memory system for AI coding agents
+entireio-cli	entire	Entire is a new developer platform that hooks into your git workflow to capture AI agent sessions on every push, unifying your code with its context and reasoning.
+envsubst		Environment variables substitution for Go
+erlang		erlang
+esc		Pulumi ESC is a centralized, secure service for environments, secrets, and configuration management, optimized for multi-cloud infrastructures and applications
+etcd		Distributed reliable key-value store for the most critical data of a distributed system
+evans		Evans: more expressive universal gRPC client
+exiftool		ExifTool meta information reader/writer
+expert		Official Elixir Language Server Protocol implementation
+eza		A modern, maintained replacement for ls
+fastfetch		An actively maintained, feature-rich and performance oriented, neofetch like system information tool
+fd		A simple, fast and user-friendly alternative to 'find'
+ffmpeg		A complete, cross-platform solution to record, convert and stream audio and video
+figma-export		Command line utility to export colors, typography, icons and images from Figma to Xcode / Android Studio project
+fillin		fill-in your command and execute
+firebase		The Firebase Command Line Tools
+fission		Fast and Simple Serverless Functions for Kubernetes
+flamingo		Flux Subsystem for Argo
+flatc		The main compiler for FlatBuffers is called flatc and is used to convert schema definitions into generated code files for a variety of languages
+flutter		Flutter is an open source framework for building beautiful, natively compiled, multi-platform applications from a single codebase
+fluttergen		The Flutter code generator for your assets, fonts, colors, … — Get rid of all String-based APIs
+flux-operator		GitOps on Autopilot Mode
+flux-operator-mcp		GitOps on Autopilot Mode - MCP
+flux2		Open and extensible continuous delivery solution for Kubernetes. Powered by GitOps Toolkit
+fly		fly cli for concourse ci
+flyctl		Command line tools for fly.io services
+flyway		Flyway by Redgate • Database Migrations Made Easy
+fnox		Fort Knox for your secrets
+foundry		Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust
+func-e		func-e (pronounced funky) makes running Envoy® easy
+furyctl		furyctl is the SIGHUP Distribution cluster lifecycle manager
+fx		Command-line tool and terminal JSON viewer
+fzf		:cherry_blossom: A command-line fuzzy finder
+gallery-dl		Command-line program to download image galleries and collections from several image hosting sites
+gam		command line management for Google Workspace
+gator		Gatekeeper - Policy Controller for Kubernetes
+gcc-arm-none-eabi		Arm GNU Toolchain
+gcloud		GCloud CLI (Google Cloud SDK)
+gdu		Fast disk usage analyzer with console interface written in Go
+gemini-cli	gemini	Gemini CLI, a command-line AI workflow tool that connects to your tools, understands your code and accelerates your workflows
+gentle-ai		Ecosystem, frameworks, and workflows for AI coding agents
+getenvoy		historical CLI of getenvoy
+ggshield		Detect and validate 500+ types of hardcoded secrets with advanced checks. Use it as a pre-commit hook, GitHub Action, or CLI for proactive secret detection and security.
+ghalint		GitHub Actions linter
+ghc		The Glorious Glasgow Haskell Compiler.
+ghcup		GHCup is an installer for the general purpose language Haskell
+ghorg		Quickly clone an entire org/users repositories into one directory - Supports GitHub, GitLab, Bitbucket, and more
+ghq		Remote repository management made easy
+ghtkn		Create short-lived GitHub App User Access Tokens for secure local development
+ghui		Terminal UI for GitHub pull requests
+ginkgo		A Modern Testing Framework for Go
+git-chglog		CHANGELOG generator implemented in Go (Golang)
+git-cliff		A highly customizable Changelog Generator that follows Conventional Commit specifications
+git-filter-repo		Quickly rewrite git repository history (filter-branch replacement)
+git-lfs		Git extension for versioning large files
+git-town		Git branches made easy
+gitconfig		Cli to manage multiple gitconfigs with ease
+github-cli	gh	GitHub’s official command line tool
+github-markdown-toc		Easy TOC creation for GitHub README.md
+gitleaks		Find secrets with Gitleaks
+gitsign		Keyless Git signing using Sigstore
+gitu		A TUI Git client inspired by Magit
+gitui		Blazing 💥 fast terminal-ui for git written in rust
+gitversion		From git log to SemVer in no time
+glab		gitlab cli
+gleam		A friendly language for building type-safe, scalable systems
+glooctl		The Cloud-Native API Gateway and AI Gateway
+glow		Render markdown on the CLI, with pizzazz
+go		go lang (Builtin plugin)
+go-containerregistry		Go library and CLIs for working with container registries
+go-getter		Package for downloading things from a string URL using a variety of protocols
+go-jira		simple jira command line client in Go
+go-jsonnet		This an implementation of Jsonnet in pure Go
+go-junit-report		Convert Go test output to JUnit XML
+go-swagger		Swagger 2.0 implementation for go
+goconvey		Go testing in the browser. Integrates with `go test`. Write behavioral tests in Go
+gocryptfs		Encrypted overlay filesystem written in Go
+godot		Free and open source 2D and 3D game engine
+gofumpt		A stricter gofmt
+gojq		Pure Go implementation of jq
+gokey		A simple vaultless password manager in Go
+golangci-lint		Fast linters Runner for Go
+golangci-lint-langserver		golangci-lint language server
+golines		A golang formatter that fixes long lines
+gomigrate		Database migrations. CLI and Golang library
+gomplate		A flexible commandline tool for template rendering. Supports lots of local and remote datasources
+google-java-format		Reformats Java source code to comply with Google Java Style
+gopass		The slightly more awesome standard unix password manager for teams
+goreleaser		Deliver Go binaries as fast and easily as possible
+goss		Quick and Easy server testing/validation
+gotestsum		'go test' runner with output optimized for humans, JUnit XML for CI integration, and a summary of the test results
+gping		Ping, but with a graph
+graalvm		An advanced JDK with ahead-of-time Native Image compilation
+gradle		Gradle is the open source build system of choice for Java, Android, and Kotlin developers
+grafana-kubernetes-plugin		The Grafana Kubernetes Plugin allows you to explore your Kubernetes resources and logs directly within Grafana.
+granted		The easiest way to access AWS
+graphite		Code review for the age of AI
+grex		A command-line tool and library for generating regular expressions from user-provided test cases
+grok		Grok Build is an agentic coding tool that runs in your terminal
+gron		Make JSON greppable
+groovy		A flexible and extensible Java-like language for the JVM
+grpc-health-probe		A command-line tool to perform health-checks for gRPC applications in Kubernetes and elsewhere
+grpcurl		Like cURL, but for gRPC: Command-line tool for interacting with gRPC servers
+grype		A vulnerability scanner for container images and filesystems
+gsudo		Sudo for Windows - a privilege elevation tool
+gum		A tool for glamorous shell scripts
+gup		gup - Update binaries installed by "go install" with goroutines
+gwvault		ansible-vault CLI reimplemented in go
+hadolint		Dockerfile linter, validate inline bash, written in Haskell
+harper-cli		harper-cli is a small, experimental frontend for Harper. It can be used in any situation where you might need to check a large number of files automatically (like in continuous integration)
+harper-ls		harper-ls is the Language Server Protocol frontend for Harper
+has		checks presence of various command line tools and their versions on the path
+hasura-cli		Hasura GraphQL Engine CLI
+hatch		Modern, extensible Python project management.
+haxe		Haxe - The Cross-Platform Toolkit
+hcl2json		Convert hcl2 to json
+hcloud		A command-line interface for Hetzner Cloud
+helix		A post-modern modal text editor
+helm		The Kubernetes Package Manager
+helm-cr		Hosting Helm Charts via GitHub Pages and Releases
+helm-ct		CLI tool for linting and testing Helm charts
+helm-diff		A helm plugin that shows a diff explaining what a helm upgrade would change
+helm-docs		A tool for automatically generating markdown documentation for helm charts
+helm-ls		Helm-ls is a helm language server protocol LSP implementation
+helmfile		Declaratively deploy your Kubernetes manifests, Kustomize configs, and Charts as Helm releases. Generate all-in-one manifests for use with ArgoCD
+helmsman		Helmsman is a Helm Charts (k8s applications) as Code tool which allows you to automate the deployment/management of your Helm charts from version controlled code
+helmwave		New wave for @helm
+herdr		Agent multiplexer that lives in your terminal
+heroku	heroku-cli	The Heroku Command Line Interface (CLI) is an essential part of using Heroku. With it, you can create and manage Heroku apps directly from the terminal
+hexyl		A command-line hex viewer
+hey-cli		A CLI and TUI for HEY
+himalaya		CLI to manage emails
+hishtory		Your shell history: synced, queryable, and in context
+hivemind		Process manager for Procfile-based applications
+hk		git hook and pre-commit lint manager
+hledger		Robust, fast, intuitive plain text accounting tool with CLI, TUI and web interfaces
+hledger-flow		An hledger/ledger-cli workflow focusing on automated statement import and classification
+hlint		Haskell source code suggestions
+hostctl		Your dev tool to manage /etc/hosts like a pro
+htmlq		Like jq, but for HTML
+httpie-go		httpie-like HTTP client written in Go
+hub		A command-line tool that makes git easier to use with GitHub
+hugo		The world’s fastest framework for building websites
+hugo-extended		The world’s fastest framework for building websites
+hugo-extended-withdeploy		The world’s fastest framework for building websites
+hunk	hunkdiff	Review-first terminal diff viewer for agentic coders
+hurl		Hurl, run and test HTTP requests with plain text
+hwatch		A modern alternative to the watch command, records the differences in execution results and can check this differences at after
+hygen		The simple, fast, and scalable code generator that lives in your project
+hyperfine		A command-line benchmarking tool
+iam-policy-json-to-terraform		Small tool to convert an IAM Policy in JSON format into a Terraform aws_iam_policy_document
+iamlive		Generate an IAM policy from AWS calls using client-side monitoring (CSM) or embedded proxy
+ibmcloud		ibmcloud cli
+imagemagick		ImageMagick is a free, open-source software suite for creating, editing, converting, and displaying images. It supports 200+ formats and offers powerful command-line tools and APIs for automation, scripting, and integration across platforms
+imessage-exporter		Export iMessage data + run iMessage Diagnostics
+imgpkg		Store application configuration files in Docker/OCI registries
+infisical		The open source secret management platform: Sync secrets across your team/infrastructure and prevent secret leaks
+infracost		Cloud cost estimates for Terraform in pull requests. Love your cloud bill
+istioctl		Istio configuration command line utility for service operators to debug and diagnose their Istio mesh
+jactionlint		Static checker for GitHub Actions workflow files, an actively maintained fork of actionlint
+janet		A dynamic language and bytecode vm
+jaq		A jq clone focussed on correctness, speed, and simplicity
+java		jdk java
+jbang		Lets Students, Educators and Professional Developers create, edit and run self-contained source-only Java programs with unprecedented ease
+jc		CLI tool and python library that converts the output of popular command-line tools, file-types, and common strings to JSON, YAML, or Dictionaries. This allows piping of output to tools like jq and simplifying automation scripts
+jd		JSON diff and patch
+jfrog-cli		Frog CLI is a client that provides a simple interface that automates access to the JFrog products
+jib		jib is a general-purpose command-line utility for building Docker or OCI container images from file system content as well as JAR files
+jiq		jid on jq - interactive JSON query tool using jq expressions
+jj	jujutsu	A Git-compatible VCS that is both simple and powerful
+jjui	jujutsu-ui	Jujutsu UI (jjui) is a Text User Interface (TUI) designed for interacting with the Jujutsu version control system
+jless		jless is a command-line JSON viewer designed for reading, exploring, and searching through JSON data
+jmespath		Command line interface to JMESPath - http://jmespath.org
+jnv		interactive JSON filter using jq
+jq		Command-line JSON processor
+jqp		A TUI playground to experiment with jq
+jreleaser		Release projects quickly and easily with JReleaser
+json5		JSON5 is an extension to the popular JSON file format that aims to be easier to write and maintain by hand (e.g. for config files). It is not intended to be used for machine-to-machine communication. (Keep using JSON or other file formats for that. 🙂)
+jsonnet-bundler	jb	A jsonnet package manager
+jsonschema		The CLI for working with JSON Schema. Covers formatting, linting, testing, bundling, and more for both local development and CI/CD pipelines
+jules		Jules, the asynchronous coding agent from Google, in the terminal
+julia		The Julia Programming Language
+just		Just a command runner
+jwt		A super fast CLI tool to decode and encode JWTs built in Rust
+jwtui		A command line UI for decoding/encoding JSON Web Tokens
+jx		Jenkins X provides automated CI+CD for Kubernetes with Preview Environments on Pull Requests using Cloud Native pipelines from Tekton
+k0sctl		A bootstrapping and management tool for k0s clusters
+k2tf		Kubernetes YAML to Terraform HCL converter
+k3d		Little helper to run CNCF's k3s in Docker
+k3kcli		K3k, Kubernetes in Kubernetes, is a tool that empowers you to create and manage isolated K3s clusters within your existing Kubernetes environment
+k3s		The certified Kubernetes distribution built for IoT & Edge computing
+k3sup		bootstrap K3s over SSH in < 60s
+k6		A modern load testing tool, using Go and JavaScript
+k9s		Kubernetes CLI To Manage Your Clusters In Style
+kafkactl		Command Line Tool for managing Apache Kafka
+kapp		kapp is a simple deployment tool focused on the concept of "Kubernetes application" — a set of resources with the same label
+kbld		kbld seamlessly incorporates image building and image pushing into your development and deployment workflows
+kcl		The KCL Command Line Interface (CLI)
+kconf		Manage multiple kubeconfigs easily
+killport		A command-line tool to easily kill processes running on a specified port
+kind		Kubernetes IN Docker - local clusters for testing Kubernetes
+kingfisher		Secret scanner with live validation and blast radius analysis
+kiota		OpenAPI based HTTP Client code generator
+kn		Knative developer experience, docs, reference Knative CLI implementation
+ko		Build and deploy Go applications on Kubernetes
+koka		Koka language compiler and interpreter
+kompose		Go from Docker Compose to Kubernetes
+kopia		Kopia is a fast and secure open-source backup/restore tool that allows you to create encrypted snapshots of your data and save the snapshots to remote or cloud storage of your choice, to network-attached storage or server, or locally on your machine
+kops		Kubernetes Operations (kops) - Production Grade K8s Installation, Upgrades, and Management
+kotlin		Kotlin is a modern but already mature programming language designed to make developers happier. It's concise, safe, interoperable with Java and other languages, and provides many ways to reuse code between multiple platforms for productive programming
+kpt		Automate Kubernetes Configuration Editing
+krew		Find and install kubectl plugins
+kscript		Scripting enhancements for Kotlin
+ksops		KSOPS - A Flexible Kustomize Plugin for SOPS Encrypted Resources
+ktlint		An anti-bikeshedding Kotlin linter with built-in formatter
+kube-capacity		A simple CLI that provides an overview of the resource requests, limits, and utilization in a Kubernetes cluster
+kube-controller-tools		Tools to use with the controller-runtime libraries
+kube-linter		KubeLinter is a static analysis tool that checks Kubernetes YAML files and Helm charts to ensure the applications represented in them adhere to best practices
+kube-score		Kubernetes object analysis with recommendations for improved reliability and security. kube-score actively prevents downtime and bugs in your Kubernetes YAML and Charts. Static code analysis for Kubernetes
+kubebuilder		Kubebuilder - SDK for building Kubernetes APIs using CRDs
+kubecm		Manage your kubeconfig more easily
+kubecolor		Colorize your kubectl output
+kubeconform		A FAST Kubernetes manifests validator, with support for Custom Resources
+kubectl		kubectl cli
+kubectl-convert		A plugin for Kubernetes command-line tool kubectl, which allows you to convert manifests between different API versions. This can be particularly helpful to migrate manifests to a non-deprecated api version with newer Kubernetes release
+kubectl-kots		KOTS provides the framework, tools and integrations that enable the delivery and management of 3rd-party Kubernetes applications, a.k.a. Kubernetes Off-The-Shelf (KOTS) Software
+kubectl-kuttl	kuttl	Kubernetes Test TooL (kuttl)
+kubectl-rolesum	kubectl-bindrole	Summarize Kubernetes RBAC roles for the specified subjects
+kubectx		Faster way to switch between clusters and namespaces in kubectl
+kubelogin		kubectl plugin for Kubernetes OpenID Connect authentication (kubectl oidc-login)
+kubens		Faster way to switch between clusters and namespaces in kubectl
+kubent		Easily check your clusters for use of deprecated APIs
+kubeone		Kubermatic KubeOne automate cluster operations on all your cloud, on-prem, edge, and IoT environments
+kubergrunt		Kubergrunt is a standalone go binary with a collection of commands to fill in the gaps between Terraform, Helm, and Kubectl. https://www.gruntwork.io
+kubeseal		A Kubernetes controller and tool for one-way encrypted Secrets
+kubesec		Security risk analysis for Kubernetes resources
+kubeshark		The API traffic analyzer for Kubernetes providing real-time K8s protocol-level visibility, capturing and monitoring all traffic and payloads going in, out and across containers, pods, nodes and clusters. Inspired by Wireshark, purposely built for Kubernetes
+kubespy		Tools for observing Kubernetes resources in real time, powered by Pulumi
+kubeswitch		The kubectx for operators
+kubeval		Validate your Kubernetes configuration files, supports multiple Kubernetes versions
+kubevela		The Modern Application Platform
+kubie		A more powerful alternative to kubectx and kubens
+kustomize		Customization of kubernetes YAML configurations
+kwokctl		kwokctl is a CLI tool designed to streamline the creation and management of clusters, with nodes simulated by kwok
+kyverno		Cloud Native Policy Management
+lazydocker		The lazier way to manage everything docker
+lazygit		simple terminal UI for git commands
+lazyjournal		TUI for journalctl, file system logs, as well Docker and Podman containers for quick viewing and filtering with fuzzy find, regex support (like fzf and grep) and coloring the output, written in Go with the gocui library
+lazyssh		A terminal-based SSH manager inspired by lazydocker and k9s - Written in go
+ldc		LLVM-based compiler for the D programming language
+lefthook		Fast and powerful Git hooks manager for any type of projects
+leiningen		for automating Clojure projects without setting your hair on fire
+libsql-server		server mode of libSQL, which is a fork of SQLite that is both Open Source, and Open Contributions
+license-plist		A license list generator of all your dependencies for iOS applications
+lima		Linux virtual machines, with a focus on running containers
+linkerd		Ultralight, security-first service mesh for Kubernetes. Main repo for Linkerd 2.x
+liquibase		Liquibase helps millions of developers track, version, and deploy database schema changes
+lisette		Little language inspired by Rust that compiles to Go
+litestream		Streaming replication for SQLite
+llama.cpp		LLM inference in C/C++
+llmfit		A terminal tool that right-sizes LLM models to your system's RAM, CPU, and GPU
+lnav		Log file navigator
+localstack		The LocalStack CLI packaged using pyinstaller
+loki-logcli		LogCLI is a command-line tool for querying and exploring logs in Grafana Loki
+longbridge-terminal		AI-native CLI for Longbridge Securities — real-time market data, portfolio, and trading
+lore		A next-generation open source version control system from Epic Games
+ls-lint		An extremely fast directory and filename linter - Bring some structure to your project filesystem
+lsd		The next gen ls command
+lstk		The LocalStack CLI for managing and interacting with LocalStack deployments
+lua		Lua language
+lua-language-server		A language server that offers Lua language support - programmed in Lua
+luajit		a Just-In-Time Compiler for Lua
+luau		A fast, small, safe, gradually typed embeddable scripting language derived from Lua
+lychee		Fast, async, stream-based link checker written in Rust. Finds broken URLs and mail addresses inside Markdown, HTML, reStructuredText, websites and more
+maestro		Painless E2E Automation for Mobile and Web
+mage		a Make/rake-like dev tool using Go
+magika		Fast and accurate AI powered file content types detection
+mago		A blazing fast linter, formatter, and static analyzer for PHP, written in Rust
+mailpit		An email and SMTP testing tool with API for developers
+make		GNU Make is a tool which controls the generation of executables and other non-source files of a program from the program's source files
+mani		CLI tool to help you manage repositories
+mark		Sync your markdown files with Confluence pages
+markdownlint-cli2		A fast, flexible, configuration-based command-line interface for linting Markdown/CommonMark files with the markdownlint library
+marksman		Write Markdown with code assist and intelligence in the comfort of your favourite editor
+marp-cli		A CLI interface for Marp and Marpit based converters
+mas		Mac App Store command-line interface
+mask		A CLI task runner defined by a simple markdown file
+maturin		Build and publish crates with pyo3, cffi and uniffi bindings as well as rust binaries as python packages with minimal configuration.
+maven		Apache Maven core
+mc		Unix like utilities for object store (minio)
+mdbook		Create book from markdown files. Like Gitbook but implemented in Rust
+mdbook-linkcheck		A backend for `mdbook` which will check your links for you
+melange		build APKs from source code
+mermaid-ascii		Render Mermaid graphs inside your terminal
+meson		Meson is an open source build system meant to be both extremely fast, and, even more importantly, as user friendly as possible
+micro		A modern and intuitive terminal-based text editor
+micromamba		Lightweight conda-compatible package manager
+micronaut		A modern, JVM-based, full-stack framework for building modular, easily testable microservice and serverless applications
+microsandbox		Easy, fast and local-first microVM runtime
+miller		Miller is like awk, sed, cut, join, and sort for name-indexed data such as CSV, TSV, and tabular JSON
+mimirtool		Mimirtool is a command-line tool that operators and tenants can use to execute a number of common tasks that involve Grafana Mimir or Grafana Cloud Metrics
+minify		Go minifiers for web formats
+minikube		Run Kubernetes locally
+minio		MinIO AIStor is a high-performance S3-compatible object store licensed under the MinIO Commercial License
+miniserve		For when you really just want to serve some files over HTTP right now!
+minishift		Run OpenShift 3.x locally
+minisign		A dead simple tool to sign files and verify digital signatures
+mint		🍃 A refreshing programming language for the front-end web
+mirrord		Connect your local process and your cloud environment, and run local code in cloud conditions
+mitmproxy		mitmproxy is a free and open source interactive HTTPS proxy
+mkcert		A simple zero-config tool to make locally trusted development certificates with any names you'd like
+mockery		A mock code autogenerator for Go
+mockolo		Efficient Mock Generator for Swift
+mold		Mold: A Modern Linker
+mole		Deep clean and optimize your Mac
+mongodb		MongoDB
+mongosh		The MongoDB Shell
+mosh		Mobile Shell
+mpv		A free, open source, and cross-platform media player
+mr-boxington	mbx	A Cargo wrapper with a shared, self-pruning compilation cache
+mssqldef		Idempotent schema management for MsSQL and more
+muse		Meta's Muse Code AI coding agent
+mutagen		Fast file synchronization and network forwarding for remote development
+mvnd		Apache Maven Daemon
+mysql		MySQL Database
+mysql-client		MySQL Client
+mysqldef		Idempotent schema management for MySQL and more
+nancy		A tool to check for vulnerabilities in your Golang dependencies, powered by Sonatype OSS Index
+native-sdk		Toolkit for building native desktop apps
+nats-server		High-Performance server for NATS.io, the cloud and edge native messaging system
+navi		An interactive cheatsheet tool for the command-line
+neko		The Neko Virtual Machine
+nelm		Nelm is a Helm 4 alternative - it is a Kubernetes deployment tool that manages Helm Charts and deploys them to Kubernetes
+neo4j		Neo4j is a high-performance, native graph database with full ACID transactions, Cypher query language, and a flexible property graph model
+neonctl		Neon CLI tool. The Neon CLI is a command-line interface that lets you manage Neon Serverless Postgres directly from the terminal
+neovim		Vim-fork focused on extensibility and usability
+nerdctl		contaiNERD CTL - Docker-compatible CLI for containerd, with support for Compose, Rootless, eStargz, OCIcrypt, IPFS,
+newrelic	newrelic-cli	The New Relic Command Line Interface
+nfpm		nFPM is Not FPM - a simple deb, rpm and apk packager written in Go
+ni		ni - use the right package manager
+nim		The Nim programming language
+ninja		a small build system with a focus on speed
+node		Node.js® is a free, open-source, cross-platform JavaScript runtime environment that lets developers create servers, web apps, command line tools and scripts (Builtin plugin)
+nomad		Nomad is an easy-to-use, flexible, and performant workload orchestrator that can deploy a mix of microservice, batch, containerized, and non-containerized applications. Nomad is easy to operate and scale and has native Consul and Vault integrations
+nomad-pack		Nomad Pack is a templating and packaging tool used with HashiCorp Nomad
+nono		Sandbox any AI agent in seconds - zero setup, zero latency.
+notation		A CLI tool to sign and verify artifacts
+nova		Find outdated or deprecated Helm charts running in your cluster
+npm		the package manager for JavaScript
+nsc		Tool for creating nkey/jwt based configurations
+nub		A Rust CLI that augments Node.js - a fast script runner, a TypeScript-just-works runtime, and a pnpm-compatible package manager
+nubr		Run TypeScript on Node.js - the Nub project's runner for a file, a package.json script, or an installed bin, on plain Node
+numbat		A statically typed programming language for scientific computations with first class support for physical dimensions and units
+nushell	nu	A new type of shell
+oapi-codegen		oapi-codegen is a command-line tool and library to convert OpenAPI specifications to Go code, be it server-side implementations, API clients, or simply HTTP models
+oauth2c		User-friendly OAuth2 CLI
+oc		OpenShift Client CLI (oc)
+oci		Oracle Cloud Infrastructure CLI
+octosql		OctoSQL is a query tool that allows you to join, analyse and transform data from multiple databases and file formats using SQL
+odin		Odin Programming Language
+odo		A fast, and iterative CLI tool for container-based application development
+oh-my-pi		AI coding agent for the terminal — hash-anchored edits, optimized tool harness, LSP, Python, browser, subagents, and more
+oh-my-posh		The most customizable and fastest prompt engine for any shell
+oha		Ohayou(おはよう), HTTP load generator, inspired by rakyll/hey with tui animation
+okta-aws	okta-aws-cli	A CLI for having Okta as the IdP for AWS CLI operations
+okteto		Develop your applications directly in your Kubernetes Cluster
+ollama		Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models
+ols		Language server for Odin
+om		General command line utility for working with VMware Tanzu Operations Manager
+omnictl		CLI for Omni - SideroLabs' Kubernetes management platform for bare metal deployments
+onefetch		Command-line Git information tool
+onyx		The compiler and developer toolchain for Onyx
+opa		Open Policy Agent (OPA) is an open source, general-purpose policy engine
+opam		(ocaml) opam is a source-based package manager. It supports multiple simultaneous compiler installations, flexible package constraints, and a Git-friendly development workflow
+openbao		OpenBao exists to provide a software solution to manage, store, and distribute sensitive data including secrets, certificates, and keys
+opencode		AI coding agent, built for the terminal
+openfaas-cli		Official CLI for OpenFaaS
+openfga		A high performance and flexible authorization/permission engine built for developers and inspired by Google Zanzibar
+opengrep		Static code analysis engine to find security issues in code
+opensearch-cli		A full-featured command line interface (CLI) for OpenSearch
+openshift-install		OpenShift installer for deploying OpenShift clusters
+opentofu		OpenTofu lets you declaratively manage your cloud infrastructure
+operator-sdk		SDK for building Kubernetes applications. Provides high level APIs, useful abstractions, and project scaffolding
+oras		ORAS CLI
+ori		The easiest way to use OpenRouter locally
+ormolu		A formatter for Haskell source code
+orval		Generate type-safe TypeScript clients from OpenAPI specifications provided by https://orval.dev
+osv-scanner		Vulnerability scanner written in Go which uses the data provided by https://osv.dev
+overmind		Process manager for Procfile-based applications and tmux
+oxfmt		This is the formatter for oxc.
+oxipng		Oxipng is a multithreaded lossless PNG/APNG compression optimizer
+oxker		A simple tui to view & control docker containers
+oxlint		This is the linter for oxc.
+packer		Packer is a tool for creating identical machine images for multiple platforms from a single source configuration
+packslip		A signed release manifest for vendor binaries
+pandoc		Universal markup converter
+pastel		A command-line tool to generate, analyze, convert and manipulate colors
+patat		Terminal-based presentations using Pandoc
+pdm		A modern Python package and dependency manager supporting the latest PEP standards
+peco		Simplistic interactive filtering tool
+periphery		A tool to identify unused code in Swift projects
+perl		self-contained, portable perl binaries
+pgroll		PostgreSQL zero-downtime migrations made easy
+php		popular general-purpose scripting language that is especially suited to web development. Fast, flexible and pragmatic, PHP powers everything from your blog to the most popular websites in the world
+pi		Pi is a minimal terminal coding harness
+pinact		pinact is a CLI to edit GitHub Workflow and Composite action files and pin versions of Actions and Reusable Workflows. pinact can also update their versions and verify version annotations
+pinniped		Pinniped is the easy, secure way to log in to your Kubernetes clusters
+pint		Prometheus rule linter/validator
+pipectl		The One CD for All {applications, platforms, operations}
+pipenv		Python Development Workflow for Humans
+pipx		Install and Run Python Applications in Isolated Environments
+pitchfork		Daemons with DX
+pivnet		CLI to interact with Tanzu Network API V2 interface
+pixi		Package management made easy
+pkgx		Run Anything
+pkl		A configuration as code language with rich validation and tooling
+playwright		A high-level API to automate web browsers
+please		High-performance extensible build system for reproducible multi-language builds
+pluto		A cli tool to help discover deprecated apiVersions in Kubernetes
+pnpm		Fast, disk space efficient package manager
+pocketbase		Open Source realtime backend in 1 file
+podlet		Generate Podman Quadlet files from a Podman command, compose file, or existing object
+podman		Podman: A tool for managing OCI containers and pods
+podman-tui		Podman Terminal UI
+poetry		Python packaging and dependency management made easy
+polaris		Validation of best practices in your Kubernetes clusters
+popeye		A Kubernetes cluster resource sanitizer
+poppler		Poppler is a PDF rendering library based on the xpdf-3.0 code base
+porter		CNAB bundle authoring and management tool
+portless		Replace port numbers with stable, named .localhost URLs. For humans and agents.
+postgres		PostgreSQL is a powerful, open source object-relational database system with over 35 years of active development that has earned it a strong reputation for reliability, feature robustness, and performance
+powerline-go		A beautiful and useful low-latency prompt for your shell, written in go
+powerpipe		Powerpipe: Dashboards for DevOps. Visualize cloud configurations. Assess security posture against a massive library of benchmarks. Build custom dashboards with code
+powershell-core	powershell	PowerShell for every system
+pre-commit		A framework for managing and maintaining multi-language pre-commit hooks
+prek		⚡ A fast Git hook manager written in Rust, designed as a drop-in alternative to pre-commit, reimagined.
+prettier		Prettier is an opinionated code formatter. It enforces a consistent style by parsing your code and re-printing it with its own rules that take the maximum line length into account, wrapping code when necessary
+process-compose		Process Compose is a simple and flexible scheduler and orchestrator to manage non-containerized applications.
+promtool		The Prometheus monitoring system and time series database
+protoc	protobuf	Protocol Buffers Compiler - Google's data interchange format
+protoc-gen-connect-go		The Go implementation of Connect: Protobuf RPC that works
+protoc-gen-go		protoc-gen-go is a plugin for the Google protocol buffer compiler to generate Go code
+protoc-gen-go-grpc		This tool generates Go language bindings of services in protobuf definition files for gRPC
+protoc-gen-js		This directory contains the JavaScript Protocol Buffers runtime library
+protoc-gen-validate		Protocol Buffer Validation - Being replaced by github.com/bufbuild/protovalidate
+protolint		A pluggable linter and fixer to enforce Protocol Buffer style and conventions
+psqldef		Idempotent schema management for PostgreSQL
+pulumi		Pulumi - Infrastructure as Code in any programming language
+purescript		A strongly-typed language that compiles to JavaScript
+purty		PureScript pretty-printer
+python		python language
+qdns		A tiny command line DNS client with support for UDP, TCP, DoT, DoH, DoQ and ODoH
+qsv		Blazing-fast Data-Wrangling toolkit
+quarkus		The quarkus command lets you create projects, manage extensions and do essential build and development tasks using the underlying project build tool
+quicktype		Generate types and converters from JSON, Schema, and GraphQL provided by https://quicktype.io
+qwen	qwen-code	Qwen Code, an AI coding assistant for CLI and IDE
+racket		Minimal Racket distribution
+railway		Railway CLI
+rancher		Rancher CLI
+rbac-lookup		Easily find roles and cluster roles attached to any user, service account, or group name in your Kubernetes cluster
+rclone		"rsync for cloud storage" - Google Drive, S3, Dropbox, Backblaze B2, One Drive, Swift, Hubic, Wasabi, Google Cloud Storage, Yandex Files
+rebar		Erlang build tool that makes it easy to compile and test Erlang applications and releases
+reckoner		Declaratively install and manage multiple Helm chart releases
+redis		Cache & in-memory datastore
+redpanda-connect	benthos	Fancy stream processing made operationally mundane
+reg		Docker registry v2 command line client and repo listing generator with security checks
+regal		Regal is a linter and language server for Rego, with the goal of making your Rego magnificent
+regctl		Docker and OCI Registry Client in Go and tooling using those libraries
+regsync		regsync is a registry synchronization utility used to update mirrors of OCI compatible container registries
+release-plz		Publish Rust crates from CI with a Release PR.
+restate		A command-line tool to inspect Restate services status, invocations, deployment, and much more.
+restate-server		Restate is a lightweight runtime to turn AI agents, workflows, and backend services into durable processes.
+restatectl		A command-line tool for managing Restate clusters.
+restic		Fast, secure, efficient backup program
+restish		Restish is a CLI for interacting with REST-ish HTTP APIs with some nice features built-in
+resvg		An SVG rendering library.
+reviewdog		Automated code review tool integrated with any code analysis tools regardless of programming language
+revive		~6x faster, stricter, configurable, extensible, and beautiful drop-in replacement for golint
+richgo		Enrich `go test` outputs with text decorations
+ripgrep	rg	ripgrep recursively searches directories for a regex pattern while respecting your gitignore
+ripgrep-all		rga: ripgrep, but also search in PDFs, E-Books, Office documents, zip, tar.gz, etc
+ripsecrets		A command-line tool to prevent committing secret keys into your source code
+rmz		A zippy alternative to rm, a tool to remove files and directories
+rpk		Redpanda CLI and toolbox
+rtk		High-performance CLI proxy that reduces LLM token consumption by 60-90%
+ruby		Ruby language
+ruff		An extremely fast Python linter and code formatter, written in Rust
+rumdl		Markdown Linter and Formatter written in Rust
+rush		A cross-platform command-line tool for executing jobs in parallel
+rust		Rust language
+rust-analyzer		A Rust compiler front-end for IDEs
+rustfs		High-performance, distributed, S3-compatible object storage system written in Rust
+rustic		rustic - fast, encrypted, and deduplicated backups powered by Rust
+rye		a Hassle-Free Python Experience
+s5cmd		Parallel S3 and local filesystem execution tool
+saml2aws		CLI tool which enables you to login and retrieve AWS temporary credentials using a SAML IDP
+sampler		Tool for shell commands execution, visualization and alerting. Configured with a simple YAML file
+sbt		sbt, the interactive build tool
+scala		Scala language
+scala-cli		Scala CLI is a command-line tool to interact with the Scala language. It lets you compile, run, test, and package your Scala code (and more!)
+scalafmt		Code formatter for Scala
+scaleway	scaleway-cli	Command Line Interface for Scaleway
+scalingo-cli		Command Line client for Scalingo PaaS
+scarb		The Cairo package manager
+sccache		sccache is ccache with cloud storage
+schemacrawler		Free database schema discovery and comprehension tool
+scie-pants		Protects your Pants from the elements
+scooter		Interactive find-and-replace in the terminal
+scorecard		OpenSSF Scorecard - Security health metrics for Open Source
+sd		Intuitive find & replace CLI (sed alternative)
+semgrep		Lightweight static analysis for many languages. Find bug variants with patterns that look like source code.
+semver		semver bash implementation
+sentinel		Sentinel is a policy as code tool that lets you control what users of HashiCorp products are allowed to do. It enforces policies proactively, preventing end users from deploying changes that are not allowed
+sentry	sentry-cli	A command line utility to work with Sentry
+serverless		Serverless Framework
+setup-envtest		This is a small tool that manages binaries for envtest. It can be used to download new binaries, list currently installed and available ones, and clean up versions
+sheldon		Fast, configurable, shell plugin manager
+shell2http		Executing shell commands via HTTP server
+shellcheck		ShellCheck, a static analysis tool for shell scripts
+shellharden		The corrective bash syntax highlighter
+shellspec		A full-featured BDD unit testing framework for bash, ksh, zsh, dash and all POSIX shells
+sherif		Opinionated, zero-config linter for TypeScript and JavaScript monorepos
+shfmt		A shell parser, formatter, and interpreter with bash support; includes shfmt
+signadot		Command-line interface for Signadot
+sing-box		The universal proxy platform
+skaffold		Easy and Repeatable Kubernetes Development
+skate		A personal key value store
+skeema		Declarative pure-SQL schema management for MySQL and MariaDB (Community Edition)
+skim		Fuzzy Finder in rust
+sloth		Easy and simple Prometheus SLO (service level objectives) generator
+slsa-verifier		Verify provenance from SLSA compliant builders
+smithy		Smithy is a language for defining services and SDKs
+snyk		Snyk CLI scans and monitors your projects for security vulnerabilities
+sofka		A Kubernetes TUI, reimagined in Rust - built on kube-rs and ratatui, async-first from the ground up
+soft-serve		The mighty, self-hostable Git server for the command line
+solidity		Solidity, the Smart Contract Programming Language
+sonar-scanner-cli		Scanner CLI for SonarQube (Server, Cloud)
+sonarqube-cli		CLI tool to provide access to Sonar features
+sonobuoy		Sonobuoy is a diagnostic tool that makes it easier to understand the state of a Kubernetes cluster by running a set of Kubernetes conformance tests and other plugins in an accessible and non-destructive manner
+sops		Simple and flexible tool for managing secrets
+sopstool		SOPS multi-file wrapper
+sourcery		Meta-programming for Swift, stop writing boilerplate code
+spacectl		Spacelift client and CLI
+spago		🍝 PureScript package manager and build tool
+spark		Apache Spark - A unified analytics engine for large-scale data processing
+specstory		You don’t write prompts. You author intent. Enhance your AI development workflow with SpecStory
+spectral		A flexible JSON/YAML linter for creating automated style guides, with baked in support for OpenAPI (v3.1, v3.0, and v2.0), Arazzo v1.0, as well as AsyncAPI v2.x
+spicedb		Open source fine-grained permissions database inspired by Google Zanzibar
+spin		Spinnaker CLI
+spin-framework		Spin is the open source developer tool for building and running serverless applications powered by WebAssembly.
+spotify-downloader		Download your Spotify playlists and songs along with album art and metadata (from YouTube if a match is found)
+spotify-player		A Spotify player in the terminal with full feature parity
+spring-boot		Spring Boot CLI
+spruce		Standalone, daemon-less, unprivileged Dockerfile and OCI compatible container image builder
+sqlc		Generate type-safe code from SQL
+sqlcl		Oracle SQLcl command-line interface for Oracle Database
+sqlite		SQLite is a C-language library that implements a small, fast, self-contained, high-reliability, full-featured, SQL database engine. SQLite is the most used database engine in the world
+sqlite3def		The easiest idempotent SQLite3 Server schema management by SQL
+sshi		SSH CA Client/Server
+sshuttle		sshuttle: where transparent proxy meets VPN meets ssh
+sst		Build full-stack apps on your own infrastructure
+stack		The Haskell Tool Stack
+starknet-foundry		Starknet testing framework (like Truffle, Hardhat and DappTools but for Starknet)
+starknet-foundry-sncast		All-in-one tool for interacting with Starknet smart contracts, sending transactions and getting chain data
+starship		The minimal, blazing-fast, and infinitely customizable prompt for any shell
+staticcheck		Staticcheck - The advanced Go linter
+steampipe		Use SQL to instantly query your cloud services (AWS, Azure, GCP and more). Open source CLI. No DB required
+step		A zero trust swiss army knife for working with X509, OAuth, JWT, OATH OTP, etc
+stern		⎈ Multi pod and container log tailing for Kubernetes -- Friendly fork of https://github.com/wercker/stern
+stripe	stripe-cli	A command-line tool for Stripe
+stylua		A Lua code formatter
+sui		ui, a next-generation smart contract platform with high throughput, low latency, and an asset-oriented programming model powered by the Move programming language
+supabase		Supabase CLI. Manage postgres migrations, run Supabase locally, deploy edge functions. Postgres backups. Generating types from your database schema
+superfile		Pretty fancy and modern terminal file manager
+superhtml		HTML Validator, Formatter, LSP, and Templating Language Library
+svgo		command-line application for optimizing vector images
+svu		semantic version utility
+swag		Automatically generate RESTful API documentation with Swagger 2.0 for Go
+swift		Swift Lang (Core)
+swift-package-list		A command-line tool to get all used Swift Package dependencies
+swiftformat		A command-line tool and Xcode Extension for formatting Swift code
+swiftgen		The Swift code generator for your assets, storyboards, Localizable.strings, … — Get rid of all String-based APIs!
+swiftlint		A tool to enforce Swift style and conventions
+syft		CLI tool and library for generating a Software Bill of Materials from container images and filesystems
+syncthing		Open Source Continuous File Synchronization
+systemctl-tui		A fast, simple TUI for interacting with systemd services and their logs
+tailpipe		select * from logs! Tailpipe is an open source SIEM for instant log insights, powered by DuckDB. Analyze millions of events in seconds, right from your terminal
+tak		CLI performance, tracked
+talhelper		A tool to help creating Talos kubernetes cluster
+talosctl	talos	Talos is a modern OS for Kubernetes. talosctl is a CLI for out-of-band management of Kubernetes nodes created by Talos
+tanka		Flexible, reusable and concise configuration for Kubernetes
+tanzu		The Tanzu Core CLI project provides the core functionality of the Tanzu CLI. The CLI is based on a plugin architecture where CLI command functionality can be delivered through independently developed plugin binaries
+taplo		A TOML toolkit written in Rust
+tart		macOS and Linux VMs on Apple Silicon to use in CI and other automations
+task		A task runner / simpler Make alternative written in Go
+tauri-cli		Build smaller, faster, and more secure desktop and mobile applications with a web frontend
+tbls		A CI-Friendly tool to document a database written in Go
+tctl		Temporal CLI
+tealdeer		A very fast implementation of tldr in Rust.
+tekton	tekton-cli	A CLI for interacting with Tekton
+teleport-community		Teleport provides connectivity, authentication, access controls and audit for infrastructure (community version)
+teleport-ent		Teleport provides connectivity, authentication, access controls and audit for infrastructure (Enterprise version)
+telepresence		Local development against a remote Kubernetes or OpenShift cluster
+television		The revolution will (not) be televised
+teller		Cloud native secrets management for developers - never leave your command line for secrets
+temporal		Temporal service and CLI
+terraform		Terraform enables you to safely and predictably create, change, and improve infrastructure. It is an open source tool that codifies APIs into declarative configuration files that can be shared amongst team members, treated as code, edited, reviewed, and versioned
+terraform-docs		Generate documentation from Terraform modules in various output formats
+terraform-ls		Terraform Language Server
+terraform-lsp		Language Server Protocol for Terraform
+terraform-validator		A norms and conventions validator for Terraform
+terraformer		CLI tool to generate terraform files from existing infrastructure (reverse Terraform). Infrastructure to Code
+terragrunt		Terragrunt is a thin wrapper for Terraform that provides extra tools for working with multiple Terraform modules
+terramate		Open-source Infrastructure as Code (IaC) orchestration platform: GitOps workflows, orchestration, code generation, observability, drift detection, asset management, policies, Slack notifications, and more. Integrates with Terraform, OpenTofu, Terragrunt, Kubernetes, GitHub Actions, GitLab CI/CD, Bitbucket Pipelines, and any other CI/CD platform
+terrascan		Detect compliance and security violations across Infrastructure as Code to mitigate risk before provisioning cloud native infrastructure
+tf-summarize		A command-line utility to print the summary of the terraform plan
+tfc-agent		HCP Terraform Agents allow HCP Terraform to communicate with isolated, private, or on-premises infrastructure
+tfctl		A GitOps OpenTofu and Terraform controller for Flux
+tfenv		Terraform version manager
+tflint		A Pluggable Terraform Linter
+tfmigrate		A Terraform / OpenTofu state migration tool for GitOps
+tfnotify		A CLI command to parse Terraform execution result and notify it to GitHub
+tfsec		Security scanner for your Terraform code
+tfstate-lookup		Lookup resource attributes in tfstate
+tfswitch		A command line tool to switch between different versions of terraform (install with homebrew and more)
+tfupdate		Update version constraints in your Terraform configurations
+ticker		Terminal stock ticker with live updates and position tracking
+tigerbeetle		The financial transactions database designed for mission critical safety and performance.
+tilt		Define your dev environment as code. For microservice apps on Kubernetes
+timoni		Timoni is a package manager for Kubernetes, powered by CUE and inspired by Helm
+tiny		rtx-tiny is mostly a fake plugin to check mise in CI
+tinygo		Go compiler for small places. Microcontrollers, WebAssembly (WASM/WASI), and command-line tools. Based on LLVM
+tinymist		Tinymist is an integrated language service for Typst.
+tinytex		A lightweight, cross-platform, portable, and easy-to-maintain LaTeX distribution based on TeX Live
+tirith		Terminal security - catches homograph attacks, pipe-to-shell, ANSI injection
+tlrc		A tldr client written in Rust
+tmux		tmux is a terminal multiplexer. It lets you switch easily between several programs in one terminal, detach them (they keep running in the background) and reattach them to a different terminal
+tokei		Count your code, quickly
+tombi		TOML Formatter / Linter / Language Server
+tomcat		The Apache Tomcat® software is an open source implementation of the Jakarta Servlet, Jakarta Pages, Jakarta Expression Language, Jakarta WebSocket, Jakarta Annotations and Jakarta Authentication specifications. These specifications are part of the Jakarta EE platform
+tonnage		Tonnage is a small utility to summarize the resource capacity and allocation of a Kubernetes cluster
+topgrade		Upgrade all the things
+traefik		The Cloud Native Application Proxy
+transifex		The Transifex command-line client
+trdsql		CLI tool that can execute SQL queries on CSV, LTSV, JSON and TBLN. Can output to various formats
+tree-sitter		An incremental parsing system for programming tools
+tridentctl		Storage orchestrator for containers
+trivy		Find vulnerabilities, misconfigurations, secrets, SBOM in containers, Kubernetes, code repositories, clouds and more
+trufflehog		Find, verify, and analyze leaked credentials
+trunk		Trunk is a comprehensive code quality tool that runs linters, formatters, and security scanners to help maintain high-quality codebases (https://trunk.io)
+trzsz-go		trzsz-go is the go version of trzsz, makes all terminals that support local shell to support trzsz ( trz / tsz )
+trzsz-ssh	tssh	trzsz-ssh ( tssh ) is an ssh client designed as a drop-in replacement for the openssh client. It aims to provide complete compatibility with openssh, mirroring all its features, while also offering additional useful features. Such as login prompt, batch login, remember password, automated interaction, trzsz, zmodem(rz/sz), udp mode like mosh, etc.
+tsuru		tsuru-client is a tsuru command line tool for application developers
+ttyd		Share your terminal over the web
+tuist		A toolchain to generate Xcode projects from Swift packages
+turbo		Turborepo is a high-performance build system for JavaScript and TypeScript codebases.
+turso		Command line interface for Turso
+tusd		Reference server implementation in Go of tus: the open protocol for resumable file uploads
+twg		Command line interface to the Atlassian Teamwork Graph and Cloud services
+ty		An extremely fast Python type checker and language server, written in Rust
+typos		Source code spell checker
+typst		A new markup-based typesetting system that is powerful and easy to learn
+typstyle		Beautiful and reliable typst code formatter
+ubi		The Universal Binary Installer
+umoci		umoci modifies Open Container images
+unison		A friendly programming language from the future
+upctl		UpCloud command line client (upctl)
+updatecli		A Declarative Dependency Management tool
+upt		Universal Package-management Tool for any OS
+upx		UPX - the Ultimate Packer for eXecutables
+usage		A specification for CLIs
+usql		Universal command-line interface for SQL databases
+uv		An extremely fast Python package installer and resolver, written in Rust
+v	vlang	The V Programming Language. Simple, fast, safe, compiled. For developing maintainable software
+vacuum		vacuum is the worlds fastest OpenAPI 3, OpenAPI 2 / Swagger linter and quality analysis tool. Built in go, it tears through API specs faster than you can think. vacuum is compatible with Spectral rulesets and generates compatible reports
+vale		:pencil: A markup-aware linter for prose built with speed and extensibility in mind
+vals		Helm-like configuration values loader with support for various sources
+vault		A tool for secrets management, encryption as a service, and privileged access management
+vcluster		vCluster - Create fully functional virtual Kubernetes clusters - Each vcluster runs inside a namespace of the underlying k8s cluster. It's cheaper than creating separate full-blown clusters and it offers better multi-tenancy and isolation than regular namespaces
+vector		A high-performance observability data pipeline.
+velad		Lightweight KubeVela that runs as Daemon in single node with high availability
+velero		Backup and migrate Kubernetes applications and their persistent volumes
+vendir		Easy way to vendor portions of git repos, github releases, helm charts, docker image contents, etc. declaratively
+venom		Manage and run your integration tests with efficiency - Venom run executors (script, HTTP Request, web, imap, etc... ) and assertions
+vercel		Build and deploy on the Vercel cloud
+vespa-cli		The command-line tool for Vespa.ai.
+vfox		A cross-platform and extendable version manager with support for Java, Node.js, Flutter, .Net & more
+vhs		Your CLI home video recorder
+victoria-metrics		VictoriaMetrics: fast, cost-effective monitoring solution and time series database
+viddy		A modern watch command. Time machine and pager etc
+vim		Vim is an advanced text editor that seeks to provide the power of the de-facto Unix editor 'Vi', with a more complete feature set. It's useful whether you're already using vi or using a different editor
+viteplus	vp	The Unified Toolchain for the Web
+vivid		A themeable LS_COLORS generator with a rich filetype datebase
+vscode-cli		The standalone CLI for Visual Studio Code
+vultr	vultr-cli	Official command line tool for Vultr services
+wacli		Send WhatsApp messages or search and sync WhatsApp history
+wait-for-gh-rate-limit		CLI to wait for github rate limits to reset if they are expired
+wash		wasmCloud Shell (wash)
+wasm-tools		CLI and Rust libraries for low-level manipulation of WebAssembly modules
+wasmer		The leading WebAssembly Runtime supporting WASI and Emscripten
+wasmtime		A lightweight WebAssembly runtime that is fast, secure, and standards-compliant
+watchexec		Executes commands in response to file modifications
+waypoint		A tool to build, deploy, and release any application on any platform
+weave-gitops		Command line utility for managing Kubernetes applications via GitOps
+websocat		Command-line client for WebSockets, like netcat (or curl) for ws:// with advanced socat-like functions
+werf		A solution for implementing efficient and consistent software delivery to Kubernetes facilitating best practices
+witr		Why is this running? Trace any process, port, container, or file back to what started it - CLI + TUI.
+workerd		The JavaScript/Wasm runtime that powers Cloudflare Workers
+workmux		git worktrees + tmux windows for zero-friction parallel dev
+worktrunk		A CLI for git worktree management, designed for running AI agents in parallel.
+wrangler		A command line tool for building Cloudflare Workers
+wtfutil		WTF is the personal information dashboard for your terminal
+xc		Markdown defined task runner
+xcbeautify		A little beautifier tool for xcodebuild
+xchtmlreport		Xcode-like HTML report for Unit and UI Tests
+xcodegen		A Swift command line tool for generating your Xcode project
+xcodes		The best command-line tool to install and switch between multiple versions of Xcode
+xcresultparser		Parse the binary xcresult bundle from Xcode builds and testruns
+xcsift		Swift tool to parse and format xcodebuild output for coding agents
+xh		Friendly and fast tool for sending HTTP requests
+xxh		🚀 Bring your favorite shell wherever you go through the ssh. Xonsh shell, fish, zsh, osquery and so on.
+yamlfmt		An extensible command line tool or library to format yaml files
+yamllint		A linter for YAML files
+yamlscript		YS — YAML Done Wisely
+yara-x		The pattern matching swiss army knife
+yarn		Yarn is a package manager that doubles down as project manager. Whether you work on simple projects or industry monorepos, whether you're an open source developer or an enterprise user, Yarn has your back
+yazi		Blazing fast terminal file manager written in Rust, based on async I/O
+yj		CLI - Convert between YAML, TOML, JSON, and HCL. Preserves map order
+yor		Extensible auto-tagger for your IaC files. The ultimate way to link entities in the cloud back to the codified resource which created it
+youtube-dl		Command-line program to download videos from YouTube.com and other video sites
+yq		yq is a portable command-line YAML processor
+yt-dlp		A feature-rich command-line audio/video downloader
+yt-dlp-nightly		Nightly builds of yt-dlp, a feature-rich command-line audio/video downloader
+ytt		YAML templating tool that works on YAML structure instead of text
+zarf		The Airgap Native Packager Manager for Kubernetes
+zellij		A terminal workspace with batteries included
+zephyr		Tree shaking breeze for PureScript CoreFn AST
+zig		Zig is a general-purpose programming language and toolchain for maintaining robust, optimal and reusable software
+zigmod		A package manager for the Zig programming language
+zizmor		Static analysis for GitHub Actions
+zk		A plain text note-taking assistant
+zls		A Zig language server supporting Zig developers with features like autocomplete and goto definition
+zmx		Session attach/detach for the terminal
+zola		A fast static site generator in a single binary with everything built-in. https://www.getzola.org
+zoxide		A smarter cd command. Supports all major shells
+zprint		Executables, uberjar, and library to beautifully format Clojure and Clojurescript source code and s-expressions

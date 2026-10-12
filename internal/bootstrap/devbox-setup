@@ -30,6 +30,8 @@ GUM_VERSION=0.17.0
 MCPJUNGLE_VERSION=0.4.6
 MCPJUNGLE_PORT=8080
 ECC_VERSION=2.2.3
+# pmox's snapshot of mise's registry, with descriptions (see mise_registry_file).
+MISE_REGISTRY_URL=https://raw.githubusercontent.com/eugenetaranov/pmox/main/internal/bootstrap/mise-registry.tsv
 
 # Kept in step with tack-roles: roles/devbox/defaults/main.yaml, plus
 # autosuggestions and syntax-highlighting (which must stay last).
@@ -248,7 +250,7 @@ save_answers() {
 picked() { case " $PLAN " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # This run's picks; the saved A_PICKS / A_MISE_EXTRA accumulate across runs.
-RUN_PICKS= RUN_MISE_EXTRA= RUN_MCP_SERVERS=
+RUN_PICKS= RUN_MISE_EXTRA= RUN_MCP_SERVERS= PICKED_MISE=
 merge() { printf '%s\n' $1 $2 | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'; }
 
 # resolve IDS — IDS plus everything they need, in catalog order.
@@ -363,7 +365,10 @@ ask() {
       echo "I|$(field "$id" 2)|$id|$(label_of "$id")|$(source_of "$id")"
     done
   } > "$items"
-  pick RUN_PICKS "devbox-setup — pick what to install" "$items"
+  local reg; reg=$(mise_registry_file)
+  pick RUN_PICKS "devbox-setup — pick what to install" "$items" ${reg:+--mise "$reg"}
+  case "$reg" in "$SHARE"/*|"$STATE"/*|"") ;; *) rm -f "$reg" ;; esac
+  split_mise_picks
 
   # 2. Type (every text prompt in one place).
   ask_mise_extra
@@ -378,10 +383,53 @@ ask() {
   return 0
 }
 
-# ask_mise_extra — optional extra mise tools, checked against mise's
-# registry when mise is already installed.
+# mise_registry_file — mise's registry for the picker's search, best first:
+# the live one when mise is installed; pmox's full snapshot (with
+# descriptions) from GitHub, cached for a week; the names-only copy pmox
+# ships (the full one does not fit in cloud-init's user-data).
+mise_registry_file() {
+  local f cache=$STATE/mise-registry.tsv
+  if have mise; then
+    f=$(mktemp)
+    if timeout 15 mise registry -J --hide-aliased 2>/dev/null |
+        python3 "$SHARE/picker.py" --registry-tsv > "$f" 2>/dev/null && [ -s "$f" ]; then
+      echo "$f"; return 0
+    fi
+    rm -f "$f"
+  fi
+  if [ -z "$(find "$cache" -mtime -7 2>/dev/null)" ] && mkdir -p "$STATE" 2>/dev/null; then
+    f=$(mktemp)
+    if curl -fsS --max-time 5 -o "$f" "$MISE_REGISTRY_URL" 2>/dev/null && [ -s "$f" ] &&
+        [ "$(head -c 1 "$f")" != "<" ]; then
+      install -m 0644 "$f" "$cache" 2>/dev/null || true
+    fi
+    rm -f "$f"
+  fi
+  if [ -s "$cache" ]; then echo "$cache"
+  elif [ -s "$SHARE/mise-registry.tsv" ]; then echo "$SHARE/mise-registry.tsv"
+  fi
+  return 0
+}
+
+# split_mise_picks — registry tools picked in the search come back as
+# mise:<name>; they become extra mise tools (PICKED_MISE).
+split_mise_picks() {
+  local p picks=
+  PICKED_MISE=
+  for p in $RUN_PICKS; do
+    case "$p" in
+      mise:*) PICKED_MISE="$PICKED_MISE ${p#mise:}" ;;
+      *) picks="$picks $p" ;;
+    esac
+  done
+  RUN_PICKS=$(echo $picks) PICKED_MISE=$(echo $PICKED_MISE)
+}
+
+# ask_mise_extra — optional extra mise tools, prefilled with the ones
+# picked in the search, checked against mise's registry when mise is
+# already installed.
 ask_mise_extra() {
-  local val bad t
+  local val=$PICKED_MISE bad t
   while :; do
     val=$(gum input --width 80 --header "Extra mise tools, space-separated (e.g. just sops@3), blank to skip" \
       --placeholder "none" --value "${val:-}")

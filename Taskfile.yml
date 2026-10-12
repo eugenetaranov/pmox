@@ -64,6 +64,12 @@ tasks:
       - cp {{.TACK_ROLES}}/roles/devbox/templates/vimrc.j2 {{.DST}}/vimrc
       - git -C {{.TACK_ROLES}} log -1 --format='tack-roles %H %cs' > {{.DST}}/SOURCE
 
+  bootstrap:mise-registry:
+    desc: Refresh devbox-setup's snapshot of mise's registry from the local mise
+    cmds:
+      - mise registry -J --hide-aliased | python3 internal/bootstrap/picker.py --registry-tsv > internal/bootstrap/mise-registry.tsv
+      - wc -l internal/bootstrap/mise-registry.tsv
+
   clean:
     desc: Remove build artifacts
     cmds:

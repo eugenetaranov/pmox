@@ -450,6 +450,13 @@ preselected and only space ticks an item. Every item shows how it will be
 installed, e.g. `mise use -g terraform`, wrapped to fit the terminal. The
 last tab, Review, lists everything ticked.
 
+Just start typing to fuzzy-search every tab at once: `zsh` lists the zsh
+items wherever they live, each with its category. The search also covers
+the ~940 tools in mise's registry, with their descriptions (`find` turns up
+`fd`). A tool you tick there is installed with `mise use -g <tool>`, and the
+"Extra mise tools" prompt comes prefilled so you can pin a version. Esc
+clears the search; Esc on an empty search quits.
+
 1. **System (root):** etckeeper, essentials (git, curl, jq, gh, build tools),
    admin and debug tools (dig, mtr, tcpdump, iperf3, nmap, strace, btop, …),
    Docker (with log rotation and 10.200.0.0/16 networks), Podman + skopeo +

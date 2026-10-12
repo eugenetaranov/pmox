@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -95,7 +96,7 @@ func TestInjectStarterTemplate(t *testing.T) {
 			t.Errorf("%s: decoded content differs", w.Path)
 		}
 	}
-	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/completions.zsh", ShareDir + "/conf/daemon.json"} {
+	for _, p := range []string{ScriptPath, ShareDir + "/picker.py", ShareDir + "/mise-registry.tsv", ShareDir + "/mcp-sync", ShareDir + "/mcp-catalog/jira.spec", ShareDir + "/zshrc.tmpl", ShareDir + "/conf/shell.sh", ShareDir + "/conf/completions.zsh", ShareDir + "/conf/daemon.json"} {
 		if _, ok := want[p]; !ok {
 			t.Errorf("missing %s", p)
 		}
@@ -187,5 +188,31 @@ func TestScriptPointsAtShareDir(t *testing.T) {
 	script, _ := files.ReadFile("devbox-setup")
 	if !strings.Contains(string(script), "SHARE=${DEVBOX_SETUP_SHARE:-"+ShareDir+"}") {
 		t.Errorf("script's SHARE default does not match ShareDir %s", ShareDir)
+	}
+}
+
+// TestPickerPy runs picker.py's own tests (search, dedupe, registry
+// parsing) against the real catalog and the registry snapshot.
+func TestPickerPy(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not installed")
+	}
+	cmd := exec.Command(py, "-m", "unittest", "picker_test")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("picker_test: %v\n%s", err, out)
+	}
+}
+
+func TestRegistryNamesDropsDescriptions(t *testing.T) {
+	got := string(registryNames([]byte("op\t1password,op-cli\tPassword manager\nfd\t\tfind, but fast\n\tno name\tx\n")))
+	if want := "op\t1password,op-cli\t\nfd\t\t\n"; got != want {
+		t.Errorf("registryNames = %q, want %q", got, want)
+	}
+	for _, f := range Files() {
+		if strings.HasSuffix(f.Path, "/mise-registry.tsv") && bytes.Contains(f.Content, []byte("alternative to 'find'")) {
+			t.Errorf("%s carries descriptions; they do not fit in user-data", f.Path)
+		}
 	}
 }

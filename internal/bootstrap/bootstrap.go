@@ -22,7 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed devbox-setup picker.py assets conf
+//go:embed devbox-setup picker.py mise-registry.tsv assets conf
 var files embed.FS
 
 // ShareDir is where the assets land on the VM; the script reads them there.
@@ -48,9 +48,14 @@ func Files() []File {
 	if err != nil {
 		panic(err)
 	}
+	registry, err := files.ReadFile("mise-registry.tsv")
+	if err != nil {
+		panic(err)
+	}
 	out := []File{
 		{Path: ScriptPath, Permissions: "0755", Content: script},
 		{Path: path.Join(ShareDir, "picker.py"), Permissions: "0755", Content: picker},
+		{Path: path.Join(ShareDir, "mise-registry.tsv"), Permissions: "0644", Content: registryNames(registry)},
 	}
 	_ = fs.WalkDir(files, "assets", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -214,4 +219,20 @@ func gzipB64(b []byte) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+// registryNames keeps the name and aliases of each mise registry row and
+// drops the description: the full snapshot does not fit in the 64 KiB
+// user-data snippet, so devbox-setup fetches it at run time and falls
+// back to this copy.
+func registryNames(tsv []byte) []byte {
+	var b bytes.Buffer
+	for _, line := range strings.Split(strings.TrimRight(string(tsv), "\n"), "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) < 2 || f[0] == "" {
+			continue
+		}
+		b.WriteString(f[0] + "\t" + f[1] + "\t\n")
+	}
+	return b.Bytes()
 }
