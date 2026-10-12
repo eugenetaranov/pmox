@@ -21,6 +21,7 @@ type sshConnInfo struct {
 	Hostname     string            `json:"hostname"`
 	User         string            `json:"user"`
 	IdentityFile string            `json:"identity_file,omitempty"`
+	ForwardAgent bool              `json:"forward_agent,omitempty"`
 	Options      map[string]string `json:"options,omitempty"`
 	Command      string            `json:"command"`
 }
@@ -52,6 +53,7 @@ Examples:
 		},
 	}
 	addSSHFlags(cmd, f)
+	addForwardFlags(cmd, f, false)
 	cmd.Flags().BoolVar(&asCommand, "command", false, "print a ready-to-run ssh command instead of a config block")
 	return cmd
 }
@@ -70,6 +72,10 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 	info, err := resolveSSHConnInfo(ctx, client, arg, f, resolved.URL, srv, cmd.ErrOrStderr())
 	if err != nil {
 		return err
+	}
+	if wantForwardAgent(cmd, f, srv) {
+		info.ForwardAgent = true
+		info.Command = sshCommandLine(&sshTarget{IP: info.Hostname, User: info.User, Key: info.IdentityFile}, "-A")
 	}
 
 	out := cmd.OutOrStdout()
@@ -146,15 +152,19 @@ func renderSSHConfigBlock(w io.Writer, info *sshConnInfo) {
 		fmt.Fprintf(w, "  IdentityFile %s\n", sshConfValue(info.IdentityFile))
 		fmt.Fprintln(w, "  IdentitiesOnly yes")
 	}
+	if info.ForwardAgent {
+		fmt.Fprintln(w, "  ForwardAgent yes")
+	}
 	for _, line := range guestHostKeyConfigLines() {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 }
 
-// sshCommandLine builds a ready-to-run ssh command string.
-func sshCommandLine(target *sshTarget) string {
+// sshCommandLine builds a ready-to-run ssh command string; extra options
+// go before the destination.
+func sshCommandLine(target *sshTarget, extra ...string) string {
 	parts := []string{"ssh"}
-	for _, o := range guestHostKeyOpts() {
+	for _, o := range append(guestHostKeyOpts(), extra...) {
 		parts = append(parts, shellQuote(o))
 	}
 	if target.Key != "" {

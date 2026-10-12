@@ -348,3 +348,28 @@ func TestSaveTightensExistingDir(t *testing.T) {
 		t.Errorf("dir mode = %o, want 0700 (pre-existing dir not tightened)", got)
 	}
 }
+
+func TestForwardAgentRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	const url = "https://pve.home.lan:8006/api2/json"
+
+	cfg := &Config{Servers: map[string]*Server{}}
+	cfg.AddServer(url, &Server{TokenID: "x@y!z", ForwardAgent: true})
+	cfg.AddServer("https://other:8006/api2/json", &Server{TokenID: "a@b!c"})
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	p, _ := Path()
+	raw, _ := os.ReadFile(p)
+	if n := strings.Count(string(raw), "forward_agent"); n != 1 {
+		t.Errorf("want forward_agent written once (only when on), got %d:\n%s", n, raw)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.Servers[url].ForwardAgent {
+		t.Error("ForwardAgent lost in the roundtrip")
+	}
+}

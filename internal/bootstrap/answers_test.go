@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,11 @@ func shellFns(t *testing.T, names ...string) string {
 	}
 	script := string(b)
 	var out strings.Builder
-	out.WriteString("ANSWER_VARS=\"A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_AGENTS A_GIT_NAME A_GIT_EMAIL A_TZ\"\n")
+	vars := regexp.MustCompile(`(?m)^ANSWER_VARS="[^"]*"$`).FindString(script)
+	if vars == "" {
+		t.Fatal("no ANSWER_VARS in devbox-setup")
+	}
+	out.WriteString(vars + "\n")
 	for _, n := range names {
 		i := strings.Index(script, "\n"+n+"() {")
 		if i < 0 {
@@ -85,7 +90,7 @@ func writeLegacy(t *testing.T, content string) string {
 // loadAnswers runs load_answers against state and returns the A_* values.
 func loadAnswers(t *testing.T, state string) map[string]string {
 	t.Helper()
-	out, _ := runShell(t, state, "A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_AGENTS= A_GIT_NAME= A_GIT_EMAIL= A_TZ=\nload_answers\n"+dumpVars)
+	out, _ := runShell(t, state, "for v in $ANSWER_VARS; do printf -v \"$v\" ''; done\nload_answers\n"+dumpVars)
 	return parseDump(out)
 }
 
@@ -176,10 +181,12 @@ func TestAnswersLegacyRoundTrip(t *testing.T) {
 func TestAnswersSaveLoad(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
 	runShell(t, state, `A_USER=ubuntu A_PICKS='cli' A_MISE_EXTRA= A_MCP_LISTEN=127.0.0.1 A_MCP_SERVERS=github A_WIRE_AGENTS=yes A_GIT_NAME="Ada L" A_GIT_EMAIL=ada@example.com A_TZ=UTC
+A_GH_MODE=agent A_NPM_SCOPE=@acme A_NPM_REGISTRY=https://npm.pkg.github.com A_REGISTRIES='ghcr.io quay.io'
 RUN_PICKS='zsh cli' RUN_MISE_EXTRA=starship
 save_answers`)
 	vals := loadAnswers(t, state)
-	want := map[string]string{"A_USER": "ubuntu", "A_PICKS": "cli zsh", "A_MISE_EXTRA": "starship", "A_MCP_LISTEN": "127.0.0.1", "A_MCP_SERVERS": "github", "A_WIRE_AGENTS": "yes", "A_GIT_NAME": "Ada L", "A_GIT_EMAIL": "ada@example.com", "A_TZ": "UTC"}
+	want := map[string]string{"A_USER": "ubuntu", "A_PICKS": "cli zsh", "A_MISE_EXTRA": "starship", "A_MCP_LISTEN": "127.0.0.1", "A_MCP_SERVERS": "github", "A_WIRE_AGENTS": "yes", "A_GIT_NAME": "Ada L", "A_GIT_EMAIL": "ada@example.com", "A_TZ": "UTC",
+		"A_GH_MODE": "agent", "A_NPM_SCOPE": "@acme", "A_NPM_REGISTRY": "https://npm.pkg.github.com", "A_REGISTRIES": "ghcr.io quay.io"}
 	for k, v := range want {
 		if vals[k] != v {
 			t.Errorf("%s = %q, want %q", k, vals[k], v)

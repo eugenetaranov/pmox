@@ -8,11 +8,15 @@
 #   sudo devbox-setup             choose tools, languages, AI and settings
 #   sudo devbox-setup --yes       re-apply everything chosen so far, no questions
 #   devbox-setup --dry-run        ask, then show what would happen
+#   sudo devbox-setup forget      remove the keys, logins and secrets it set up
 #
 # Nothing is preselected. Everything ever chosen (no secrets) accumulates in
 # /var/lib/devbox-setup/answers.json, and ~/devbox-setup.txt lists how each tool
-# was installed and how to manage it. MCP credentials live only in
-# ~/.mcp/<name>/env.
+# was installed and how to manage it.
+#
+# Credentials are never stored anywhere but their own config file: an item
+# that needs one asks once (empty = later) and writes the file at 0600; one
+# left empty is listed under "Secrets to fill in" in ~/devbox-setup.txt.
 set -euo pipefail
 
 SHARE=${DEVBOX_SETUP_SHARE:-/usr/local/share/devbox-setup}
@@ -66,6 +70,7 @@ CATALOG_ROWS=(
   "sshharden|system|SSH: keys only, no root login (advanced)|fn|||/etc/ssh/sshd_config.d/10-devbox.conf · refuses if you have no authorized key"
   "ufw|system|Firewall: only SSH, Tailscale, mosh in (advanced)|fn|||ufw · note: Docker's published ports bypass it"
   "fail2ban|system|fail2ban: ban SSH brute force (internet-facing VMs)|fn|||apt fail2ban · sshd jail · Tailscale IPs never banned"
+  "registries|system|Container registry logins (ghcr.io, …)|fn||docker|docker login per registry · ~/.docker/config.json"
 
   "cli|shell|CLI upgrades (ripgrep, fd, bat, eza, fzf, zoxide, delta, direnv)|fn|||apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree (+ fd/bat links)"
   "editors|shell|Vim|apt|vim||"
@@ -105,6 +110,7 @@ CATALOG_ROWS=(
   "cpp|lang|C/C++ (gcc clang cmake gdb)|apt|clang clangd cmake ninja-build gdb pkg-config|essentials|"
   "zig|lang|Zig|mise|zig@latest||"
   "dotnet|lang|.NET SDK|mise|dotnet@latest||"
+  "npmrc|dev|Private npm registry (scope + token)|fn||node|~/.npmrc (a devbox-setup block, 0600)"
 
   "aws|cloud|AWS CLI|mise|aws-cli@latest||"
   "gcloud|cloud|Google Cloud CLI (large)|mise|gcloud@latest||"
@@ -122,6 +128,7 @@ CATALOG_ROWS=(
   "ansible|iac|Ansible|mise|uv@latest pipx:ansible||"
   "sops|iac|sops + age (secrets in git)|mise|sops@latest age@latest||"
   "vault|iac|Vault CLI|mise|vault@latest||"
+  "agekey|iac|age key for sops (generate or paste)|fn||sops|~/.config/sops/age/keys.txt (0600) · SOPS_AGE_KEY_FILE"
 
   "k8s|k8s|Kubernetes CLIs (kubectl, kubectx, helm 3, k9s)|mise|kubectl@latest kubectx@latest kubens@latest helm@3 k9s@latest||"
   "k8sextra|k8s|K8s extras (stern, kustomize, kubecolor, kubie, kubeconform)|mise|stern@latest kustomize@latest kubecolor@latest kubie@latest kubeconform@latest|k8s|"
@@ -145,12 +152,14 @@ CATALOG_ROWS=(
   "openspec|ai|OpenSpec (spec-driven development CLI)|mise|npm:@fission-ai/openspec@latest|node|"
   "ecc|ai|ECC for Claude Code (~68 agents, rules, commands; no hooks)|fn||node claude|npx ecc-universal@$ECC_VERSION install --profile minimal · npx ecc-universal uninstall to remove"
   "agentcfg|ai|Describe this VM to agents (CLAUDE.md, AGENTS.md)|fn|||~/.claude/CLAUDE.md · ~/.codex/AGENTS.md · only if absent"
+  "agentkeys|ai|Agent API keys (Anthropic, OpenAI, Gemini)|fn|||~/.config/devbox/agent.env (0600) · read by interactive shells"
   "mcpjungle|ai|MCPJungle + MCP servers (Docker)|fn||docker|release binary · systemd mcpjungle · mcp-sync"
 
   "gitid|accounts|Git name and email|ask||essentials|git config --global user.name/email"
   "gitcfg|accounts|Git defaults (rebase pulls, auto upstream, delta diffs)|fn||essentials|git config --global · aliases st co br sw lg amend · ~/.config/git/ignore"
   "sshkey|accounts|SSH key (ed25519)|fn|||ssh-keygen → ~/.ssh/id_ed25519 (kept if present)"
-  "github|accounts|GitHub login + upload SSH key|fn||essentials sshkey|gh auth login · gh ssh-key add"
+  "github|accounts|GitHub login (forwarded agent, key or token)|fn||essentials|gh auth login · forwarded agent, ~/.ssh/id_ed25519 (gh ssh-key add) or a token"
+  "gitsign|accounts|Sign commits with SSH|fn||github|git gpg.format=ssh · signing key on GitHub · ~/.config/git/allowed_signers"
   "glab|accounts|GitLab CLI (glab)|mise|glab@latest||"
 )
 # Hidden helpers pulled in by "needs".
@@ -158,23 +167,39 @@ HIDDEN_ROWS=(
   "rubydeps|-|Ruby build dependencies|apt|libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev libgmp-dev||"
   "mise|-|mise|fn|||apt mise (mise.jdx.dev repo)"
 )
+# Credentials the items above ask for, once (empty = later):
+#   item | KEY | kind | prompt | where to get it | only when this is picked or installed | default
+# kind: secret (never saved; read without echo) or the A_* answer a plain
+# setting is saved in.
+CRED_ROWS=(
+  "agentkeys|ANTHROPIC_API_KEY|secret|Anthropic API key (empty: log in with 'claude' instead)|https://console.anthropic.com/settings/keys|claude|"
+  "agentkeys|OPENAI_API_KEY|secret|OpenAI API key (Codex)|https://platform.openai.com/api-keys|codex|"
+  "agentkeys|GEMINI_API_KEY|secret|Gemini API key|https://aistudio.google.com/apikey|gemini|"
+  "npmrc|NPM_SCOPE|A_NPM_SCOPE|npm scope (e.g. @acme)|||"
+  "npmrc|NPM_REGISTRY|A_NPM_REGISTRY|npm registry URL|||https://npm.pkg.github.com"
+  "npmrc|NPM_TOKEN|secret|npm registry token|for GitHub Packages: a token with read:packages at https://github.com/settings/tokens||"
+)
 SCREENS=("system|System" "shell|Shell & CLI" "dev|Dev tools" "lang|Languages"
          "cloud|Cloud" "iac|IaC" "k8s|Kubernetes" "ai|AI" "accounts|Accounts")
 
-YES=0 DRY=0
+YES=0 DRY=0 FORGET=0
 ARGS=("$@")
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) YES=1 ;;
     -n|--dry-run) DRY=1 ;;
     -h|--help) usage; exit 0 ;;
+    forget) FORGET=1 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
+[ "$FORGET" = 0 ] || [ "$DRY" = 0 ] || { echo "forget has no --dry-run; it lists what it removes and asks first" >&2; exit 2; }
 if [ "$DRY" = 0 ] && [ "$(id -u)" != 0 ]; then
+  # Keep a forwarded SSH agent: GitHub's agent mode and signing use it.
+  if [ -n "${SSH_AUTH_SOCK:-}" ]; then exec sudo --preserve-env=SSH_AUTH_SOCK "$0" "${ARGS[@]}"; fi
   exec sudo "$0" "${ARGS[@]}"
 fi
 
@@ -215,7 +240,8 @@ source_of() {
 # --- Saved answers -----------------------------------------------------------
 
 A_USER= A_PICKS= A_MISE_EXTRA= A_MCP_LISTEN= A_MCP_SERVERS= A_WIRE_AGENTS= A_GIT_NAME= A_GIT_EMAIL= A_TZ=
-ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_AGENTS A_GIT_NAME A_GIT_EMAIL A_TZ"
+A_GH_MODE= A_NPM_SCOPE= A_NPM_REGISTRY= A_REGISTRIES=
+ANSWER_VARS="A_USER A_PICKS A_MISE_EXTRA A_MCP_LISTEN A_MCP_SERVERS A_WIRE_AGENTS A_GIT_NAME A_GIT_EMAIL A_TZ A_GH_MODE A_NPM_SCOPE A_NPM_REGISTRY A_REGISTRIES"
 # Saved answers are data ($STATE/answers.json): picker.py parses them (and converts
 # the shell-format file older versions wrote, without running it) and hands
 # back NUL-separated name/value pairs. Nothing from the file is executed.
@@ -307,11 +333,26 @@ pick() {
 
 # --- MCP catalog helpers -------------------------------------------------------
 
-catalog_dir() { if [ -d "$CATALOG" ]; then echo "$CATALOG"; else echo "$SHARE/mcp-catalog"; fi; }
+# MCP server specs: the installed catalog first, then the ones devbox-setup
+# ships (tack-roles' in mcp-catalog/, pmox's own in conf/mcp-catalog/).
+spec_dirs() { echo "$CATALOG" "$SHARE/mcp-catalog" "$CONF/mcp-catalog"; }
+# spec_file NAME — the spec for NAME, if any.
+spec_file() {
+  local d
+  for d in $(spec_dirs); do [ -f "$d/$1.spec" ] && { echo "$d/$1.spec"; return 0; }; done
+  return 1
+}
+# spec_names — every MCP server name, sorted.
+spec_names() {
+  local d f
+  for d in $(spec_dirs); do
+    for f in "$d"/*.spec; do [ -f "$f" ] && basename "$f" .spec; done
+  done | sort -u
+}
 # spec_field NAME VAR — a variable from the server's spec.
-spec_field() { ( . "$(catalog_dir)/$1.spec"; eval "printf '%s' \"\${$2:-}\"" ); }
+spec_field() { ( . "$(spec_file "$1")"; eval "printf '%s' \"\${$2:-}\"" ); }
 # spec_skeleton NAME — the env file template from the spec.
-spec_skeleton() { ( . "$(catalog_dir)/$1.spec"; skeleton ) 2>/dev/null || true; }
+spec_skeleton() { ( . "$(spec_file "$1")"; skeleton ) 2>/dev/null || true; }
 
 home_of() { getent passwd "$1" | cut -d: -f6; }
 
@@ -336,6 +377,63 @@ declare -A MCP_KEYS=()
 TS_AUTHKEY=
 
 is_secret() { case "$1" in *TOKEN*|*SECRET*|*PASSWORD*|*_KEY|*_KEY_ID|*APIKEY*) return 0 ;; esac; return 1; }
+
+# What the credential prompts collected this run, written by apply and
+# never saved: CRED["item KEY"] (CRED_ROWS), REG_USER/REG_PASS[registry],
+# AGE_CHOICE (generate|paste|later|keep) and AGE_KEY.
+declare -A CRED=() REG_USER=() REG_PASS=()
+AGE_CHOICE= AGE_KEY= GH_TOKEN_IN= GH_PASSPHRASE=
+# 1 when devbox-setup may prompt (not --yes): steps that would wait for
+# input leave a note instead.
+INTERACTIVE=0
+NPMRC_BEGIN='# >>> devbox-setup npmrc' NPMRC_END='# <<< devbox-setup npmrc'
+AGENTENV_LINE='[ -r ~/.config/devbox/agent-env.sh ] && . ~/.config/devbox/agent-env.sh'
+
+# record KIND [VALUE] — remember something devbox-setup created, for
+# `devbox-setup forget` ($STATE/created.json; never a secret).
+record() { python3 "$SHARE/picker.py" created add "$STATE" "$@"; }
+# recorded KIND VALUE — record has that entry.
+recorded() { python3 "$SHARE/picker.py" created list "$STATE" | grep -qxF "$1	$2"; }
+
+# cred_wanted WHEN — a CRED_ROWS row applies: no WHEN, or WHEN is picked or
+# on the user's PATH.
+cred_wanted() { [ -z "$1" ] || picked "$1" || user_has "$1"; }
+
+# cred_current ITEM KEY — the secret already in ITEM's file.
+cred_current() {
+  case "$1" in
+    agentkeys) envget "$2" "$(user_home)/.config/devbox/agent.env" ;;
+    npmrc) npmrc_token ;;
+  esac
+}
+npmrc_token() {
+  local f; f="$(user_home)/.npmrc"
+  [ -f "$f" ] || return 0
+  sed -n "/^$NPMRC_BEGIN\$/,/^$NPMRC_END\$/s/^.*:_authToken=//p" "$f" | tail -n 1
+}
+
+# cred_logged_in KEY — the agent has its own login, so an empty key isn't missing.
+cred_logged_in() {
+  local h; h=$(user_home)
+  case "$1" in
+    ANTHROPIC_API_KEY) [ -s "$h/.claude/.credentials.json" ] ;;
+    OPENAI_API_KEY) [ -s "$h/.codex/auth.json" ] ;;
+    GEMINI_API_KEY) [ -s "$h/.gemini/oauth_creds.json" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# reg_logged_in REGISTRY — the user's docker config has a login for it.
+reg_logged_in() {
+  python3 - "$(user_home)/.docker/config.json" "$1" 2>/dev/null <<'EOF'
+import json, sys
+c = json.load(open(sys.argv[1]))
+sys.exit(0 if sys.argv[2] in (c.get("auths") or {}) or sys.argv[2] in (c.get("credHelpers") or {}) else 1)
+EOF
+}
+
+gh_logged_in() { as_user gh auth status -h github.com >/dev/null 2>&1; }
+gh_has_scope() { as_user gh auth status -h github.com 2>&1 | grep -q "Token scopes:.*'$1'"; }
 
 # --- Prompts -------------------------------------------------------------------
 
@@ -370,6 +468,10 @@ ask() {
   picked gitid && ask_git
   picked tzlocale && ask_tz
   picked mcpjungle && ask_mcp
+  picked github && ask_github
+  ask_creds
+  picked registries && ask_registries
+  picked agekey && ask_agekey
   if picked tailscale && ! tailscale status >/dev/null 2>&1; then
     TS_AUTHKEY=$(gum input --password --header "Tailscale auth key (empty: run 'sudo tailscale up' later)" || true)
   fi
@@ -464,6 +566,84 @@ ask_tz() {
   A_TZ=$tz
 }
 
+ask_github() {
+  local agent="Forwarded SSH agent (no key on this VM; connect with pmox shell -A)" \
+        key="A key on this VM (~/.ssh/id_ed25519, uploaded to GitHub)" \
+        token="A fine-grained token (git over HTTPS; no key)" def c
+  def=${A_GH_MODE:-}
+  if [ -z "$def" ]; then
+    if [ -n "${SSH_AUTH_SOCK:-}" ] && ssh-add -l >/dev/null 2>&1; then def=agent; else def=key; fi
+  fi
+  echo
+  header "GitHub"
+  c=$(gum choose --header "How should this VM reach GitHub?" --selected "${!def}" "$agent" "$key" "$token" || true)
+  case "$c" in "$agent") A_GH_MODE=agent ;; "$token") A_GH_MODE=token ;; *) A_GH_MODE=key ;; esac
+  if [ "$A_GH_MODE" = key ] && [ ! -f "$(user_home)/.ssh/id_ed25519" ]; then
+    if gum confirm "Protect the new key with a passphrase? (ssh-keygen asks after the installs)" --default=false; then
+      GH_PASSPHRASE=yes
+    fi
+  fi
+  if [ "$A_GH_MODE" = token ] && ! gh_logged_in; then
+    faint "Create one at https://github.com/settings/personal-access-tokens (Contents: read/write on your repos)."
+    GH_TOKEN_IN=$(gum input --password --header "GitHub fine-grained token (empty: later)" || true)
+  fi
+  return 0
+}
+
+# ask_creds — the CRED_ROWS prompts for the picked items.
+ask_creds() {
+  local r item key kind prompt how when def shown= cur
+  for r in "${CRED_ROWS[@]}"; do
+    IFS='|' read -r item key kind prompt how when def <<< "$r"
+    { picked "$item" && cred_wanted "$when"; } || continue
+    if [ "$shown" != "$item" ]; then
+      echo
+      header "$(label_of "$item")"
+      faint "Leave a value empty to fill it in later: ~/devbox-setup.txt lists what is missing."
+      shown=$item
+    fi
+    if [ "$kind" = secret ]; then
+      cur=$(cred_current "$item" "$key")
+      CRED["$item $key"]=$(gum input --password --header "$prompt" --placeholder "$( [ -n "$cur" ] && echo '(unchanged)')" || true)
+    else
+      cur=${!kind:-$def}
+      printf -v "$kind" '%s' "$(gum input --width 80 --header "$prompt" --value "$cur" || true)"
+    fi
+  done
+  if [ -n "$A_NPM_SCOPE" ] && [ "${A_NPM_SCOPE#@}" = "$A_NPM_SCOPE" ]; then A_NPM_SCOPE="@$A_NPM_SCOPE"; fi
+  return 0
+}
+
+ask_registries() {
+  local regs r
+  echo
+  header "Container registry logins"
+  faint "Each is logged in with 'docker login' as $A_USER. Empty password: later (ghcr.io uses the gh token when it has read:packages)."
+  regs=$(gum input --width 80 --header "Registries, space-separated (e.g. ghcr.io registry.gitlab.com)" --value "${A_REGISTRIES:-ghcr.io}" || true)
+  # shellcheck disable=SC2086
+  A_REGISTRIES=$(echo $regs)
+  for r in $A_REGISTRIES; do
+    if reg_logged_in "$r"; then faint "$r: already logged in."; continue; fi
+    REG_USER[$r]=$(gum input --header "$r: username" || true)
+    REG_PASS[$r]=$(gum input --password --header "$r: password or token" || true)
+  done
+}
+
+ask_agekey() {
+  local f; f="$(user_home)/.config/sops/age/keys.txt"
+  if grep -q '^AGE-SECRET-KEY-' "$f" 2>/dev/null; then AGE_CHOICE=keep; return 0; fi
+  echo
+  header "age key for sops"
+  case "$(gum choose --header "age key for $A_USER" "Generate a new key" "Paste an existing key" "Later" || true)" in
+    Gen*) AGE_CHOICE=generate ;;
+    Paste*)
+      AGE_CHOICE=paste
+      AGE_KEY=$(gum input --password --header "age secret key (AGE-SECRET-KEY-1…)" || true)
+      [ -n "$AGE_KEY" ] || AGE_CHOICE=later ;;
+    *) AGE_CHOICE=later ;;
+  esac
+}
+
 ask_mcp() {
   echo
   header "MCPJungle"
@@ -476,8 +656,7 @@ ask_mcp() {
   items=$(mktemp)
   {
     echo "T|mcp|MCP servers"
-    for s in "$(catalog_dir)"/*.spec; do
-      n=$(basename "$s" .spec)
+    for n in $(spec_names); do
       echo "I|mcp|$n|$n|$(spec_field "$n" DESCRIPTION) · $(spec_field "$n" IMAGE)$(spec_field "$n" URL)"
     done
   } > "$items"
@@ -554,6 +733,7 @@ summary() {
       echo "MCPJungle: http://$A_MCP_LISTEN:$MCPJUNGLE_PORT/mcp · servers: ${A_MCP_SERVERS:-none}"
     fi
     picked gitid && [ -n "$A_GIT_NAME$A_GIT_EMAIL" ] && echo "Git: $A_GIT_NAME <$A_GIT_EMAIL>"
+    picked github && echo "GitHub: ${A_GH_MODE:-key}"
     true
   } | sed 's/^/  /'
 }
@@ -636,10 +816,11 @@ user_conf() {
   if [ -f "$2" ] && [ ! -f "$2.orig" ] && ! cmp -s "$CONF/$1" "$2"; then cp -p "$2" "$2.orig"; fi
   as_user install -D -m 0644 "$CONF/$1" "$2"
 }
-# add_dropin FILE — source the shell drop-in at the end of FILE, once.
+# add_dropin FILE [LINE] — add LINE (the shell drop-in) at the end of FILE, once.
 add_dropin() {
+  local line=${2:-$DROPIN_LINE}
   [ -f "$1" ] || return 0
-  grep -qxF "$DROPIN_LINE" "$1" || printf '\n%s\n' "$DROPIN_LINE" >> "$1"
+  grep -qxF "$line" "$1" || printf '\n%s\n' "$line" >> "$1"
 }
 codename() { . /etc/os-release; echo "${VERSION_CODENAME:-noble}"; }
 
@@ -675,6 +856,7 @@ install_zshcfg() {
   as_user install -D -m 0644 "$CONF/completions.zsh" "$home/.config/devbox/completions.zsh"
   # The template replaced .zshrc: keep the shell drop-in if it is set up.
   [ -f "$home/.config/devbox/shell.sh" ] && add_dropin "$home/.zshrc"
+  [ -f "$home/.config/devbox/agent-env.sh" ] && add_dropin "$home/.zshrc" "$AGENTENV_LINE"
   return 0
 }
 
@@ -751,6 +933,7 @@ install_tailscale() {
     printf '%s' "$TS_AUTHKEY" > "$kf"
     tailscale up --auth-key="file:$kf" || rc=$?
     rm -f "$kf"
+    [ "$rc" = 0 ] && record tailscale
     return "$rc"
   fi
 }
@@ -980,6 +1163,100 @@ install_omp() {
   curl -fsSL https://omp.sh/install | PI_INSTALL_DIR="$BIN" sh -s -- --binary
 }
 
+# new_user_file FILE — create FILE from stdin as the user, private (0600),
+# unless it exists; recorded for forget. Returns 1 if it already existed.
+new_user_file() {
+  if [ -e "$1" ]; then cat > /dev/null; return 1; fi
+  as_user mkdir -p "$(dirname "$1")"
+  as_user sh -c 'umask 077; cat > "$1"' _ "$1"
+  record file "$1"
+}
+
+install_agentkeys() {
+  local home f r item key kind prompt how when def; home=$(user_home); f="$home/.config/devbox/agent.env"
+  {
+    echo "# Agent API keys, written by devbox-setup and read by interactive shells."
+    echo "# Fill in a key, then open a new shell. Not shared with services or cron."
+    for r in "${CRED_ROWS[@]}"; do
+      IFS='|' read -r item key kind prompt how when def <<< "$r"
+      [ "$item" = agentkeys ] || continue
+      printf '\n# %s: %s\n%s=\n' "$prompt" "$how" "$key"
+    done
+  } | new_user_file "$f" || true
+  for r in "${CRED_ROWS[@]}"; do
+    IFS='|' read -r item key kind prompt how when def <<< "$r"
+    [ "$item" = agentkeys ] && [ -n "${CRED[agentkeys $key]:-}" ] && envset "$key" "${CRED[agentkeys $key]}" "$f"
+  done
+  chmod 600 "$f"
+  as_user install -D -m 0644 "$CONF/agent-env.sh" "$home/.config/devbox/agent-env.sh"
+  as_user touch "$home/.bashrc"
+  add_dropin "$home/.bashrc" "$AGENTENV_LINE"
+  add_dropin "$home/.zshrc" "$AGENTENV_LINE"
+}
+
+install_npmrc() {
+  local home f reg tok tmp; home=$(user_home); f="$home/.npmrc"
+  reg=${A_NPM_REGISTRY:-https://npm.pkg.github.com}; reg=${reg%/}
+  tok=${CRED[npmrc NPM_TOKEN]:-$(npmrc_token)}
+  if [ -z "$A_NPM_SCOPE" ]; then
+    note "npmrc: no npm scope set; run 'sudo devbox-setup' and pick 'Private npm registry' again."
+    return 0
+  fi
+  # A file devbox-setup created is its own; in yours it adds only a block.
+  if [ ! -e "$f" ]; then : | new_user_file "$f"; elif ! recorded file "$f"; then record block "$f"; fi
+  tmp=$(mktemp)
+  awk -v b="$NPMRC_BEGIN" -v e="$NPMRC_END" '$0 == b { skip = 1 } !skip { print } $0 == e { skip = 0 }' "$f" > "$tmp"
+  printf '%s\n' "$NPMRC_BEGIN" "$A_NPM_SCOPE:registry=$reg/" "//${reg#*://}/:_authToken=$tok" "$NPMRC_END" >> "$tmp"
+  cat "$tmp" > "$f"; rm -f "$tmp"
+  chmod 600 "$f"
+}
+
+# install_registries — runs after the GitHub login (ghcr.io can use its token).
+install_registries() {
+  local r u p rc=0
+  for r in $A_REGISTRIES; do
+    reg_logged_in "$r" && continue
+    u=${REG_USER[$r]:-} p=${REG_PASS[$r]:-}
+    if [ -z "$p" ] && [ "$r" = ghcr.io ] && gh_has_scope read:packages; then
+      p=$(as_user gh auth token)
+      [ -n "$u" ] || u=$(as_user gh api user -q .login)
+    fi
+    { [ -n "$p" ] && [ -n "$u" ]; } || continue
+    if printf '%s' "$p" | as_user docker login "$r" -u "$u" --password-stdin >/dev/null; then
+      record registry "$r"
+    else
+      echo "docker login $r failed" >&2; rc=1
+    fi
+  done
+  return "$rc"
+}
+
+install_agekey() {
+  local home f; home=$(user_home); f="$home/.config/sops/age/keys.txt"
+  case "${AGE_CHOICE:-}" in
+    generate)
+      if ! grep -q '^AGE-SECRET-KEY-' "$f" 2>/dev/null; then
+        [ -e "$f" ] || record file "$f"
+        as_user mkdir -p "$(dirname "$f")"
+        rm -f "$f"
+        as_user_sh "umask 077; age-keygen -o '$f'"
+      fi ;;
+    paste)
+      if ! grep -q '^AGE-SECRET-KEY-' "$f" 2>/dev/null; then
+        [ -e "$f" ] || record file "$f"
+        as_user mkdir -p "$(dirname "$f")"
+        printf '%s\n' "$AGE_KEY" | as_user sh -c 'umask 077; cat >> "$1"' _ "$f"
+      fi ;;
+  esac
+  echo "# age key for sops: paste a line AGE-SECRET-KEY-1… here, or run: age-keygen -o ~/.config/sops/age/keys.txt" \
+    | new_user_file "$f" || true
+  chmod 600 "$f"
+  add_path_line 'export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"'
+  local pub; pub=$(as_user_sh "age-keygen -y '$f'" 2>/dev/null || true)
+  [ -z "$pub" ] || [ "$AGE_CHOICE" != generate ] || note "age: new key; its public key is $pub"
+  return 0
+}
+
 install_mcpjungle() {
   local home mcp n key grp
   home=$(user_home); mcp="$home/.mcp"; grp=$(id -gn "$A_USER")
@@ -990,7 +1267,7 @@ install_mcpjungle() {
     chmod 0755 "$BIN/mcpjungle"
   fi
   install -d -m 0755 "$CATALOG"
-  install -m 0644 "$SHARE"/mcp-catalog/*.spec "$CATALOG/"
+  install -m 0644 "$SHARE"/mcp-catalog/*.spec "$CONF"/mcp-catalog/*.spec "$CATALOG/"
   install -m 0755 "$SHARE/mcp-sync" "$BIN/mcp-sync"
   in_group docker || usermod -aG docker "$A_USER"
   install -d -m 0700 -o "$A_USER" -g "$grp" "$mcp"
@@ -1035,7 +1312,7 @@ EOF
   # files mcp-sync creates and reads).
   for n in $A_MCP_SERVERS; do
     install -d -m 0700 -o "$A_USER" -g "$grp" "$mcp/$n"
-    [ -f "$mcp/$n/env" ] || spec_skeleton "$n" > "$mcp/$n/env"
+    [ -f "$mcp/$n/env" ] || { spec_skeleton "$n" > "$mcp/$n/env"; record file "$mcp/$n/env"; }
   done
   for key in "${!MCP_KEYS[@]}"; do
     envset "${key#* }" "${MCP_KEYS[$key]}" "$mcp/${key%% *}/env"
@@ -1108,40 +1385,173 @@ install_sshkey() {
 }
 
 # GitHub login is interactive (device code in the browser), so it runs after
-# the spinner steps, in the foreground.
+# the spinner steps, in the foreground. A_GH_MODE says how the VM reaches
+# GitHub: agent (the SSH agent forwarded with `pmox shell -A`; no key on
+# this VM), key (~/.ssh/id_ed25519, uploaded) or token (a pasted
+# fine-grained token; git over HTTPS). Unset (answers from before modes) is key.
 github_login() {
-  local home pub title login name email
-  home=$(user_home); pub="$home/.ssh/id_ed25519.pub"; title="$(hostname) ($A_USER)"
+  local home pub title mode scopes; home=$(user_home); pub="$home/.ssh/id_ed25519.pub"; title="$(hostname) ($A_USER)"
+  mode=${A_GH_MODE:-key}
   echo
   header "GitHub"
-  if as_user gh auth status -h github.com >/dev/null 2>&1; then
+  as_user sh -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/known_hosts'
+  # GitHub's published host keys, not a first-use scan.
+  as_user ssh-keygen -F github.com >/dev/null 2>&1 || as_user sh -c 'cat >> ~/.ssh/known_hosts' < "$CONF/github_known_hosts"
+  if [ "$mode" = key ]; then
+    [ -f "$pub" ] || install_sshkey
+    if [ "${GH_PASSPHRASE:-}" = yes ] && [ "$INTERACTIVE" = 1 ] && as_user ssh-keygen -y -P "" -f "${pub%.pub}" >/dev/null 2>&1; then
+      faint "Choose a passphrase for ${pub%.pub} (ssh-keygen asks twice):"
+      as_user ssh-keygen -p -q -P "" -f "${pub%.pub}" || warn "Passphrase not set; run 'ssh-keygen -p -f ~/.ssh/id_ed25519' later."
+    fi
+  fi
+
+  scopes=user:email
+  [ "$mode" = key ] && scopes="admin:public_key,$scopes"
+  picked gitsign && [ "$mode" != token ] && scopes="$scopes,admin:ssh_signing_key"
+  if gh_logged_in; then
     faint "gh is already logged in."
+  elif [ "$mode" = token ]; then
+    if [ -z "${GH_TOKEN_IN:-}" ]; then
+      note "GitHub: no token yet — run: gh auth login --with-token < token.txt && gh auth setup-git"
+      return 0
+    fi
+    printf '%s' "$GH_TOKEN_IN" | as_user sh -c 'cd && gh auth login -h github.com -p https --with-token' || {
+      warn "GitHub did not accept the token; run 'gh auth login --with-token' later."; return 0; }
+    record gh_login
+  elif [ "$INTERACTIVE" = 0 ]; then
+    note "GitHub: not logged in — run 'gh auth login' (or 'sudo devbox-setup' to be asked)."
+    return 0
   else
     faint "Open the URL below on any machine and enter the code."
-    as_user sh -c 'cd && gh auth login -h github.com -p ssh --skip-ssh-key -w -s admin:public_key' || {
+    as_user sh -c "cd && gh auth login -h github.com -p ssh --skip-ssh-key -w -s $scopes" || {
       warn "GitHub login skipped; run 'gh auth login' later."; return 0; }
+    record gh_login
   fi
-  local keys; keys=$(as_user gh ssh-key list 2>/dev/null || true)
-  if [ -f "$pub" ] && [[ "$keys" != *"$(cut -d' ' -f2 "$pub")"* ]]; then
-    if as_user gh ssh-key add "$pub" --title "$title"; then
-      ok "✓ SSH key added to GitHub as '$title'"
-    else
-      warn "Could not add the SSH key; add $pub at https://github.com/settings/keys"
+
+  case "$mode" in
+    token)
+      as_user sh -c 'cd && gh config set -h github.com git_protocol https && gh auth setup-git' ;;
+    agent)
+      if [ -n "${SSH_AUTH_SOCK:-}" ] && as_user ssh-add -l >/dev/null 2>&1; then
+        local out; out=$(as_user ssh -T -o BatchMode=yes git@github.com 2>&1 || true)
+        case "$out" in
+          *"successfully authenticated"*) ok "✓ git over SSH works through your forwarded agent" ;;
+          *) warn "GitHub did not accept a key from your forwarded agent: $out" ;;
+        esac
+      else
+        note "GitHub: git over SSH uses your forwarded SSH agent — connect with 'pmox shell -A' (or set forward_agent: true in pmox's config)."
+      fi ;;
+    key)
+      local keys; keys=$(as_user gh ssh-key list 2>/dev/null || true)
+      if [ -f "$pub" ] && [[ "$keys" != *"$(cut -d' ' -f2 "$pub")"* ]]; then
+        gh_ensure_scope admin:public_key || return 0
+        if as_user gh ssh-key add "$pub" --title "$title"; then
+          ok "✓ SSH key added to GitHub as '$title'"
+          record_gh_key "$pub" "$title" auth
+          faint "If an organization uses SAML SSO, authorize this key: https://github.com/settings/keys → Configure SSO"
+        else
+          warn "Could not add the SSH key; add $pub at https://github.com/settings/keys"
+        fi
+      fi ;;
+  esac
+  github_identity
+}
+
+# gh_ensure_scope SCOPE — add SCOPE to gh's login (it asks in the browser);
+# without a terminal, leave a note and return 1.
+gh_ensure_scope() {
+  gh_has_scope "$1" && return 0
+  if [ "$INTERACTIVE" = 0 ]; then
+    note "GitHub: the gh login lacks $1 — run: gh auth refresh -h github.com -s $1, then 'sudo devbox-setup --yes'."
+    return 1
+  fi
+  faint "gh needs the $1 scope: open the URL below and enter the code."
+  as_user sh -c "cd && gh auth refresh -h github.com -s $1" || { warn "Scope $1 not added."; return 1; }
+}
+
+# github_identity — fill a missing git identity from the GitHub account:
+# a verified email (primary first; asks when there are several), the
+# noreply address only when there's nothing else.
+github_identity() {
+  [ -z "$(as_user git config --global user.email 2>/dev/null || true)" ] || return 0
+  local login name email emails n
+  login=$(as_user gh api user -q .login 2>/dev/null || true)
+  name=$(as_user gh api user -q '.name // .login' 2>/dev/null || true)
+  emails=$(as_user gh api user/emails -q '.[] | select(.verified) | "\(.primary)\t\(.email)"' 2>/dev/null | sort -r | cut -f2 || true)
+  n=$(printf '%s' "$emails" | grep -c . || true)
+  if [ "$n" -gt 1 ] && [ "$INTERACTIVE" = 1 ]; then
+    # shellcheck disable=SC2086
+    email=$(gum choose --header "Git email (verified on GitHub)" $emails || true)
+  else
+    email=$(printf '%s\n' "$emails" | sed -n 1p)
+  fi
+  [ -n "$email" ] || email=$(as_user gh api user -q '.email // empty' 2>/dev/null || true)
+  [ -z "$email" ] && [ -n "$login" ] && email="$(as_user gh api user -q .id)+$login@users.noreply.github.com"
+  if [ -n "$email" ]; then
+    as_user git config --global user.name "$name"
+    as_user git config --global user.email "$email"
+    ok "✓ git identity: $name <$email>"
+  fi
+}
+
+# install_gitsign — sign commits and tags with SSH: the forwarded agent's
+# key (agent mode) or ~/.ssh/id_ed25519, uploaded as a signing key. Runs in
+# the foreground after the GitHub login (the scope may need the browser).
+install_gitsign() {
+  local home mode key signingkey email allowed title; home=$(user_home); mode=${A_GH_MODE:-key}
+  title="$(hostname) ($A_USER) signing"
+  echo
+  header "Commit signing"
+  if [ "$mode" = agent ]; then
+    key=$(as_user ssh-add -L 2>/dev/null | sed -n 1p || true)
+    if [ -z "$key" ] || [[ "$key" == "The agent has no identities"* ]]; then
+      note "Commit signing: no key in your forwarded agent — reconnect with 'pmox shell -A' and run 'sudo devbox-setup --yes'."
+      return 0
     fi
+    signingkey="key::$key"
+  else
+    key=$(cat "$home/.ssh/id_ed25519.pub" 2>/dev/null || true)
+    [ -n "$key" ] || { note "Commit signing: no ~/.ssh/id_ed25519.pub yet; run 'sudo devbox-setup --yes' after the GitHub step."; return 0; }
+    signingkey="$home/.ssh/id_ed25519.pub"
   fi
-  as_user sh -c 'ssh-keygen -F github.com >/dev/null 2>&1 || ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null'
-  # Fill a missing git identity from the GitHub account.
-  if [ -z "$(as_user git config --global user.email 2>/dev/null || true)" ]; then
-    login=$(as_user gh api user -q .login 2>/dev/null || true)
-    name=$(as_user gh api user -q '.name // .login' 2>/dev/null || true)
-    email=$(as_user gh api user -q '.email // empty' 2>/dev/null || true)
-    [ -z "$email" ] && [ -n "$login" ] && email="$(as_user gh api user -q .id)+$login@users.noreply.github.com"
-    if [ -n "$email" ]; then
-      as_user git config --global user.name "$name"
-      as_user git config --global user.email "$email"
-      ok "✓ git identity: $name <$email>"
-    fi
+  email=$(as_user git config --global user.email 2>/dev/null || true)
+  allowed="$home/.config/git/allowed_signers"
+  as_user git config --global gpg.format ssh
+  as_user git config --global user.signingkey "$signingkey"
+  as_user git config --global commit.gpgsign true
+  as_user git config --global tag.gpgsign true
+  as_user git config --global gpg.ssh.allowedSignersFile "$allowed"
+  as_user mkdir -p "$(dirname "$allowed")"
+  local line; line="${email:-*} $(cut -d' ' -f1,2 <<< "$key")"
+  as_user sh -c 'touch "$1"; grep -qxF "$2" "$1" || echo "$2" >> "$1"' _ "$allowed" "$line"
+  ok "✓ git signs commits with $(cut -d' ' -f1 <<< "$key")"
+
+  if [ "$mode" = token ]; then
+    note "Commit signing: add your key as a Signing Key at https://github.com/settings/ssh/new so GitHub shows commits as verified."
+    return 0
   fi
+  gh_logged_in || { note "Commit signing: log gh in, then run 'sudo devbox-setup --yes' to upload the signing key."; return 0; }
+  gh_ensure_scope admin:ssh_signing_key || return 0
+  if as_user gh api user/ssh_signing_keys -q '.[].key' 2>/dev/null | grep -qF "$(cut -d' ' -f2 <<< "$key")"; then
+    return 0
+  fi
+  local tmp; tmp=$(mktemp); chmod 644 "$tmp"
+  printf '%s\n' "$key" > "$tmp"
+  if as_user gh ssh-key add "$tmp" --type signing --title "$title"; then
+    ok "✓ signing key added to GitHub as '$title'"
+    record_gh_key "$tmp" "$title" signing
+  else
+    warn "Could not add the signing key; add it at https://github.com/settings/ssh/new (Signing Key)."
+  fi
+  rm -f "$tmp"
+}
+
+# record_gh_key PUB TITLE auth|signing — record the uploaded key's GitHub id.
+record_gh_key() {
+  local api=user/keys id; [ "$3" = signing ] && api=user/ssh_signing_keys
+  id=$(as_user gh api "$api" -q ".[] | select(.key | startswith(\"$(cut -d' ' -f1,2 "$1")\")) | .id" 2>/dev/null | head -n 1)
+  [ -n "$id" ] && record gh_key "$id	$2	$3"
+  return 0
 }
 
 # run_id ID — install one catalog entry.
@@ -1191,7 +1601,7 @@ apply() {
     | put_file /etc/apt/apt.conf.d/90devbox-setup 0644 || true
   local id
   for id in $PLAN; do
-    [ "$id" = github ] && continue
+    case "$id" in github|gitsign|registries) continue ;; esac
     # Skip what depends on a step that failed.
     local n skip=
     for n in $(needs_of "$id"); do case " $FAILED " in *" $n "*) skip=$n ;; esac; done
@@ -1218,6 +1628,10 @@ apply() {
     faint "Change credentials in ~$A_USER/.mcp/<name>/env, then run mcp-sync as $A_USER."
   fi
   if picked github && ! picked_failed essentials; then github_login; fi
+  if picked gitsign && ! picked_failed essentials; then install_gitsign; fi
+  if picked registries && ! picked_failed docker; then
+    step registries "$(label_of registries)" install_registries
+  fi
 
   if [ -s "$STATE/.notes" ]; then
     echo
@@ -1225,8 +1639,8 @@ apply() {
   fi
   echo
   write_manage_notes
-  if picked tailscale && [ -z "$TS_AUTHKEY" ] && ! tailscale status >/dev/null 2>&1; then
-    faint "Tailscale is installed; run 'sudo tailscale up' to log in."
+  if [ "$MISSING_COUNT" -gt 0 ]; then
+    warn "$MISSING_COUNT secret(s) to fill in — see ~$A_USER/devbox-setup.txt"
   fi
   faint "How each tool was installed and how to update it: ~$A_USER/devbox-setup.txt"
   faint "Start a new shell (log out and back in) to pick up the new shell, groups and PATH."
@@ -1234,6 +1648,54 @@ apply() {
   [ -z "$FAILED" ] || { err "Failed:$FAILED — fix and re-run devbox-setup."; exit 1; }
 }
 picked_failed() { case " $FAILED " in *" $1 "*) return 0 ;; esac; return 1; }
+
+MISSING_COUNT=0
+CRED_ITEMS="agentkeys npmrc registries agekey mcpjungle github tailscale"
+has_cred_items() { local i; for i in $CRED_ITEMS; do case " $1 " in *" $i "*) return 0 ;; esac; done; return 1; }
+
+# missing_secrets IDS — one line per credential the items in IDS still
+# need: "FILE  KEY — where to get it[; then: command]".
+missing_secrets() {
+  local ids=" $1 " home r item key kind prompt how when def f n k
+  home=$(user_home)
+  case "$ids" in *" agentkeys "*)
+    f="$home/.config/devbox/agent.env"
+    for r in "${CRED_ROWS[@]}"; do
+      IFS='|' read -r item key kind prompt how when def <<< "$r"
+      [ "$item" = agentkeys ] && [ "$kind" = secret ] || continue
+      { [ -z "$when" ] || user_has "$when"; } || continue
+      [ -z "$(envget "$key" "$f")" ] && ! cred_logged_in "$key" && echo "$f  $key — $how"
+    done ;;
+  esac
+  case "$ids" in *" npmrc "*)
+    [ -n "$A_NPM_SCOPE" ] && [ -z "$(npmrc_token)" ] && \
+      echo "$home/.npmrc  _authToken in the devbox-setup block ($A_NPM_SCOPE) — a token with read:packages: https://github.com/settings/tokens" ;;
+  esac
+  case "$ids" in *" registries "*)
+    for r in $A_REGISTRIES; do
+      reg_logged_in "$r" || echo "$home/.docker/config.json  $r — run: docker login $r"
+    done ;;
+  esac
+  case "$ids" in *" agekey "*)
+    grep -q '^AGE-SECRET-KEY-' "$home/.config/sops/age/keys.txt" 2>/dev/null || \
+      echo "$home/.config/sops/age/keys.txt  AGE-SECRET-KEY — paste your key, or run: age-keygen -o ~/.config/sops/age/keys.txt" ;;
+  esac
+  case "$ids" in *" mcpjungle "*)
+    for n in $A_MCP_SERVERS; do
+      spec_file "$n" >/dev/null || continue
+      for k in $(spec_field "$n" REQUIRED); do
+        [ -z "$(envget "$k" "$home/.mcp/$n/env")" ] && echo "$home/.mcp/$n/env  $k — see the comments in the file; then run: mcp-sync"
+      done
+    done ;;
+  esac
+  case "$ids" in *" github "*)
+    gh_logged_in || echo "gh  GitHub login — run: gh auth login" ;;
+  esac
+  case "$ids" in *" tailscale "*)
+    have tailscale && ! tailscale status >/dev/null 2>&1 && echo "tailscale  login — run: sudo tailscale up" ;;
+  esac
+  return 0
+}
 
 # write_manage_notes — ~/devbox-setup.txt: everything installed so far,
 # grouped by how it was installed, with how to manage it.
@@ -1274,9 +1736,145 @@ write_manage_notes() {
       echo "  vendor apt repos update with apt upgrade; claude and omp update themselves."
       echo
     fi
+    case " $all " in *" github "*)
+      echo "GitHub (${A_GH_MODE:-key} mode):"
+      case "${A_GH_MODE:-key}" in
+        agent) echo "  git over SSH uses your laptop's SSH agent: connect with 'pmox shell -A' (or forward_agent: true in pmox's config)." ;;
+        token) echo "  git uses HTTPS with your token through gh; when it expires: gh auth login --with-token" ;;
+        *)     if python3 "$SHARE/picker.py" created list "$STATE" | grep -q '^gh_key.*auth$'; then
+                 echo "  ~/.ssh/id_ed25519 is on your GitHub account (https://github.com/settings/keys)."
+               else
+                 echo "  ~/.ssh/id_ed25519 is not on GitHub yet: log gh in, then run 'sudo devbox-setup --yes'."
+               fi
+               echo "  For an organization with SAML SSO, authorize the key at https://github.com/settings/keys (Configure SSO)." ;;
+      esac
+      echo "  Remove what devbox-setup added to GitHub and this VM: sudo devbox-setup forget"
+      echo ;;
+    esac
+    local missing; missing=$(missing_secrets "$all")
+    MISSING_COUNT=$(printf '%s' "$missing" | grep -c . || true)
+    if [ -n "$missing" ]; then
+      echo "Secrets to fill in (devbox-setup never stores them: put each in its file, then run the command):"
+      printf '%s\n' "$missing" | sed "s|$(user_home)/|~/|g; s/^/  /"
+      echo
+    elif has_cred_items "$all"; then
+      echo "Secrets to fill in: none."
+      echo
+    fi
+    local agepub; agepub=$(as_user_sh "age-keygen -y ~/.config/sops/age/keys.txt" 2>/dev/null || true)
+    [ -n "$agepub" ] && { echo "age public key (for .sops.yaml recipients): $agepub"; echo; }
     echo "Run 'sudo devbox-setup' again to add more."
   } > "$f"
   chown -h "$A_USER:" "$f"
+}
+
+# --- forget ---------------------------------------------------------------------
+
+# forget — undo what devbox-setup created and recorded in created.json, and
+# nothing else: the GitHub keys it uploaded, its registry logins, the
+# values in the credential files it wrote and its blocks in yours, and the
+# gh and Tailscale logins it made. Prints where to revoke the tokens it
+# can't revoke itself.
+forget() {
+  local entries kind v1 v2 v3 rc=0 f links=
+  entries=$(python3 "$SHARE/picker.py" created list "$STATE")
+  header "devbox-setup forget"
+  if [ -z "$entries" ]; then
+    say "devbox-setup has no record of creating anything on this VM."
+    say "Keys uploaded by a devbox-setup older than this record: check https://github.com/settings/keys"
+    return 0
+  fi
+  say "This removes, for $A_USER:"
+  while IFS=$'\t' read -r kind v1 v2 v3; do
+    case "$kind" in
+      gh_key)    say "  - GitHub $v3 key '$v2' (id $v1)" ;;
+      gh_login)  say "  - the gh login on this VM" ;;
+      registry)  say "  - the docker login to $v1" ;;
+      file)      say "  - the values in $v1" ;;
+      block)     say "  - devbox-setup's block in $v1" ;;
+      tailscale) say "  - this VM's Tailscale login" ;;
+    esac
+  done <<< "$entries"
+  if [ "$YES" = 0 ]; then
+    [ -t 0 ] || die "forget needs a terminal to confirm (or --yes)"
+    printf 'Remove them? [y/N] '
+    local a; read -r a
+    case "$a" in y|Y|yes) ;; *) say "Nothing removed."; return 0 ;; esac
+  fi
+
+  # Tokens in the files, for the revoke list (before they are emptied).
+  while IFS=$'\t' read -r kind v1 v2 v3; do
+    case "$kind" in file|block) [ -f "$v1" ] || continue ;; *) continue ;; esac
+    links="$links$(revoke_hints "$v1")\n"
+  done <<< "$entries"
+
+  # 1. GitHub keys, while gh is still logged in.
+  while IFS=$'\t' read -r kind v1 v2 v3; do
+    [ "$kind" = gh_key ] || continue
+    local api=user/keys; [ "$v3" = signing ] && api=user/ssh_signing_keys
+    local out; out=$(as_user gh api -X DELETE "$api/$v1" 2>&1) || case "$out" in
+      *"Not Found"*|*404*) ;;
+      *) warn "✗ GitHub key '$v2': $out"; rc=1; continue ;;
+    esac
+    ok "✓ removed the GitHub key '$v2'"
+    unrecord gh_key "$v1	$v2	$v3"
+  done <<< "$entries"
+  # 2. Registry logins.
+  while IFS=$'\t' read -r kind v1 _; do
+    [ "$kind" = registry ] || continue
+    if as_user docker logout "$v1" >/dev/null 2>&1; then ok "✓ logged out of $v1"; unrecord registry "$v1"
+    else warn "✗ docker logout $v1"; rc=1; fi
+  done <<< "$entries"
+  # 3. Credential files keep their keys (a re-run asks again); blocks go.
+  while IFS=$'\t' read -r kind v1 _; do
+    case "$kind" in file|block) ;; *) continue ;; esac
+    f=$v1
+    [ -f "$f" ] || { unrecord "$kind" "$f"; continue; }
+    local tmp; tmp=$(mktemp)
+    awk -v b="$NPMRC_BEGIN" -v e="$NPMRC_END" '$0 == b { skip = 1 } !skip { print } $0 == e { skip = 0 }' "$f" \
+      | sed -e 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1=/' -e '/^AGE-SECRET-KEY-/d' > "$tmp"
+    if [ "$kind" = block ]; then
+      awk -v b="$NPMRC_BEGIN" -v e="$NPMRC_END" '$0 == b { skip = 1 } !skip { print } $0 == e { skip = 0 }' "$f" > "$tmp"
+      unrecord block "$f"
+    fi
+    cat "$tmp" > "$f"; rm -f "$tmp"
+    ok "✓ emptied the secrets in $f"
+  done <<< "$entries"
+  # 4–5. Logins.
+  if grep -q '^gh_login' <<< "$entries"; then
+    if as_user gh auth logout -h github.com </dev/null >/dev/null 2>&1 || ! gh_logged_in; then
+      ok "✓ logged gh out"; unrecord gh_login
+    else warn "✗ gh auth logout"; rc=1; fi
+  fi
+  if grep -q '^tailscale' <<< "$entries"; then
+    if tailscale logout >/dev/null 2>&1; then ok "✓ logged out of Tailscale"; unrecord tailscale
+    else warn "✗ tailscale logout"; rc=1; fi
+  fi
+
+  echo
+  say "Tokens can only be revoked where they were made:"
+  printf '%b' "$links" | { grep . || true; } | sort -u | sed 's/^/  /'
+  grep -q '^gh_login' <<< "$entries" && say "  GitHub tokens and authorized apps: https://github.com/settings/applications"
+  return "$rc"
+}
+unrecord() { python3 "$SHARE/picker.py" created remove "$STATE" "$@"; }
+
+# revoke_hints FILE — "where to revoke" lines for the secrets set in FILE.
+revoke_hints() {
+  local key v r item k kind prompt how when def
+  while IFS='=' read -r key v; do
+    case "$key" in ''|\#*|*[!A-Za-z0-9_]*) continue ;; esac
+    [ -n "$v" ] && is_secret "$key" || continue
+    how=
+    for r in "${CRED_ROWS[@]}"; do
+      IFS='|' read -r item k kind prompt how when def <<< "$r"
+      [ "$k" = "$key" ] && break
+      how=
+    done
+    printf '%s\n' "$key: ${how:-revoke it where it was created (see the comment in $1)}"
+  done < "$1"
+  grep -q '_authToken=.' "$1" && printf '%s\n' "npm token: https://github.com/settings/tokens (or your registry's token page)"
+  return 0
 }
 
 dry_run() {
@@ -1297,18 +1895,25 @@ dry_run() {
 # --- Main ------------------------------------------------------------------------
 
 load_answers
+if [ "$FORGET" = 1 ]; then
+  A_USER=${A_USER:-${SUDO_USER:-$(id -un)}}
+  forget
+  exit $?
+fi
 if [ "$YES" = 1 ]; then
   [ -n "$A_PICKS" ] || die "no saved choices yet; run devbox-setup without --yes first"
+  id "$A_USER" >/dev/null 2>&1 || die "the saved user '$A_USER' does not exist; run devbox-setup without --yes"
   RUN_PICKS=$A_PICKS RUN_MISE_EXTRA=$A_MISE_EXTRA
   PLAN=$(resolve $RUN_PICKS)
 else
   { [ -t 0 ] && [ -t 1 ]; } || die "needs a terminal (or --yes to re-apply saved choices)"
   ensure_gum
+  INTERACTIVE=1
   while :; do
     ask
     [ "$DRY" = 1 ] && { summary; break; }
     review && break
-    MCP_KEYS=()
+    MCP_KEYS=() CRED=() REG_USER=() REG_PASS=() AGE_CHOICE= AGE_KEY= GH_TOKEN_IN= GH_PASSPHRASE=
   done
 fi
 

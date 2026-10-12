@@ -110,6 +110,28 @@ var devboxPushFn = func(ctx context.Context, target *sshTarget) error {
 	return nil
 }
 
+// Commands pmox delete runs on a VM: is there anything for
+// `devbox-setup forget` to remove, and run it.
+const (
+	devboxCreatedCheck  = `if sudo -n grep -qs '"kind"' /var/lib/devbox-setup/created.json; then echo present; fi`
+	devboxForgetCommand = "sudo -n devbox-setup forget --yes"
+)
+
+// devboxRemoteFn runs command on the target over ssh (no prompts) and
+// returns its combined output. A seam for tests.
+var devboxRemoteFn = func(ctx context.Context, target *sshTarget, command string, timeout time.Duration) (string, error) {
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return "", errors.New("ssh binary not found on PATH")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	args := devboxPushArgs(target, guestHostKeyOpts())
+	args[len(args)-1] = command
+	out, err := exec.CommandContext(ctx, sshPath, args...).CombinedOutput()
+	return string(out), err
+}
+
 func devboxPushArgs(target *sshTarget, hostKeyOpts []string) []string {
 	args := append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=15"}, hostKeyOpts...)
 	if target.Key != "" {

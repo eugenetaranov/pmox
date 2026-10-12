@@ -33,12 +33,56 @@ type sshFlags struct {
 	user     string
 	identity string
 	force    bool
+
+	// Forwarding, on the commands that register it (see addForwardFlags).
+	forwardAgent bool
+	forwards     []string
 }
 
 func addSSHFlags(cmd *cobra.Command, f *sshFlags) {
 	cmd.Flags().StringVarP(&f.user, "user", "u", "", "SSH login user (defaults to server config 'user', then 'pmox')")
 	cmd.Flags().StringVarP(&f.identity, "identity", "i", "", "path to SSH private key")
 	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check")
+}
+
+// addForwardFlags registers -A (and, with ports, -L) on a command.
+func addForwardFlags(cmd *cobra.Command, f *sshFlags, ports bool) {
+	cmd.Flags().BoolVarP(&f.forwardAgent, "forward-agent", "A", false,
+		"forward your local ssh-agent (defaults to server config 'forward_agent'); root on the VM can use it while you're connected")
+	if ports {
+		cmd.Flags().StringArrayVarP(&f.forwards, "forward", "L", nil,
+			"forward a local port to the VM: N (= N:localhost:N) or any ssh -L spec (repeatable)")
+	}
+}
+
+// wantForwardAgent resolves -A: the flag when given, else the server's
+// forward_agent setting.
+func wantForwardAgent(cmd *cobra.Command, f *sshFlags, srv *config.Server) bool {
+	if cmd.Flags().Changed("forward-agent") {
+		return f.forwardAgent
+	}
+	return srv != nil && srv.ForwardAgent
+}
+
+// forwardingArgs returns the ssh options for agent and port forwarding.
+func forwardingArgs(agent bool, forwards []string) []string {
+	var args []string
+	if agent {
+		args = append(args, "-A")
+	}
+	for _, spec := range forwards {
+		args = append(args, "-L", expandForward(spec))
+	}
+	return args
+}
+
+// expandForward turns a bare port N into N:localhost:N; any other spec is
+// passed to ssh -L unchanged.
+func expandForward(spec string) string {
+	if spec != "" && strings.Trim(spec, "0123456789") == "" {
+		return spec + ":localhost:" + spec
+	}
+	return spec
 }
 
 func newShellCmd() *cobra.Command {
@@ -56,13 +100,17 @@ readiness before connecting.
 
 The default login user is "pmox" (the cloud-init user). The default
 identity key is derived from the configured SSH public key by
-stripping the .pub suffix. Override with --user / --identity.`,
+stripping the .pub suffix. Override with --user / --identity.
+
+-A forwards your ssh-agent, so git on the VM can use your laptop's
+keys; -L forwards ports (pmox shell -L 3000 web1).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runShell(cmd, args, f)
 		},
 	}
 	addSSHFlags(cmd, f)
+	addForwardFlags(cmd, f, true)
 	return cmd
 }
 
@@ -92,6 +140,7 @@ The default login user is "pmox". Override with --user / --identity.`,
 		},
 	}
 	addSSHFlags(cmd, f)
+	addForwardFlags(cmd, f, false)
 	return cmd
 }
 
@@ -131,7 +180,8 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 
 	// ssh runs as a child (not exec'd over pmox) so a rejected key can be
 	// explained afterwards; the session's exit status passes through.
-	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), nil)
+	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), f.forwards)...)
+	sshArgs := buildSSHArgs(sshPath, target, opts, nil)
 	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 
@@ -164,7 +214,8 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	sshArgs := buildSSHArgs(sshPath, target, guestHostKeyOpts(), remoteArgs)
+	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), nil)...)
+	sshArgs := buildSSHArgs(sshPath, target, opts, remoteArgs)
 	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 

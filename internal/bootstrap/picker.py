@@ -410,7 +410,8 @@ class Picker:
 # pairs (`answers read`) and hands them back the same way (`answers write`).
 
 ANSWER_VARS = ["A_USER", "A_PICKS", "A_MISE_EXTRA", "A_MCP_LISTEN", "A_MCP_SERVERS",
-               "A_WIRE_AGENTS", "A_GIT_NAME", "A_GIT_EMAIL", "A_TZ"]
+               "A_WIRE_AGENTS", "A_GIT_NAME", "A_GIT_EMAIL", "A_TZ",
+               "A_GH_MODE", "A_NPM_SCOPE", "A_NPM_REGISTRY", "A_REGISTRIES"]
 LEGACY_VARS = set(ANSWER_VARS) | {"A_WIRE_CLAUDE"}  # A_WIRE_CLAUDE: saved before v0.32
 ANSWERS_VERSION = 1
 
@@ -565,6 +566,10 @@ def vals_to_doc(vals):
         "wire_agents": True if wire == "yes" else False if wire == "no" else None,
         "git": {"name": vals.get("A_GIT_NAME", ""), "email": vals.get("A_GIT_EMAIL", "")},
         "tz": vals.get("A_TZ", ""),
+        # Settings of the credential items; never their secrets.
+        "github": {"mode": vals.get("A_GH_MODE", "")},
+        "npm": {"scope": vals.get("A_NPM_SCOPE", ""), "registry": vals.get("A_NPM_REGISTRY", "")},
+        "registries": words(vals.get("A_REGISTRIES")),
     }
 
 
@@ -575,13 +580,16 @@ def doc_to_vals(doc):
         raise ValueError("answers.json version %r; this devbox-setup reads %d" % (doc.get("version"), ANSWERS_VERSION))
     s = lambda k, d=doc: d.get(k) if isinstance(d.get(k), str) else ""
     lst = lambda k: " ".join(x for x in doc.get(k) or [] if isinstance(x, str) and x.strip() == x and " " not in x)
-    git = doc.get("git") if isinstance(doc.get("git"), dict) else {}
+    sub = lambda k: doc.get(k) if isinstance(doc.get(k), dict) else {}
+    git, gh, npm = sub("git"), sub("github"), sub("npm")
     wire = doc.get("wire_agents")
     return {
         "A_USER": s("user"), "A_PICKS": lst("picks"), "A_MISE_EXTRA": lst("mise_extra"),
         "A_MCP_LISTEN": s("mcp_listen"), "A_MCP_SERVERS": lst("mcp_servers"),
         "A_WIRE_AGENTS": "yes" if wire is True else "no" if wire is False else "",
         "A_GIT_NAME": s("name", git), "A_GIT_EMAIL": s("email", git), "A_TZ": s("tz"),
+        "A_GH_MODE": s("mode", gh), "A_NPM_SCOPE": s("scope", npm), "A_NPM_REGISTRY": s("registry", npm),
+        "A_REGISTRIES": lst("registries"),
     }
 
 
@@ -644,9 +652,44 @@ def answers_main(argv):
     write_json(os.path.join(state, "answers.json"), vals_to_doc(vals))
 
 
+# --- What devbox-setup created (for `devbox-setup forget`) -------------------
+# created.json: [{"kind": ..., "value": ...}], in creation order. Kinds:
+# gh_key (id<TAB>title<TAB>auth|signing), gh_login, registry, file, block
+# (path of a file holding a devbox-setup block), tailscale. Never a secret.
+
+def created_main(argv):
+    if len(argv) < 2 or argv[0] not in ("add", "list", "remove"):
+        raise SystemExit("usage: picker.py created add|remove STATE KIND [VALUE] · created list STATE")
+    op, state = argv[0], argv[1]
+    path = os.path.join(state, "created.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = [e for e in json.load(f) if isinstance(e, dict)]
+    except (OSError, ValueError):
+        entries = []
+    if op == "list":
+        for e in entries:
+            print("%s\t%s" % (e.get("kind", ""), e.get("value", "")))
+        return
+    if len(argv) not in (3, 4):
+        raise SystemExit("usage: picker.py created %s STATE KIND [VALUE]" % op)
+    entry = {"kind": argv[2], "value": argv[3] if len(argv) == 4 else ""}
+    if op == "add":
+        if entry in entries:
+            return
+        entries.append(entry)
+    else:
+        entries = [e for e in entries if e != entry]
+    os.makedirs(state, mode=0o700, exist_ok=True)
+    write_json(path, entries)
+
+
 def main():
     if sys.argv[1:2] == ["answers"]:
         answers_main(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["created"]:
+        created_main(sys.argv[2:])
         return
     ap = argparse.ArgumentParser()
     ap.add_argument("items", nargs="?")

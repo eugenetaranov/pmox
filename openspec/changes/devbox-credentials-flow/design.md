@@ -59,9 +59,10 @@ the user, from a skeleton, setting only keys that were typed.
 becomes a line under "Secrets to fill in", built from the row itself: file,
 key, how to get the value and the command that applies it.
 
-This is the same machinery MCP uses today, made general. MCP env files
-become rows generated from each spec's skeleton, so there is one code path
-and one note format.
+This generalises what MCP does today. MCP keeps its own prompt (its keys
+come from each spec's skeleton) but feeds the same "Secrets to fill in"
+note, so there is one note format. Items whose keys aren't fixed
+(`registries`, `agekey`) have their own short prompt and the same note.
 
 *Alternative:* a prompt function per item. That was rejected because it is
 how today's gaps happened; the note can't be generated from scattered code.
@@ -70,7 +71,7 @@ how today's gaps happened; the note can't be generated from scattered code.
 
 | Item | File | How it is applied |
 |---|---|---|
-| `agentkeys` | `~/.config/devbox/agent.env` (0600): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | `shell.sh` sources it in interactive shells. Codex also gets `codex login --with-api-key` when the key is set. |
+| `agentkeys` | `~/.config/devbox/agent.env` (0600): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | A small `~/.config/devbox/agent-env.sh`, added to `.bashrc` and `.zshrc`, exports the filled-in keys in interactive shells. Codex reads `OPENAI_API_KEY` from there; devbox-setup doesn't call `codex login`. |
 | `npmrc` | `~/.npmrc` (0600), a managed block between `# devbox-setup` markers: scope → registry plus `_authToken` | read by npm and pnpm directly |
 | `registries` | `~/.docker/config.json` through `docker login --password-stdin` for each registry typed; ghcr.io defaults to `gh auth token` when gh is logged in with `read:packages` | `docker login` |
 | `agekey` | `~/.config/sops/age/keys.txt` (0600): generate one, paste one, or leave empty; `SOPS_AGE_KEY_FILE` set in `shell.sh` | sops reads it |
@@ -169,7 +170,7 @@ to create it, as `jira.spec` does today.
 
 The **filesystem server is not added**. The agents already have the
 filesystem, and a docker MCP would need per-user mounts that a spec can't
-express. **Sentry** waits on a token-auth endpoint (see Open Questions).
+express. **Sentry** is left out for now (see Open Questions).
 
 ### D7. `forget` and the creation record
 
@@ -215,8 +216,8 @@ upload.
 - `pmox vm ssh-config` emits `ForwardAgent yes` when the config or its own
   `-A` says so.
 
-The flag help, and the first use per VM, carry a one-line warning: while
-you're connected, root on the VM can use your agent.
+The flag help carries a one-line warning: while you're connected, root on
+the VM can use your agent.
 
 ## Risks / Trade-offs
 
@@ -249,8 +250,7 @@ you're connected, root on the VM can use your agent.
 
 ## Open Questions
 
-- **Sentry:** add it as http bearer if `mcp.sentry.dev` accepts a user auth
-  token; otherwise leave it out until there is a pinned image.
-- **Codex:** confirm the exact non-interactive login
-  (`codex login --with-api-key` on stdin) against the current release
-  before wiring it in. Fall back to `agent.env` only.
+- ~~Sentry~~ Left out for now: its hosted server (`mcp.sentry.dev`) uses
+  OAuth, and there is no official image to pin. Revisit when either changes.
+- ~~Codex non-interactive login~~ Settled: Codex uses `OPENAI_API_KEY` from
+  `agent.env`; no `codex login` call.

@@ -52,6 +52,10 @@ type Server struct {
 	// ClockSync controls whether launched VMs get chrony following the
 	// Proxmox host's clock (KVM PTP) in their cloud-init. Nil means yes.
 	ClockSync *bool `yaml:"clock_sync,omitempty"`
+
+	// ForwardAgent makes pmox shell/exec and ssh-config forward the local
+	// ssh-agent to this server's VMs (ssh -A); --forward-agent overrides.
+	ForwardAgent bool `yaml:"forward_agent,omitempty"`
 }
 
 // DevboxSetupEnabled reports whether launched VMs get devbox-setup.

@@ -217,6 +217,16 @@ shows an **arrow-key picker** when several do:
 - `umount` — omit the argument and pmox lists the running mounts to stop (one running mount is stopped without asking).
 - `context use` — omit the name to pick a context.
 
+**Agent and port forwarding.** `pmox shell -A web1` forwards your local
+ssh-agent, so git on the VM uses your laptop's keys and no key has to live
+on the VM; `pmox exec -A` does the same for one command. `pmox shell -L 3000
+web1` (repeatable) forwards a local port to the VM (`3000:localhost:3000`;
+any `ssh -L` spec is passed through), e.g. for a dev server or an OIDC login
+callback. `forward_agent: true` under a server turns `-A` on for its VMs
+(`--forward-agent=false` overrides it once), and `pmox vm ssh-config` then
+writes `ForwardAgent yes`. While you're connected, root on the VM can use
+the forwarded agent.
+
 **The `<vm>:<path>` target field** (mount, cp, sync) lists your pmox
 VMs under the input and suggests a greyed default — `web1:/mnt/<local
 folder>` for `mount`, `web1:~/<local folder>` for uploads:
@@ -463,7 +473,8 @@ clears the search; Esc on an empty search quits.
    admin and debug tools (dig, mtr, tcpdump, iperf3, nmap, strace, btop, …),
    Docker (with log rotation and 10.200.0.0/16 networks), Podman + skopeo +
    buildah, container tools (lazydocker, dive, hadolint, crane, cosign),
-   Tailscale, NFS/SMB clients, node_exporter + glances. Settings: dev limits
+   Tailscale, NFS/SMB clients, node_exporter + glances, container registry
+   logins (`docker login`; ghcr.io can use your gh token). Settings: dev limits
    (inotify, open files), zram swap, a journal size cap, timezone + locale
    (the clock itself is set up by pmox at launch; see
    [Clock sync](#clock-sync)). Opt-in hardening: automatic
@@ -491,7 +502,8 @@ clears the search; Esc on an empty search quits.
    files, keeping the old ones as `.orig`.
 3. **Dev tools:** lazygit, just + watchexec + hyperfine, Task, yq, xh + hurl,
    linters and hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit),
-   database clients, pgcli + usql, perf/valgrind/bpftrace, act.
+   database clients, pgcli + usql, perf/valgrind/bpftrace, act, a private npm
+   registry (scope and token in `~/.npmrc`).
 4. **Languages** (mise, except PHP and C/C++ from apt): Go + gopls, delve,
    govulncheck, golangci-lint; Python 3.13 + uv + ruff; Node + pnpm +
    TypeScript; Bun; Deno; Java 25 + Maven + Gradle + Kotlin; Rust +
@@ -499,25 +511,79 @@ clears the search; Esc on an empty search quits.
 5. **Cloud** (mise): AWS, Google Cloud, Azure, DigitalOcean, Hetzner,
    cloudflared, restic + rclone.
 6. **IaC** (mise): Terraform, OpenTofu, terragrunt + tflint + terraform-docs,
-   trivy + checkov, Packer, Ansible, sops + age, Vault.
+   trivy + checkov, Packer, Ansible, sops + age (and an age key: generate or
+   paste), Vault.
 7. **Kubernetes:** kubectl, kubectx/kubens, Helm 3, k9s; stern, kustomize,
    kubecolor, kubie, kubeconform; krew with plugins; helmfile + helm-diff;
    Argo CD and Flux CLIs; kind, k3d, or k3s as a real cluster on the VM;
    Tilt, Skaffold, ctlptl; talosctl.
 8. **AI:** Claude Code, Codex CLI, Gemini CLI, OpenCode, Aider, Goose, omp,
    Ollama, OpenSpec, ECC for Claude Code (agents, rules and commands, no hooks), a `CLAUDE.md` /
-   `AGENTS.md` describing the VM, and the MCPJungle gateway with MCP servers
-   in Docker (Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex
+   `AGENTS.md` describing the VM, agent API keys (Anthropic, OpenAI, Gemini),
+   and the MCPJungle gateway with MCP servers (GitHub, Linear, Postgres,
+   Playwright, Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex
    and Gemini CLI.
 9. **Accounts and keys:** git identity, git defaults (rebase on pull, push
    sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
-   GitHub CLI login with the key added to your account, GitLab CLI.
+   GitHub login, commit signing with SSH, GitLab CLI.
 
 After the checklists, it asks every typed question in one place: extra mise
-tools, git name and email, timezone, and MCP server keys (stored in
-`~/.mcp/<name>/env`). Then a review screen offers Install, Start over or Quit.
-`~/devbox-setup.txt` lists everything installed so far, grouped by how it was
-installed, with how to update or remove it.
+tools, git name and email, timezone, how to reach GitHub, and the
+credentials of the items you picked. Then a review screen offers Install,
+Start over or Quit. `~/devbox-setup.txt` lists everything installed so far,
+grouped by how it was installed, with how to update or remove it.
+
+### Credentials
+
+devbox-setup never stores or ships a credential. An item that needs one
+(agent API keys, MCP server keys, an npm or registry token, an age key, a
+GitHub token) asks for it once and writes it straight into that tool's own
+config file, readable only by you (0600). Leave a value empty, or run with
+`--yes`, and the file is still written, with each key left empty and a
+comment saying where to get it. Either way, `~/devbox-setup.txt` ends with
+**Secrets to fill in**: one line per value still missing, with its file,
+the key, where to get it, and the command that applies it (`mcp-sync`,
+`docker login ghcr.io`, …). The run ends with how many are missing.
+
+| Item | File |
+|---|---|
+| Agent API keys | `~/.config/devbox/agent.env`, exported by interactive shells only (not services or cron) |
+| MCP servers | `~/.mcp/<name>/env`, then `mcp-sync` |
+| Private npm registry | a devbox-setup block in `~/.npmrc` (your own lines are kept) |
+| Registry logins | `~/.docker/config.json`, through `docker login` |
+| age key | `~/.config/sops/age/keys.txt`, with `SOPS_AGE_KEY_FILE` set |
+
+`sudo devbox-setup --yes` never waits for input: a step that would (the
+GitHub browser login, adding a gh scope, `tailscale up` without a key)
+leaves a note naming the command to run instead.
+
+**GitHub** asks how the VM should reach it:
+
+- **Forwarded agent** (the default when you connected with
+  `pmox shell -A`): no key on the VM. git over SSH uses your laptop's
+  agent, and gh logs in with the browser code, without permission to add
+  keys to your account.
+- **A key on this VM**: `~/.ssh/id_ed25519` (optionally with a passphrase)
+  uploaded to your account. For an organization with SAML SSO, authorize it
+  at github.com/settings/keys → Configure SSO.
+- **A fine-grained token**: pasted once, used by gh and by git over HTTPS;
+  nothing is uploaded.
+
+github.com's host keys come from GitHub's published list, not a first-use
+scan. When git has no email yet, you pick one of your verified addresses
+(the noreply one only if it's all there is). **Sign commits with SSH**
+signs commits and tags with the agent's key or the VM's key, uploads it as
+a signing key, and writes `~/.config/git/allowed_signers`.
+
+**`sudo devbox-setup forget`** undoes what devbox-setup created, and only
+that: the GitHub keys it uploaded, its registry logins, the values in the
+credential files it wrote (the keys stay, so a re-run asks again), its
+`~/.npmrc` block, and the gh and Tailscale logins it made. It lists them and
+asks first (`--yes` doesn't), then prints where to revoke the tokens it
+can't revoke itself. `pmox delete` offers to run it on a running VM before
+deleting it (default yes); `--forget` runs it without asking and
+`--no-forget` skips it. With `--yes` and neither flag, delete skips it and
+says so.
 
 Run it again any time to add more. Choices accumulate in
 `/var/lib/devbox-setup/answers.json` (no secrets), and `sudo devbox-setup --yes`
