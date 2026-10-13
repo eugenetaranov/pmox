@@ -204,7 +204,7 @@ type alwaysStep struct {
 	err error
 }
 
-func (alwaysStep) Plan(*steps.Env) []steps.Action                 { return nil }
+func (alwaysStep) Plan(*steps.Env) []steps.Action                  { return nil }
 func (alwaysStep) Check(context.Context, *steps.Env) (bool, error) { return true, nil }
 func (a alwaysStep) Apply(context.Context, *steps.Env) error       { *a.ran++; return a.err }
 func (alwaysStep) Always() bool                                    { return true }
@@ -235,7 +235,7 @@ func TestAlwaysStep(t *testing.T) {
 
 type preStep struct{ x *fakeExec }
 
-func (preStep) Plan(*steps.Env) []steps.Action                 { return nil }
+func (preStep) Plan(*steps.Env) []steps.Action                  { return nil }
 func (preStep) Check(context.Context, *steps.Env) (bool, error) { return false, nil }
 func (p preStep) Apply(context.Context, *steps.Env) error {
 	p.x.ran = append(p.x.ran, "PRE")

@@ -118,3 +118,24 @@ func sameSet(a, b []string) bool {
 	}
 	return true
 }
+
+// registries goes after the GitHub login when both are installed (ghcr.io
+// can use gh's token), and doesn't pull it in.
+func TestAfterOrdersWithoutPulling(t *testing.T) {
+	c, err := catalog.Load(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := Resolve(c, []string{"registries", "github"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := " " + strings.Join(IDs(items), " ") + " "
+	if strings.Index(ids, " github ") > strings.Index(ids, " registries ") {
+		t.Errorf("order %s: want github before registries", ids)
+	}
+	items, _ = Resolve(c, []string{"registries"}, false)
+	if strings.Contains(" "+strings.Join(IDs(items), " ")+" ", " github ") {
+		t.Errorf("registries pulled in github: %v", IDs(items))
+	}
+}

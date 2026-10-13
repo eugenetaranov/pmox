@@ -15,6 +15,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/devbox/creds"
 	"github.com/eugenetaranov/pmox/internal/devbox/mcp"
 	"github.com/eugenetaranov/pmox/internal/devbox/plan"
+	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 	"github.com/eugenetaranov/pmox/internal/devbox/ui"
 )
 
@@ -372,33 +373,43 @@ func (k *asker) askGitHub(c *choices) error {
 }
 
 func (k *asker) askCreds(c *choices, has func(string) bool) error {
-	shown := ""
-	for _, r := range creds.Rows {
-		if !has(r.Item) || (r.When != "" && !has(r.When) && !k.installed(r.When)) {
+	for _, it := range k.cat.Items {
+		if !has(it.ID) {
 			continue
 		}
-		if shown != r.Item {
-			fmt.Fprintf(k.out, "\n%s\nLeave a value empty to fill it in later: ~/devbox-setup.txt lists what is missing.\n", k.cat.Item(r.Item).Label)
-			shown = r.Item
-		}
-		if r.Secret() {
-			v, err := ui.Password(r.Prompt, "")
-			if err != nil {
-				return err
+		shown := false
+		for _, s := range it.Steps {
+			if s.Type != "cred" {
+				continue
 			}
-			c.secrets.Cred[r.Item+" "+r.Key] = v
-			continue
+			for _, key := range s.Keys {
+				if key.When != "" && !has(key.When) && !k.installed(key.When) {
+					continue
+				}
+				if !shown {
+					fmt.Fprintf(k.out, "\n%s\nLeave a value empty to fill it in later: ~/devbox-setup.txt lists what is missing.\n", it.Label)
+					shown = true
+				}
+				if key.Secret() {
+					v, err := ui.Password(key.Prompt, "")
+					if err != nil {
+						return err
+					}
+					c.secrets.Cred[it.ID+" "+key.Name] = v
+					continue
+				}
+				p := answerField(k.a, key.Answer)
+				cur := *p
+				if cur == "" {
+					cur = key.Default
+				}
+				v, err := ui.Input(key.Prompt, "", cur)
+				if err != nil {
+					return err
+				}
+				*p = v
+			}
 		}
-		p := answerField(k.a, r.Answer)
-		cur := *p
-		if cur == "" {
-			cur = r.Default
-		}
-		v, err := ui.Input(r.Prompt, "", cur)
-		if err != nil {
-			return err
-		}
-		*p = v
 	}
 	if s := k.a.NPM.Scope; s != "" && !strings.HasPrefix(s, "@") {
 		k.a.NPM.Scope = "@" + s
@@ -406,12 +417,13 @@ func (k *asker) askCreds(c *choices, has func(string) bool) error {
 	return nil
 }
 
-// answerField is the saved answer a CRED_ROWS setting goes in.
+// answerField is the saved answer a cred key's setting goes in
+// (catalog.CredAnswers).
 func answerField(a *answers.Answers, name string) *string {
 	switch name {
-	case "A_NPM_SCOPE":
+	case "npm.scope":
 		return &a.NPM.Scope
-	case "A_NPM_REGISTRY":
+	case "npm.registry":
 		return &a.NPM.Registry
 	}
 	var discard string
@@ -442,7 +454,8 @@ func (k *asker) askRegistries(c *choices) error {
 
 func (k *asker) askAgeKey(c *choices) error {
 	f := filepath.Join(homeOf(k.a.User), ".config", "sops", "age", "keys.txt")
-	if b, err := os.ReadFile(f); err == nil && strings.Contains(string(b), "AGE-SECRET-KEY-") {
+	// A key line, not the skeleton's comment that mentions one.
+	if b, err := os.ReadFile(f); err == nil && steps.HasAgeKey(b) {
 		c.secrets.AgeChoice = "keep"
 		return nil
 	}

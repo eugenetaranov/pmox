@@ -357,7 +357,9 @@ id = "registries"
 tab = "system"
 label = "Container registry logins (ghcr.io, …)"
 needs = ["docker"]
+after = ["github"]
 source = "docker login per registry · ~/.docker/config.json"
 
+# After the GitHub login: ghcr.io can use gh's token.
 [[item.step]]
-type = "legacy"
+type = "go:registries"

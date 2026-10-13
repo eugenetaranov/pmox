@@ -115,7 +115,9 @@ func (m mcpFilesStep) Apply(_ context.Context, e *Env) error {
 
 type mcpUnitStep struct{}
 
-func (mcpUnitStep) Plan(*Env) []Action { return []Action{{"unit", "enable-now mcpjungle (" + mcpUnit + ")"}} }
+func (mcpUnitStep) Plan(*Env) []Action {
+	return []Action{{"unit", "enable-now mcpjungle (" + mcpUnit + ")"}}
+}
 
 func listen(e *Env) string {
 	if e.Answers != nil && e.Answers.MCPListen == "0.0.0.0" {
@@ -346,7 +348,9 @@ func EnvSet(b []byte, key, value string) []byte {
 
 type mcpWireStep struct{}
 
-func wire(e *Env) bool { return e.Answers != nil && e.Answers.WireAgents != nil && *e.Answers.WireAgents }
+func wire(e *Env) bool {
+	return e.Answers != nil && e.Answers.WireAgents != nil && *e.Answers.WireAgents
+}
 
 func agentURL() string { return fmt.Sprintf("http://localhost:%d/mcp", MCPJunglePort) }
 

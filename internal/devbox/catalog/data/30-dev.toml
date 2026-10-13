@@ -101,4 +101,27 @@ needs = ["node"]
 source = "~/.npmrc (a devbox-setup block, 0600)"
 
 [[item.step]]
-type = "legacy"
+type = "cred"
+format = "npmrc"
+to = "~/.npmrc"
+
+[[item.step.key]]
+name = "NPM_SCOPE"
+prompt = "npm scope (e.g. @acme)"
+answer = "npm.scope"
+
+[[item.step.key]]
+name = "NPM_REGISTRY"
+prompt = "npm registry URL"
+answer = "npm.registry"
+default = "https://npm.pkg.github.com"
+
+[[item.step.key]]
+name = "NPM_TOKEN"
+prompt = "npm registry token"
+how = "for GitHub Packages: a token with read:packages at https://github.com/settings/tokens"
+
+[[item.step]]
+type = "note"
+text = "npmrc: no npm scope set; run 'sudo devbox-setup' and pick 'Private npm registry' again."
+when = "[ -z {{npm_scope}} ]"

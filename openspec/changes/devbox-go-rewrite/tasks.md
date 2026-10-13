@@ -25,7 +25,7 @@
 
 ## 3. Developer-review additions (each lands in the slice of its tab; listed here to track)
 
-- [ ] 3.1 `cred` step type porting `CRED_ROWS` (agentkeys, npmrc, registries, agekey); reject secret keys in profiles
+- [x] 3.1 `cred` step type porting `CRED_ROWS` (agentkeys, npmrc; registries and agekey as Go steps); reject secret keys in profiles
 - [ ] 3.2 Layered `--profile`, named layers that replace, `user` / `--user` (create the account), review lists dropped items
 - [ ] 3.3 `export --lock` and installing from `[lock]` (mise exact, apt best effort with a warning)
 - [ ] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section

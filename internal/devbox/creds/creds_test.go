@@ -3,35 +3,9 @@ package creds
 import (
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"testing"
 )
-
-// The Go table and the bash installer's CRED_ROWS must agree while both exist.
-func TestRowsMatchBash(t *testing.T) {
-	b, err := os.ReadFile("../../bootstrap/devbox-setup")
-	if err != nil {
-		t.Skip("bash installer gone")
-	}
-	body := regexp.MustCompile(`(?ms)^CRED_ROWS=\((.*?)^\)`).FindStringSubmatch(string(b))[1]
-	var bash []string
-	for _, m := range regexp.MustCompile(`(?m)^\s*"([^"]+)"`).FindAllStringSubmatch(body, -1) {
-		bash = append(bash, m[1])
-	}
-	if len(bash) != len(Rows) {
-		t.Fatalf("bash has %d rows, Go %d", len(bash), len(Rows))
-	}
-	for i, r := range Rows {
-		kind := r.Answer
-		if kind == "" {
-			kind = "secret"
-		}
-		if got := strings.Join([]string{r.Item, r.Key, kind, r.Prompt, r.How, r.When, r.Default}, "|"); got != bash[i] {
-			t.Errorf("row %d:\n go   %s\n bash %s", i, got, bash[i])
-		}
-	}
-}
 
 // The bash installer's read_secrets gets back exactly what Encode wrote.
 func TestEncodeReadByBash(t *testing.T) {

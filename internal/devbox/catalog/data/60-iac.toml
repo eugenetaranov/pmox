@@ -81,4 +81,15 @@ needs = ["sops"]
 source = "~/.config/sops/age/keys.txt (0600) · SOPS_AGE_KEY_FILE"
 
 [[item.step]]
-type = "legacy"
+type = "go:agekey"
+
+[[item.step]]
+type = "line"
+to = "~/.zshenv"
+line = 'export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"'
+
+[[item.step]]
+type = "line"
+to = "~/.bashrc"
+line = 'export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"'
+top = true

@@ -212,6 +212,8 @@ func New(id string, s catalog.Step) (Step, error) {
 		return runStep{s}, nil
 	case "note":
 		return noteStep{s}, nil
+	case "cred":
+		return credStep{id, s}, nil
 	case "legacy":
 		return LegacyStep{ID: id}, nil
 	}

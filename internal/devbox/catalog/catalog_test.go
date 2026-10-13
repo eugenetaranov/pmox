@@ -138,7 +138,7 @@ func TestValidation(t *testing.T) {
 		"unknown tab":   {fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"x\"\ntab = \"nope\"\nlabel = \"X\"\n[[item.step]]\ntype = \"legacy\"\n")}}, `unknown tab "nope"`},
 		"no steps":      {fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"x\"\ntab = \"dev\"\nlabel = \"X\"\n")}}, "no steps"},
 		"local tab":     {fstest.MapFS{"x.toml": {Data: []byte("[[tab]]\nid = \"t\"\ntitle = \"T\"\n")}}, "can't add tabs"},
-		"needs a cycle": {fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"a\"\ntab = \"dev\"\nlabel = \"A\"\nneeds = [\"b\"]\n[[item.step]]\ntype = \"legacy\"\n[[item]]\nid = \"b\"\ntab = \"dev\"\nlabel = \"B\"\nneeds = [\"a\"]\n[[item.step]]\ntype = \"legacy\"\n")}}, "needs cycle"},
+		"needs a cycle": {fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"a\"\ntab = \"dev\"\nlabel = \"A\"\nneeds = [\"b\"]\n[[item.step]]\ntype = \"legacy\"\n[[item]]\nid = \"b\"\ntab = \"dev\"\nlabel = \"B\"\nneeds = [\"a\"]\n[[item.step]]\ntype = \"legacy\"\n")}}, "needs/after cycle"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -181,5 +181,35 @@ func TestPinsMatchBash(t *testing.T) {
 		if want := map[string]int{"ecc": 2, "mcpjungle": 1}[id]; n != want {
 			t.Errorf("%s: %d step fields use %s=%s, want %d", id, n, name, v, want)
 		}
+	}
+}
+
+// The cred steps' keys and the bash installer's CRED_ROWS agree while both
+// exist.
+func TestCredKeysMatchBash(t *testing.T) {
+	b, err := os.ReadFile("../../bootstrap/devbox-setup")
+	if err != nil {
+		t.Skip("bash installer gone")
+	}
+	body := regexp.MustCompile(`(?ms)^CRED_ROWS=\((.*?)^\)`).FindStringSubmatch(string(b))[1]
+	bash := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*"([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		bash[m[1]] = true
+	}
+	answer := map[string]string{"": "secret", "npm.scope": "A_NPM_SCOPE", "npm.registry": "A_NPM_REGISTRY"}
+	n := 0
+	for _, it := range load(t, nil).Items {
+		for _, s := range it.Steps {
+			for _, k := range s.Keys {
+				n++
+				row := strings.Join([]string{it.ID, k.Name, answer[k.Answer], k.Prompt, k.How, k.When, k.Default}, "|")
+				if !bash[row] {
+					t.Errorf("not in bash's CRED_ROWS: %s", row)
+				}
+			}
+		}
+	}
+	if n != len(bash) {
+		t.Errorf("%d cred keys, bash has %d rows", n, len(bash))
 	}
 }

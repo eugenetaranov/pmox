@@ -109,7 +109,7 @@ func TestDedupe(t *testing.T) {
 func TestMiseTools(t *testing.T) {
 	cases := map[string][]string{
 		"mise use -g uv pipx:aider-chat[uvx_args=--python=3.12] aqua:block/goose": {"aider-chat", "goose", "uv"},
-		"apt prometheus-node-exporter · mise pipx:glances":                       {"glances"},
+		"apt prometheus-node-exporter · mise pipx:glances":                        {"glances"},
 		"apt install mise": nil,
 	}
 	for src, want := range cases {

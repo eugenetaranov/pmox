@@ -153,7 +153,51 @@ label = "Agent API keys (Anthropic, OpenAI, Gemini)"
 source = "~/.config/devbox/agent.env (0600) · read by interactive shells"
 
 [[item.step]]
-type = "legacy"
+type = "cred"
+format = "env"
+to = "~/.config/devbox/agent.env"
+header = """
+# Agent API keys, written by devbox-setup and read by interactive shells.
+# Fill in a key, then open a new shell. Not shared with services or cron.
+"""
+
+[[item.step.key]]
+name = "ANTHROPIC_API_KEY"
+prompt = "Anthropic API key (empty: log in with 'claude' instead)"
+how = "https://console.anthropic.com/settings/keys"
+when = "claude"
+logged_in = "~/.claude/.credentials.json"
+
+[[item.step.key]]
+name = "OPENAI_API_KEY"
+prompt = "OpenAI API key (Codex)"
+how = "https://platform.openai.com/api-keys"
+when = "codex"
+logged_in = "~/.codex/auth.json"
+
+[[item.step.key]]
+name = "GEMINI_API_KEY"
+prompt = "Gemini API key"
+how = "https://aistudio.google.com/apikey"
+when = "gemini"
+logged_in = "~/.gemini/oauth_creds.json"
+
+# Exported by interactive shells only.
+[[item.step]]
+type = "file"
+src = "agent-env.sh"
+to = "~/.config/devbox/agent-env.sh"
+
+[[item.step]]
+type = "line"
+to = "~/.bashrc"
+line = '[ -r ~/.config/devbox/agent-env.sh ] && . ~/.config/devbox/agent-env.sh'
+
+[[item.step]]
+type = "line"
+to = "~/.zshrc"
+line = '[ -r ~/.config/devbox/agent-env.sh ] && . ~/.config/devbox/agent-env.sh'
+if_exists = true
 
 [[item]]
 id = "mcpjungle"

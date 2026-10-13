@@ -1,5 +1,6 @@
 // Package creds holds what devbox-setup asks for that is never saved: the
-// credentials typed during a run, and the table of credential prompts.
+// credentials typed during a run (the prompts are the catalog's cred
+// steps).
 // They go to the install steps (the bash installer reads them on stdin)
 // and nowhere else.
 package creds
@@ -8,28 +9,6 @@ import (
 	"bytes"
 	"sort"
 )
-
-// Row is one credential prompt (the bash installer's CRED_ROWS).
-type Row struct {
-	Item, Key string
-	// Answer is the saved answer a plain setting goes in; "" for a secret.
-	Answer        string
-	Prompt, How   string
-	When, Default string // When: only if this item is picked or this tool installed
-}
-
-// Secret reports whether the row is a secret (read without echo, never saved).
-func (r Row) Secret() bool { return r.Answer == "" }
-
-// Rows are the credential prompts, in order.
-var Rows = []Row{
-	{Item: "agentkeys", Key: "ANTHROPIC_API_KEY", Prompt: "Anthropic API key (empty: log in with 'claude' instead)", How: "https://console.anthropic.com/settings/keys", When: "claude"},
-	{Item: "agentkeys", Key: "OPENAI_API_KEY", Prompt: "OpenAI API key (Codex)", How: "https://platform.openai.com/api-keys", When: "codex"},
-	{Item: "agentkeys", Key: "GEMINI_API_KEY", Prompt: "Gemini API key", How: "https://aistudio.google.com/apikey", When: "gemini"},
-	{Item: "npmrc", Key: "NPM_SCOPE", Answer: "A_NPM_SCOPE", Prompt: "npm scope (e.g. @acme)"},
-	{Item: "npmrc", Key: "NPM_REGISTRY", Answer: "A_NPM_REGISTRY", Prompt: "npm registry URL", Default: "https://npm.pkg.github.com"},
-	{Item: "npmrc", Key: "NPM_TOKEN", Prompt: "npm registry token", How: "for GitHub Packages: a token with read:packages at https://github.com/settings/tokens"},
-}
 
 // Secrets are a run's typed secrets.
 type Secrets struct {

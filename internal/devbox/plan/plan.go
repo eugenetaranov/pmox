@@ -61,6 +61,11 @@ func Resolve(c *catalog.Catalog, picks []string, extraMise bool) ([]*catalog.Ite
 		for _, n := range it.Needs {
 			place(c.Item(n))
 		}
+		for _, n := range it.After {
+			if want[n] {
+				place(c.Item(n))
+			}
+		}
 		if it.UsesMise() && it.ID != MiseID && c.Item(MiseID) != nil {
 			place(c.Item(MiseID))
 		}

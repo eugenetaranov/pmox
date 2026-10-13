@@ -94,3 +94,20 @@ func TestBadListen(t *testing.T) {
 		t.Error("want an error for listen 10.0.0.1")
 	}
 }
+
+func TestSecretsRefused(t *testing.T) {
+	for _, src := range []string{
+		"picks = []\n[creds]\nANTHROPIC_API_KEY = \"sk-1\"\n",
+		"picks = []\ngithub_token = \"ghp\"\n",
+		"picks = []\n[mcp]\nservers = []\n[mcp.github]\nGITHUB_PERSONAL_ACCESS_TOKEN = \"x\"\n",
+		"picks = []\n[tailscale]\nauthkey = \"tskey\"\n",
+	} {
+		_, err := Parse("p.toml", []byte(src))
+		if err == nil || !strings.Contains(err.Error(), "never hold secrets") {
+			t.Errorf("%q: err = %v", src, err)
+		}
+	}
+	if _, err := Parse("p.toml", []byte("picks = []\ncolour = \"red\"\n")); err == nil || !strings.Contains(err.Error(), "unknown key colour") {
+		t.Errorf("plain unknown key: %v", err)
+	}
+}

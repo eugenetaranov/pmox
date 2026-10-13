@@ -290,7 +290,9 @@ func TestAptUpdateWaitsForTheListsLock(t *testing.T) {
 	if err := AptUpdate(context.Background(), testEnv(t, x)); err != nil || n != 3 {
 		t.Errorf("err %v after %d tries, want success on the 3rd", err, n)
 	}
-	x.reply = func(Cmd) ([]byte, error) { return []byte("E: The repository is not signed"), errors.New("exit status 100") }
+	x.reply = func(Cmd) ([]byte, error) {
+		return []byte("E: The repository is not signed"), errors.New("exit status 100")
+	}
 	n = 0
 	if err := AptUpdate(context.Background(), testEnv(t, x)); err == nil || len(x.ran) == 0 {
 		t.Error("other errors fail at once")

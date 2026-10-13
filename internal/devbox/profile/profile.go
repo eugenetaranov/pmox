@@ -54,6 +54,9 @@ func Parse(name string, b []byte) (*Profile, error) {
 		keys := make([]string, len(und))
 		for i, k := range und {
 			keys[i] = k.String()
+			if secretKey(k[len(k)-1]) {
+				return nil, fmt.Errorf("%s: %s looks like a secret: profiles never hold secrets (devbox-setup asks for them, or leaves them for you to fill in)", name, k)
+			}
 		}
 		return nil, fmt.Errorf("%s: unknown key %s", name, strings.Join(keys, ", "))
 	}
@@ -125,6 +128,17 @@ func Export(a *answers.Answers) []byte {
 	}
 	_ = enc.Encode(p)
 	return buf.Bytes()
+}
+
+// secretKey reports whether a key name looks like it holds a secret.
+func secretKey(k string) bool {
+	k = strings.ToUpper(k)
+	for _, w := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY", "API_KEY", "AUTHKEY", "AUTH_KEY", "PRIVATE"} {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return strings.HasSuffix(k, "_KEY") || strings.HasSuffix(k, "_KEY_ID")
 }
 
 // Equal reports whether two answers pick and set the same (for tests and

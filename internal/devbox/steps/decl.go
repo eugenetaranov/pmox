@@ -630,10 +630,13 @@ type runStep struct{ s catalog.Step }
 var homeRef = regexp.MustCompile(`^~(/|$)`)
 
 // fill puts the user, their group and home, and the dpkg architecture into
-// a run step's command.
+// a run step's command, and {{npm_scope}}, an answer, shell-quoted.
 func fill(e *Env, cmd string) string {
-	return strings.NewReplacer("{{user}}", e.User, "{{group}}", e.Group, "{{home}}", e.Home, "{{arch}}", e.Arch).Replace(cmd)
+	return strings.NewReplacer("{{user}}", e.User, "{{group}}", e.Group, "{{home}}", e.Home, "{{arch}}", e.Arch,
+		"{{npm_scope}}", shellQuote(npmScope(e))).Replace(cmd)
 }
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func (r runStep) Plan(e *Env) []Action { return []Action{{"run", fill(e, r.s.Cmd)}} }
 

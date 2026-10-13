@@ -39,6 +39,10 @@ type Item struct {
 	Tab   string   `toml:"tab"`
 	Label string   `toml:"label"`
 	Needs []string `toml:"needs"`
+	// After orders the item after these when they are installed too,
+	// without pulling them in (registries after the GitHub login, whose
+	// token ghcr.io can use).
+	After []string `toml:"after"`
 	// Source says how the item is installed, as the picker shows it
 	// (e.g. "mise use -g terraform"). Optional: Describe derives one.
 	Source string `toml:"source"`
@@ -209,6 +213,11 @@ func (c *Catalog) validate() error {
 				fail(it, "needs %q, which is not an item", n)
 			}
 		}
+		for _, n := range it.After {
+			if c.byID[n] == nil {
+				fail(it, "after %q, which is not an item", n)
+			}
+		}
 		for i, s := range it.Steps {
 			if err := s.validate(c.files); err != nil {
 				fail(it, "step %d (%s): %v", i+1, s.Type, err)
@@ -216,7 +225,7 @@ func (c *Catalog) validate() error {
 		}
 	}
 	if cyc := c.cycle(); cyc != nil {
-		errs = append(errs, fmt.Errorf("needs cycle: %s", strings.Join(cyc, " → ")))
+		errs = append(errs, fmt.Errorf("needs/after cycle: %s", strings.Join(cyc, " → ")))
 	}
 	return errors.Join(errs...)
 }
@@ -245,7 +254,7 @@ func (c *Catalog) cycle() []string {
 		state[id] = active
 		stack = append(stack, id)
 		if it := c.byID[id]; it != nil {
-			for _, n := range it.Needs {
+			for _, n := range append(append([]string{}, it.Needs...), it.After...) {
 				if cyc := visit(n); cyc != nil {
 					return cyc
 				}
