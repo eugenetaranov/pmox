@@ -23,8 +23,26 @@ type Record struct {
 	RemotePath string `json:"remote_path"`
 	PID        int    `json:"pid"`
 	LogPath    string `json:"log_path"`
+	// Options are how it was started, so remount can start it again
+	// (nil for records from before pmox kept them).
+	Options *Options `json:"options,omitempty"`
 
 	Path string `json:"-"`
+}
+
+// Options are a mount's settings: what `pmox mount` was given.
+type Options struct {
+	Server    string   `json:"server,omitempty"`
+	User      string   `json:"user,omitempty"`
+	Identity  string   `json:"identity,omitempty"`
+	Force     bool     `json:"force,omitempty"`
+	Insecure  bool     `json:"insecure,omitempty"`
+	Gitignore bool     `json:"gitignore,omitempty"`
+	NoDelete  bool     `json:"no_delete,omitempty"`
+	Debounce  string   `json:"debounce,omitempty"`
+	Excludes  []string `json:"excludes,omitempty"`
+	// Extra are rsync arguments given after --.
+	Extra []string `json:"extra,omitempty"`
 }
 
 // ID derives a stable identifier from the local+remote path pair, so
