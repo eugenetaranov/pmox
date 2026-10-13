@@ -26,7 +26,7 @@ system-bootstrapping tool inspired by Ansible.
 | Role | Description |
 | --- | --- |
 | [` + "`ai-tools`" + `](roles/ai-tools) | Installs Claude Code + omp coding agents and an MCPJungle MCP gateway with servers. |
-| [` + "`devbox`" + `](roles/devbox) | Sets up a developer environment: CLI tools, editors, multiplexers, and opt-in zsh/vim config. |
+| [` + "`yardo`" + `](roles/yardo) | Sets up a developer environment: CLI tools, editors, multiplexers, and opt-in zsh/vim config. |
 | [` + "`docker`" + `](roles/docker) | Installs Docker Engine on Ubuntu from Docker's official apt repository. |
 | [` + "`tailscale`" + `](roles/tailscale) | Installs Tailscale from its official apt repo; optionally joins a tailnet. |
 | [` + "`terraform`" + `](roles/terraform) | Installs Terraform via tfenv for easy version switching. |
@@ -43,7 +43,7 @@ func TestParseTable_RealReadmeShape(t *testing.T) {
 	got := parseTable(realReadmeExcerpt)
 	want := []Role{
 		{Name: "ai-tools", Description: "Installs Claude Code + omp coding agents and an MCPJungle MCP gateway with servers."},
-		{Name: "devbox", Description: "Sets up a developer environment: CLI tools, editors, multiplexers, and opt-in zsh/vim config."},
+		{Name: "yardo", Description: "Sets up a developer environment: CLI tools, editors, multiplexers, and opt-in zsh/vim config."},
 		{Name: "docker", Description: "Installs Docker Engine on Ubuntu from Docker's official apt repository."},
 		{Name: "tailscale", Description: "Installs Tailscale from its official apt repo; optionally joins a tailnet."},
 		{Name: "terraform", Description: "Installs Terraform via tfenv for easy version switching."},

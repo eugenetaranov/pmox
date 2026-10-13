@@ -103,8 +103,8 @@ func TestWithUserDataEdit(t *testing.T) {
 	if !bytes.Contains(out, []byte("20auto-upgrades")) || warn.Len() != 0 {
 		t.Errorf("not injected (warn %q):\n%s", warn.String(), out)
 	}
-	if bytes.Contains(out, []byte(bootstrap.ScriptPath)) {
-		t.Errorf("devbox-setup itself is in user-data; it is pushed over SSH:\n%s", out)
+	if bytes.Contains(out, []byte("yardo/releases")) {
+		t.Errorf("yardo itself is in user-data; it is installed over SSH:\n%s", out)
 	}
 
 	warn.Reset()

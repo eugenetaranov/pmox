@@ -207,7 +207,7 @@ func registerCommands(root *cobra.Command) {
 	)
 
 	for _, g := range []*cobra.Command{
-		newVMCmd(), newTemplateCmd(), newContextCmd(), newConfigCmd(), newMountGroupCmd(), newKeyCmd(), newAccessCmd(), newDevboxCmd(),
+		newVMCmd(), newTemplateCmd(), newContextCmd(), newConfigCmd(), newMountGroupCmd(), newKeyCmd(), newAccessCmd(), newYardoCmd(),
 	} {
 		g.GroupID = groupResources
 		root.AddCommand(g)

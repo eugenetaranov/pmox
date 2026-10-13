@@ -20,27 +20,10 @@ tasks:
       - task --list
 
   build:
-    desc: Build the binary (with the Go devbox-setup embedded)
-    deps: [devbox:build]
+    desc: Build the binary
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/pmox
-
-  devbox:e2e:
-    desc: "End-to-end check of the Go devbox-setup on a throwaway VM (ITEMS=\"cli tmux\" for a subset, KEEP=1 to keep the VM)"
-    deps: [build]
-    cmds:
-      - PMOX={{.BUILD_DIR}}/{{.BINARY}} ./scripts/devbox-e2e.sh
-
-  devbox:build:
-    desc: Build the Go devbox-setup for linux amd64 and arm64 into internal/bootstrap/gobin (embedded into pmox)
-    cmds:
-      - |
-        for a in amd64 arm64; do
-          CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" \
-            -o internal/bootstrap/gobin/devbox-setup-linux-$a ./cmd/devbox-setup
-          gzip -9f internal/bootstrap/gobin/devbox-setup-linux-$a
-        done
 
   test:
     desc: Run unit tests
@@ -67,24 +50,6 @@ tasks:
         else
           go run ./internal/tools/doccheck
         fi
-
-  bootstrap:sync:
-    desc: Refresh devbox-setup's MCP files (mcp-sync, MCP catalog) from a tack-roles checkout (TACK_ROLES=path)
-    vars:
-      TACK_ROLES: '{{.TACK_ROLES | default "../../tack-roles"}}'
-      DST: internal/bootstrap/assets
-    cmds:
-      # Only the files both devbox-setup and tack-roles install; conf/ is devbox-setup's own.
-      - rm -rf {{.DST}}/mcp-catalog && mkdir -p {{.DST}}/mcp-catalog
-      - cp {{.TACK_ROLES}}/roles/ai-tools/files/mcp-sync {{.DST}}/mcp-sync
-      - cp {{.TACK_ROLES}}/roles/ai-tools/files/mcp-catalog/*.spec {{.DST}}/mcp-catalog/
-      - git -C {{.TACK_ROLES}} log -1 --format='tack-roles %H %cs' > {{.DST}}/SOURCE
-
-  bootstrap:mise-registry:
-    desc: Refresh devbox-setup's snapshot of mise's registry from the local mise
-    cmds:
-      - mise registry -J --hide-aliased | python3 internal/bootstrap/picker.py --registry-tsv > internal/bootstrap/mise-registry.tsv
-      - wc -l internal/bootstrap/mise-registry.tsv
 
   clean:
     desc: Remove build artifacts

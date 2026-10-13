@@ -181,7 +181,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `mount create` / `list` / `delete` | Continuous one-way rsync of a local dir to a VM, `.git` and gitignored files included (`--gitignore` leaves those out); changes on the VM are overwritten, so commit locally; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
-| `devbox push` / `apply` / `verify` / `gitkey` | Install devbox-setup on a VM; apply profiles across VMs (4 at a time); check them for drift; send an SSH key for git | `pmox devbox gitkey web1 ~/.ssh/deploy_key` |
+| `yardo push` / `apply` / `verify` / `gitkey` | Install yardo on a VM; apply profiles across VMs (4 at a time); check them for drift; send an SSH key for git | `pmox yardo gitkey web1 ~/.ssh/deploy_key` |
 
 ### Maintenance
 
@@ -452,280 +452,64 @@ VM's `cicustom` value, so cleanup always targets the right pool.
 re-run `pmox init`), then run `pmox config cloud-init --regenerate`
 to rewrite the cloud-init file with the new key.
 
-## Setting up the VM from inside: devbox-setup
+## Setting up the VM from inside: yardo
 
-Every VM pmox launches gets `devbox-setup`, an interactive installer you run
-on the VM itself. It's a parallel path to provisioning from outside with
-tack: the same result (MCPJungle wired into your agents with its MCP
-servers, dev tools installed and configured) with no playbooks or roles to
-maintain. Run `pmox shell web1`, then `sudo devbox-setup`. Categories are tabs
-across the top (←/→ or 1–9 to switch) above a checklist: nothing is
-preselected and only space ticks an item. Every item shows how it will be
-installed, e.g. `mise use -g terraform`, wrapped to fit the terminal. The
-last tab, Review, lists everything ticked.
+Every VM pmox launches gets [yardo](https://github.com/eugenetaranov/yardo),
+an interactive setup tool you run on the VM itself: `pmox shell web1`, then
+`sudo yardo`. It installs and configures dev tools and languages, cloud, IaC
+and Kubernetes CLIs, Docker, coding agents wired to an MCP gateway, system
+hardening, SSH and git keys, and your dotfiles; it remembers your choices and
+re-applies them. yardo is its own project: see its README for everything it
+does.
 
-Just start typing to fuzzy-search every tab at once: `zsh` lists the zsh
-items wherever they live, each with its category. The search also covers
-the ~940 tools in mise's registry, with their descriptions (`find` turns up
-`fd`). A tool you tick there is installed with `mise use -g <tool>`, and the
-"Extra mise tools" prompt comes prefilled so you can pin a version. Esc
-clears the search; Esc on an empty search quits.
+Once a new VM answers SSH, pmox installs yardo's release on it (the VM
+downloads it from GitHub and checks its checksum), before any
+`--post-create`/`--tack` hook, so a hook can run `sudo yardo --yes`. It isn't
+part of the user-data. A failed install only warns; with `--no-wait-ssh`
+nothing is installed. Each pmox version pins a yardo release;
+`PMOX_YARDO_VERSION` picks another (a tag, or `latest`). To turn yardo off
+for a server, set `yardo: false` under that server in `config.yaml`.
 
-1. **System (root):** etckeeper, essentials (git, curl, jq, gh, build tools),
-   admin and debug tools (dig, mtr, tcpdump, iperf3, nmap, strace, btop, …),
-   Docker (with log rotation and 10.200.0.0/16 networks), Podman + skopeo +
-   buildah, container tools (lazydocker, dive, hadolint, crane, cosign),
-   Tailscale, NFS/SMB clients, node_exporter + glances, container registry
-   logins (`docker login`; ghcr.io can use your gh token). Settings: dev limits
-   (inotify, open files), zram swap, a journal size cap, timezone + locale
-   (the clock itself is set up by pmox at launch; see
-   [Clock sync](#clock-sync)). Opt-in hardening: automatic
-   security updates, quiet needrestart, SSH keys only, ufw (it asks which dev
-   server ports to open), fail2ban. Behind a corporate network: a proxy (apt,
-   Docker, mise and shells use it; no credentials in the URL) and an internal
-   CA bundle (a PEM file on the VM, or an https URL with its sha256), trusted
-   system-wide and by Node, Python and the AWS CLI. Both are applied before
-   anything is installed, and can be set in a profile's `[system]`
-   (`proxy`, `no_proxy`, `ca_bundle`, `ca_sha256`).
-2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
-   delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
-   a curated vim config, man pages + tldr. zsh comes as separate items (type
-   `zsh` to see them all): zsh itself as the login shell; "zsh config"
-   (oh-my-zsh with autosuggestions, syntax highlighting, fzf history search
-   and completions); and the Powerlevel10k prompt, which comes ready in a
-   one-line lean style with the OS icon, time and Nerd Font icons (needs a
-   Nerd Font in your terminal; `p10k configure` restyles it, and an existing
-   `~/.p10k.zsh` is kept). zsh's plugins follow what's installed: git, wd, sudo, extract and fzf history search
-   always, and aws, terraform, opentofu, kubectl, kubectx, helm, docker, gh,
-   mise, rust and golang whenever the tool is on PATH, so a tool added later
-   completes in the next shell. Tools without an oh-my-zsh plugin (k9s, stern,
-   just, task, uv, terragrunt, vault, packer, …) get Tab completion from their
-   own scripts, cached in `~/.cache/devbox/zsh-completions` and refreshed only
-   when the tool is upgraded. "zsh fuzzy Tab completion" (fzf-tab) turns Tab
-   into an fzf list with directory previews. "Shell niceties"
-   turns the CLI tools on (zoxide, fzf keys, direnv, eza/bat aliases, a
-   shared Terraform/OpenTofu provider cache, kubecolor) through
-   `~/.config/devbox/shell.sh`, sourced from `.zshrc` and `.bashrc`; "tmux
-   config" writes `~/.tmux.conf`. The shell, vim and tmux entries replace your
-   files, keeping the old ones as `.orig`; keep your own lines in the local
-   files instead (see [Your own settings](#your-own-settings)).
-3. **Dev tools:** lazygit, just + watchexec + hyperfine, Task, yq, xh + hurl,
-   linters and hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit),
-   database clients, pgcli + usql, perf/valgrind/bpftrace, act, a private npm
-   registry (scope and token in `~/.npmrc`), weekly tool updates (a systemd
-   timer running `mise up` and `krew upgrade` as you).
-4. **Languages** (mise, except PHP and C/C++ from apt): Go + gopls, delve,
-   govulncheck, golangci-lint; Python 3.13 + uv + ruff; Node + pnpm +
-   TypeScript; Bun; Deno; Java 25 + Maven + Gradle + Kotlin; Rust +
-   rust-analyzer + cargo-binstall; Ruby; PHP + Composer; C/C++; Zig; .NET.
-5. **Cloud** (mise): AWS, Google Cloud, Azure, DigitalOcean, Hetzner,
-   cloudflared, restic + rclone.
-6. **IaC** (mise): Terraform, OpenTofu, terragrunt + tflint + terraform-docs,
-   trivy + checkov, Packer, Ansible, sops + age (and an age key: generate or
-   paste), Vault.
-7. **Kubernetes:** kubectl, kubectx/kubens, Helm 3, k9s, kubelogin (OIDC); stern, kustomize,
-   kubecolor, kubie, kubeconform; krew with plugins; helmfile + helm-diff;
-   Argo CD and Flux CLIs; kind, k3d, or k3s as a real cluster on the VM;
-   Tilt, Skaffold, ctlptl; talosctl.
-8. **AI:** Claude Code, Codex CLI, Gemini CLI, OpenCode, Aider, Goose, omp,
-   Ollama, OpenSpec, ECC for Claude Code (agents, rules and commands, no hooks), a `CLAUDE.md` /
-   `AGENTS.md` describing the VM, settings for agents left to run unattended
-   (Claude Code may not force-push, sudo, or read `~/.mcp`, `~/.ssh` or the
-   agent keys; Codex asks first and works in a sandbox; both are told to push
-   only to non-default branches; merged into your settings, not replacing
-   them), agent API keys (Anthropic, OpenAI, Gemini),
-   and the MCPJungle gateway with MCP servers (GitHub, Linear, Postgres,
-   Playwright, Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex,
-   Gemini CLI, OpenCode and Goose. The gateway listens on this machine only,
-   on the VM's Tailscale address only (when Tailscale is up), or on every
-   interface (no auth: trusted networks only).
-9. **Accounts and keys:** git identity, git defaults (rebase on pull, push
-   sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
-   GitHub login, commit signing with SSH, GitLab CLI, and your dotfiles repo:
-   cloned to `~/.dotfiles` (pulled on later runs), then its `install.sh`,
-   `bootstrap.sh` or `setup.sh`, or else `stow` for each top-level
-   directory. It runs after everything else, so your files win (`[dotfiles]
-   repo = "…"` in a personal profile).
+- `pmox yardo push web1` installs it, or refreshes it, on an existing VM;
+  saved choices are kept.
+- `pmox launch web1 --yardo-profile team.toml` (or `yardo_profile:` under a
+  server) applies a yardo profile as soon as the VM is up, before any hook.
+  A failed profile only warns, unless `--strict-hooks`.
+- `pmox yardo apply [vm…] --profile team.toml` (or `--all`, or `--tag team`
+  for the running pmox VMs with that Proxmox tag) installs yardo on each VM
+  and applies the profiles there, four VMs at a time, with one result line
+  per VM; without `--profile` it re-applies each VM's saved choices. `pmox
+  yardo verify` with the same selectors changes nothing and lists what each
+  VM is missing. Both exit non-zero if any VM failed.
+- `pmox yardo gitkey web1 ~/.ssh/deploy_key [--host gitlab.example.com]`
+  sends a private key for git to the VM (`sudo yardo gitkey` reads it on
+  stdin); pmox keeps no copy.
+- Your team's own yardo items in `~/.config/pmox/yardo/catalog.d/*.toml` and
+  MCP server specs in `~/.config/pmox/yardo/mcp-catalog/*.spec` go with every
+  install (launch, `push`, `apply`, `verify`) to `/etc/yardo/catalog.d/` and
+  the VM's MCP catalog; the ones pmox copied before and you've since deleted
+  are removed, and other files there are left alone.
+- `pmox delete` offers to run `sudo yardo forget` on a running VM before
+  deleting it (default yes): it removes the keys, logins and secrets yardo
+  set up. `--forget` runs it without asking and `--no-forget` skips it.
 
-Downloads are pinned: vendor apt keys are checked against their
-fingerprints and release binaries against their sha256 before they're
-installed. The few vendor installers that change in place (Tailscale,
-Ollama, k3s, krew, omp, vim-plug) can't be pinned; `~/devbox-setup.txt`
-lists the installed ones under "Installed without a pinned checksum", with
-why. A `catalog.d` item that downloads must do the same (`sha256`, or
-`unverified = "why"`), or devbox-setup refuses to load it.
-
-After the checklists, it asks every typed question in one place: extra mise
-tools, git name and email, timezone, how to reach GitHub, and the
-credentials of the items you picked. Then a review screen offers Install,
-Start over or Quit. `~/devbox-setup.txt` lists everything installed so far,
-grouped by how it was installed, with how to update or remove it.
-
-### Your own settings
-
-devbox-setup rewrites `.zshrc`, `.vimrc`, `.tmux.conf` and
-`~/.config/devbox/shell.sh` on a re-run, so lines you add to them are
-lost (your first version of each is kept once, as `.orig`). Put your own
-settings in these files instead. devbox-setup never creates or changes
-them, and the files it writes source them last, so yours win:
-
-| File | Read by |
-| --- | --- |
-| `~/.zshrc.local` | zsh (end of `.zshrc`) |
-| `~/.config/devbox/local.sh` | zsh and bash (end of `shell.sh`) |
-| `~/.tmux.local.conf` | tmux (end of `.tmux.conf`) |
-| `~/.vimrc.local` | vim (end of `.vimrc`) |
-
-For example, `echo 'export KUBECONFIG=~/.kube/work' >> ~/.config/devbox/local.sh`
-survives `sudo devbox-setup --yes`.
-
-### Credentials
-
-devbox-setup never stores or ships a credential. An item that needs one
-(agent API keys, MCP server keys, an npm or registry token, an age key, a
-GitHub token) asks for it once and writes it straight into that tool's own
-config file, readable only by you (0600). Leave a value empty, or run with
-`--yes`, and the file is still written, with each key left empty and a
-comment saying where to get it. Either way, `~/devbox-setup.txt` ends with
-**Secrets to fill in**: one line per value still missing, with its file,
-the key, where to get it, and the command that applies it (`mcp-sync`,
-`docker login ghcr.io`, …). The run ends with how many are missing.
-
-| Item | File |
-|---|---|
-| Agent API keys | `~/.config/devbox/agent.env`, exported by interactive shells only (not services or cron) |
-| MCP servers | `~/.mcp/<name>/env`, owned by the gateway's user: `mcp-sync edit <name>`, then `mcp-sync` |
-| Private npm registry | a devbox-setup block in `~/.npmrc` (your own lines are kept) |
-| Registry logins | `~/.docker/config.json`, through `docker login` |
-| age key | `~/.config/sops/age/keys.txt`, with `SOPS_AGE_KEY_FILE` set |
-
-Each user's MCPJungle gateway runs as a system user of its own,
-`mcp-<you>`, which owns `~/.mcp`: a coding agent running as you can use the
-MCP servers through the gateway but can't read their tokens. `mcp-sync` and
-`mcp-sync edit <name>` switch to that user through sudo for you. This only
-holds while the agent can't get root: with passwordless sudo (the default
-for the VM's user) or membership of the docker group, it can. The opt-in
-"sudo asks for your password" item (Accounts) removes `NOPASSWD` from your
-sudo rules, after setting a password if you have none; pmox commands that
-use sudo on the VM (`pmox devbox push`, profiles at launch) then need that
-password too.
-
-`sudo devbox-setup --yes` never waits for input: a step that would (the
-GitHub browser login, adding a gh scope, `tailscale up` without a key)
-leaves a note naming the command to run instead.
-
-**GitHub** asks how the VM should reach it:
-
-- **Forwarded agent** (the default when you connected with
-  `pmox shell -A`): no key on the VM. git over SSH uses your laptop's
-  agent, and gh logs in with the browser code, without permission to add
-  keys to your account.
-- **A key on this VM**: `~/.ssh/id_ed25519` (optionally with a passphrase)
-  uploaded to your account. For an organization with SAML SSO, authorize it
-  at github.com/settings/keys → Configure SSO.
-- **A fine-grained token**: pasted once, used by gh and by git over HTTPS;
-  nothing is uploaded.
-
-github.com's host keys come from GitHub's published list, not a first-use
-scan. When git has no email yet, you pick one of your verified addresses
-(the noreply one only if it's all there is). **Sign commits with SSH**
-signs commits and tags with the agent's key or the VM's key, uploads it as
-a signing key, and writes `~/.config/git/allowed_signers`.
-
-**`sudo devbox-setup forget`** undoes what devbox-setup created, and only
-that: the GitHub keys it uploaded, its registry logins, the values in the
-credential files it wrote (the keys stay, so a re-run asks again), its
-`~/.npmrc` block, and the gh and Tailscale logins it made. It lists them and
-asks first (`--yes` doesn't), then prints where to revoke the tokens it
-can't revoke itself. `pmox delete` offers to run it on a running VM before
-deleting it (default yes); `--forget` runs it without asking and
-`--no-forget` skips it. With `--yes` and neither flag, delete skips it and
-says so.
-
-Run it again any time to add more. Choices accumulate, never with
-secrets, and are only read as data, never run:
-
-- machine-wide items (the System tab, k3s, Ollama), the timezone, the users
-  set up and their MCPJungle ports in root-only
-  `/var/lib/devbox-setup/system.json`;
-- each user's own items and settings in their `~/.config/devbox/answers.json`.
-  devbox-setup reads that file as the user's input: it won't follow a symlink
-  there, and a machine-wide item listed in it is ignored with a warning.
-
-`sudo devbox-setup --yes` re-applies everything for every user set up;
-`--yes --user ada` only ada's. Several users can share a VM: each gets their
-own MCPJungle gateway (`mcpjungle@<user>`, on port 8080, 8081, …), wired into
-their own agents. A single `answers.json` from an older version is split into
-these once (kept as `answers.json.old`).
-
-devbox-setup is embedded in pmox. Once a new VM answers SSH, pmox copies it
-over (before any `--post-create`/`--tack` hook, so a hook can run
-`sudo devbox-setup --yes`). It isn't part of the user-data, and nothing is
-downloaded for it at boot. A failed copy only warns. With `--no-wait-ssh`
-nothing is copied. `pmox devbox push web1` installs it, or refreshes it to
-your pmox version, on an existing VM; saved choices are kept.
-
-**An SSH key for git.** `pmox devbox gitkey web1 ~/.ssh/deploy_key` sends a
-private key (a deploy key, or one on your GitHub account) to the VM and
-sets it up with devbox-setup's "SSH key for git" item: it lands in
-`~/.ssh/devbox_git_key` (0600), `~/.ssh/config` makes every connection to
-github.com use it (`--host gitlab.example.com` adds other hosts; repeat
-it), and GitHub's host keys are added. It then works for any repo the key
-may reach: a deploy key's one repo, or all of yours for an account key.
-pmox keeps no copy and devbox-setup saves only the hosts; re-run to replace
-it. Picking the item in `sudo devbox-setup` without sending a key makes one
-on the VM, and the closing notes show its public key and where to add it.
-
-**Across VMs.** `pmox devbox apply [vm…] --profile team.toml` (or `--all`, or
-`--tag team` for the running pmox VMs with that Proxmox tag) pushes
-devbox-setup to each VM and applies the profiles there, four VMs at a time,
-with one result line per VM; without `--profile` it re-applies each VM's
-saved choices. `pmox devbox verify` with the same selectors changes nothing
-and lists what each VM is missing. Both exit non-zero if any VM failed.
-
-**Your team's own items and MCP servers.** Put item files in
-`~/.config/pmox/devbox/catalog.d/*.toml` (the catalog's format; checked
-before each push) and MCP server specs in
-`~/.config/pmox/devbox/mcp-catalog/*.spec`. Every push (launch, `devbox
-push`, `apply`, `verify`) copies them to `/etc/devbox-setup/catalog.d/` and
-the VM's MCP catalog, and removes the ones it copied before that you've
-since deleted; other files there are left alone.
-
-**Profiles.** `sudo devbox-setup export > team.toml` writes the choices on
-a VM as a profile: a TOML file of picks and plain settings (git identity,
-timezone, MCP servers), never secrets. `sudo devbox-setup --profile team.toml
---yes` applies one (`--profile` repeats, later files win, so a team file and
-a personal one combine), and `pmox launch web1 --devbox-profile team.toml`
-(or `devbox_profile:` under a server) applies it as soon as the VM is up,
-before any hook. A failed profile only warns, unless `--strict-hooks`.
-Without `--yes`, `--profile` shows the plan for review and asks for the
-secrets it can't hold. A profile with `name = "team"` is a layer: applying
-a newer `team` profile replaces the picks the old one made, and lists the
-ones it dropped (they stay installed, but aren't re-applied). Picks you
-made yourself are never dropped. `user = "ada"` in a profile, or
-`--user ada` (which wins), sets up that account, creating it like the VM's
-first user (passwordless sudo, same groups) if it doesn't exist.
-`devbox-setup export --lock` adds a `[lock]` table with the installed
-versions of the picked items' mise tools and apt packages. Applying a
-locked profile installs exactly those mise versions, and those apt
-versions while the archive still has them (otherwise the current one, with
-a note naming the package), so a VM built next month matches.
-
-pmox also adds a line to the VM's cloud-init that turns off unattended-upgrades and the apt-daily timers:
-on first boot they hold the dpkg lock and make installs fail. Security
-updates on these VMs are then up to you (`sudo apt upgrade`), or tick
-"Automatic security updates" in devbox-setup: it turns them back on and
-leaves `/etc/devbox-setup/auto-upgrades`, which tells the boot-time line to
-stand down. To turn
-devbox-setup off for a server, set `devbox_setup: false` under that server in
-`config.yaml`.
+pmox also adds a line to the VM's cloud-init that turns off
+unattended-upgrades and the apt-daily timers: on first boot they hold the
+dpkg lock and make installs fail. Security updates on these VMs are then up
+to you (`sudo apt upgrade`), or tick "Automatic security updates" in yardo:
+it turns them back on and leaves `/etc/yardo/auto-upgrades`, which tells the
+boot-time line to stand down.
 
 The starter cloud-init (`pmox init`, or `pmox config cloud-init --regenerate`)
 carries the same `bootcmd` line, visible and editable, so it applies with
-`devbox_setup: false` too. To keep unattended upgrades, delete the line and
-set `devbox_setup: false`. An older cloud-init file doesn't have the line, or
-has it without the opt-in check. With devbox-setup on, pmox swaps in the
-current line at launch; otherwise regenerate the file.
+`yardo: false` too. To keep unattended upgrades, delete the line and set
+`yardo: false`. An older cloud-init file doesn't have the line, or has it in
+an older form; with yardo on, pmox swaps in the current line at launch;
+otherwise regenerate the file.
+
+The config keys `devbox_setup` and `devbox_profile` were renamed `yardo` and
+`yardo_profile` when yardo was split out of pmox; pmox refuses a config that
+still uses the old names, and says which to rename.
 
 ## Clock sync
 

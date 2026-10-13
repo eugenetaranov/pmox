@@ -1,148 +1,120 @@
-// Package bootstrap ships devbox-setup — an interactive on-node installer
-// (dev tools, Docker, mise, Claude Code, MCPJungle + MCP servers) — onto
-// the VMs pmox launches: Tarball holds its files, which pmox copies over
-// SSH once the VM is up. Inject and ClockSync add the small first-boot
-// pieces to the VM's cloud-init.
-//
-// The script lives here. assets/ (mcp-sync and the MCP catalog) are copies
-// from github.com/tackhq/tack-roles, refreshed with `task bootstrap:sync`,
-// so devbox-setup and the tack roles install the same MCP servers. conf/
-// holds devbox-setup's own files (zshrc and vimrc, the shell drop-in, git,
-// tmux, docker, system drop-ins); the sync never touches it.
+// Package bootstrap prepares the VMs pmox launches: Inject and ClockSync
+// add the small first-boot pieces to the VM's cloud-init, and the yardo
+// commands install yardo (github.com/eugenetaranov/yardo, the on-VM
+// setup tool) from its release and ship a team's own yardo items.
 package bootstrap
 
 import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"embed"
 	"encoding/base64"
 	"fmt"
-	"io/fs"
-	"path"
-	"sort"
-	"strconv"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed devbox-setup picker.py mise-registry.tsv install.sh assets conf
-var files embed.FS
+// YardoVersion is the yardo release pmox installs on VMs.
+// PMOX_YARDO_VERSION overrides it (a tag, or "latest").
+const YardoVersion = "v0.1.0"
 
-//go:embed gobin
-var gobins embed.FS
+// yardoRepo is where yardo's releases are.
+const yardoRepo = "https://github.com/eugenetaranov/yardo"
 
-// Bins holds the Go devbox-setup builds (devbox-setup-linux-<arch>.gz);
-// tests replace it. Without any, only the bash devbox-setup is shipped.
-var Bins fs.FS = mustSub(gobins, "gobin")
-
-func mustSub(f fs.FS, dir string) fs.FS {
-	s, err := fs.Sub(f, dir)
-	if err != nil {
-		panic(err)
+// Yardo is the yardo release to install: PMOX_YARDO_VERSION, else
+// YardoVersion.
+func Yardo() string {
+	if v := strings.TrimSpace(os.Getenv("PMOX_YARDO_VERSION")); v != "" {
+		return v
 	}
-	return s
+	return YardoVersion
 }
 
-// LegacyScriptPath is where the bash devbox-setup lands when the Go one
-// is installed: the Go binary runs it for steps not ported yet.
-const LegacyScriptPath = ShareDir + "/devbox-setup.sh"
-
-// goBuilds returns the embedded Go builds by file name.
-func goBuilds() map[string][]byte {
-	out := map[string][]byte{}
-	names, _ := fs.Glob(Bins, "devbox-setup-linux-*.gz")
-	for _, n := range names {
-		if b, err := fs.ReadFile(Bins, n); err == nil && len(b) > 0 {
-			out[n] = b
-		}
+// YardoInstallCommand is the remote command that installs yardo's release
+// version ("latest" for the newest) with its install.sh, which checks the
+// download against the release's checksums. Saved choices are kept.
+func YardoInstallCommand(version string) string {
+	url := yardoRepo + "/releases/download/" + version + "/install.sh"
+	args := " --version " + version
+	if version == "latest" {
+		url, args = yardoRepo+"/releases/latest/download/install.sh", ""
 	}
-	return out
+	return "sudo -n sh -c '(command -v curl >/dev/null && curl -fsSL " + url + " || wget -qO- " + url + ") | sh -s --" + args + "'"
 }
 
-// HasGoBuilds reports whether this pmox ships the Go devbox-setup.
-func HasGoBuilds() bool { return len(goBuilds()) > 0 }
+// TeamDir names the subdirectories of a team tarball: catalog.d/*.toml go
+// to yardo's /etc/yardo/catalog.d, mcp-catalog/*.spec to the MCP catalog.
+const (
+	TeamCatalog = "catalog.d"
+	TeamMCP     = "mcp-catalog"
+)
 
-// ShareDir is where the assets land on the VM; the script reads them there.
-const ShareDir = "/usr/local/share/devbox-setup"
+// TeamSyncCommand is the remote command that syncs a TeamTarball (on
+// stdin) into place: the files pmox copied before (listed in .team-files)
+// but no longer ships go; other files there are left alone.
+const TeamSyncCommand = `sudo -n sh -c 'set -e
+t=$(mktemp -d); trap "rm -rf $t" EXIT
+tar -xzf - -C "$t"
+sync_team() {
+  src=$1 dst=$2 ext=$3 man=$2/.team-files
+  [ -d "$src" ] || [ -f "$man" ] || return 0
+  mkdir -p "$dst"
+  if [ -f "$man" ]; then
+    while IFS= read -r f; do
+      case "$f" in ""|.*|*/*) continue ;; esac
+      [ -f "$src/$f" ] || rm -f "$dst/$f"
+    done < "$man"
+  fi
+  : > "$man.new"
+  for p in "$src"/*"$ext"; do
+    [ -f "$p" ] || continue
+    f=${p##*/}
+    install -m 0644 "$p" "$dst/$f"
+    echo "$f" >> "$man.new"
+  done
+  mv -f "$man.new" "$man"
+}
+sync_team "$t/catalog.d" /etc/yardo/catalog.d .toml
+sync_team "$t/mcp-catalog" /usr/local/share/mcp-catalog .spec'`
 
-// ScriptPath is where the script lands on the VM.
-const ScriptPath = "/usr/local/bin/devbox-setup"
-
-// File is one write_files entry.
+// File is one file: a cloud-init write_files entry, or a team file.
 type File struct {
 	Path        string
 	Permissions string
 	Content     []byte
 }
 
-// Files returns the script and its assets with their on-VM paths.
-func Files() []File {
-	script, err := files.ReadFile("devbox-setup")
-	if err != nil {
-		panic(err) // embedded; cannot fail
-	}
-	picker, err := files.ReadFile("picker.py")
-	if err != nil {
-		panic(err)
-	}
-	registry, err := files.ReadFile("mise-registry.tsv")
-	if err != nil {
-		panic(err)
-	}
-	install, err := files.ReadFile("install.sh")
-	if err != nil {
-		panic(err)
-	}
-	// With the Go builds, install.sh puts the right one at ScriptPath and
-	// the bash script stays in the share directory for its legacy steps.
-	scriptAt := ScriptPath
-	builds := goBuilds()
-	if len(builds) > 0 {
-		scriptAt = LegacyScriptPath
-	}
-	out := []File{
-		{Path: scriptAt, Permissions: "0755", Content: script},
-		{Path: path.Join(ShareDir, "install.sh"), Permissions: "0755", Content: install},
-		{Path: path.Join(ShareDir, "picker.py"), Permissions: "0755", Content: picker},
-		{Path: path.Join(ShareDir, "mise-registry.tsv"), Permissions: "0644", Content: registry},
-	}
-	_ = fs.WalkDir(files, "assets", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
+// TeamTarball is a gzip'd tar of team files (Path relative: catalog.d/x.toml,
+// mcp-catalog/y.spec) for TeamSyncCommand.
+func TeamTarball(files []File) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	now := time.Now()
+	for _, f := range files {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: f.Path, Mode: 0o644, Size: int64(len(f.Content)), ModTime: now}); err != nil {
+			return nil, err
 		}
-		b, _ := files.ReadFile(p)
-		perm := "0644"
-		if path.Base(p) == "mcp-sync" {
-			perm = "0755"
+		if _, err := tw.Write(f.Content); err != nil {
+			return nil, err
 		}
-		out = append(out, File{Path: path.Join(ShareDir, strings.TrimPrefix(p, "assets/")), Permissions: perm, Content: b})
-		return nil
-	})
-	_ = fs.WalkDir(files, "conf", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		b, _ := files.ReadFile(p)
-		out = append(out, File{Path: path.Join(ShareDir, p), Permissions: "0644", Content: b})
-		return nil
-	})
-	names := make([]string, 0, len(builds))
-	for n := range builds {
-		names = append(names, n)
 	}
-	sort.Strings(names)
-	for _, n := range names {
-		out = append(out, File{Path: path.Join(ShareDir, "bin", n), Permissions: "0644", Content: builds[n]})
+	if err := tw.Close(); err != nil {
+		return nil, err
 	}
-	return out
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // noAutoUpgrades turns off unattended-upgrades on the dev VM: on first boot
-// it holds the dpkg lock for minutes and breaks installs (devbox-setup's,
-// and vendor scripts' own apt-get calls).
+// it holds the dpkg lock for minutes and breaks installs (yardo's, and
+// vendor scripts' own apt-get calls).
 var noAutoUpgrades = File{
 	Path:        "/etc/apt/apt.conf.d/20auto-upgrades",
 	Permissions: "0644",
@@ -152,17 +124,22 @@ APT::Periodic::Unattended-Upgrade "0";
 `),
 }
 
-// AutoUpgradesMarker is created by devbox-setup's "autoupdates" item: the
-// user opted into automatic security updates, so the bootcmd stands down.
-const AutoUpgradesMarker = "/etc/devbox-setup/auto-upgrades"
+// AutoUpgradesMarker is created by yardo's "autoupdates" item: the user
+// opted into automatic security updates, so the bootcmd stands down.
+const AutoUpgradesMarker = "/etc/yardo/auto-upgrades"
 
 // stopAutoUpgrades runs as a bootcmd (every boot), before the apt timers
 // can fire, unless the user opted in.
 const stopAutoUpgrades = "[ -e " + AutoUpgradesMarker + " ] || systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
 
-// legacyStopAutoUpgrades is the unguarded form older cloud-init files carry;
-// Inject replaces it so the opt-in survives reboots.
-const legacyStopAutoUpgrades = "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true"
+// oldStopAutoUpgrades are the forms older cloud-init files carry: unguarded,
+// and guarded by the marker's path from before yardo was split out of
+// pmox (devbox-setup).
+// Inject replaces them so the opt-in survives reboots.
+var oldStopAutoUpgrades = []string{
+	"systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true",
+	"[ -e /etc/" + "devbox-setup" + "/auto-upgrades ] || systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true",
+}
 
 // seq returns root's sequence under key, creating it (or converting an
 // empty value) when needed.
@@ -197,8 +174,8 @@ func hasScalar(list *yaml.Node, v string) bool {
 }
 
 // Inject returns userData with unattended upgrades turned off (bootcmd +
-// an apt config file), so they don't hold the dpkg lock while
-// devbox-setup installs. Everything else is kept as is. userData must be
+// an apt config file), so they don't hold the dpkg lock while yardo
+// installs. Everything else is kept as is. userData must be
 // a cloud-config mapping document.
 func Inject(userData []byte) ([]byte, error) {
 	return edit(userData, func(root *yaml.Node) error {
@@ -211,7 +188,7 @@ func Inject(userData []byte) ([]byte, error) {
 			return err
 		}
 		for _, n := range boot.Content {
-			if n.Kind == yaml.ScalarNode && n.Value == legacyStopAutoUpgrades {
+			if n.Kind == yaml.ScalarNode && slices.Contains(oldStopAutoUpgrades, n.Value) {
 				n.Value = stopAutoUpgrades
 			}
 		}
@@ -293,62 +270,3 @@ func gzipB64(b []byte) (string, error) {
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
-
-// Tarball returns devbox-setup's files as a gzip'd tar to extract at /
-// as root. It holds file entries only, so extracting never changes the
-// modes of existing directories such as /usr/local.
-func Tarball(extra ...File) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(zw)
-	now := time.Now()
-	for _, f := range append(Files(), extra...) {
-		mode, err := strconv.ParseInt(f.Permissions, 8, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%s: permissions %q: %w", f.Path, f.Permissions, err)
-		}
-		hdr := &tar.Header{
-			Typeflag: tar.TypeReg,
-			Name:     strings.TrimPrefix(f.Path, "/"),
-			Mode:     mode,
-			Size:     int64(len(f.Content)),
-			ModTime:  now,
-			Uname:    "root",
-			Gname:    "root",
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, err
-		}
-		if _, err := tw.Write(f.Content); err != nil {
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// TeamDir is where a push's team files land in the share directory;
-// install.sh syncs TeamDir/catalog.d/*.toml into /etc/devbox-setup/catalog.d
-// and TeamDir/mcp-catalog/*.spec into the MCP catalog.
-const TeamDir = ShareDir + "/team"
-
-// InstallCommand is the remote command that installs Tarball (on stdin):
-// it replaces the share directory, so files dropped from pmox don't
-// linger, and leaves /var/lib/devbox-setup (saved answers) alone.
-// install.sh then installs the Go build for the VM's architecture.
-const InstallCommand = "sudo -n sh -c 'rm -rf " + ShareDir + " && tar -xzf - -C / --no-overwrite-dir && sh " + ShareDir + "/install.sh'"
-
-// MiseRegistry is pmox's snapshot of mise's registry (name, aliases,
-// description per line), for the picker's search.
-func MiseRegistry() []byte {
-	b, _ := files.ReadFile("mise-registry.tsv")
-	return b
-}
-
-// Conf is devbox-setup's own config files (conf/), for file steps.
-func Conf() fs.FS { return mustSub(files, "conf") }

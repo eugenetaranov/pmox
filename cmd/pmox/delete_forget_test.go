@@ -14,21 +14,21 @@ import (
 )
 
 // forgetSeams stubs the VM lookup and the remote commands. present says
-// whether the VM has devbox-setup's created.json; checkErr fails the check.
+// whether the VM has yardo's created.json; checkErr fails the check.
 // It returns the commands run, and the shutdown count seen at forget time.
 func forgetSeams(t *testing.T, f *fakePVE, present bool, checkErr error) (*[]string, *int32) {
 	t.Helper()
-	origT, origR := devboxForgetTargetFn, devboxRemoteFn
-	t.Cleanup(func() { devboxForgetTargetFn, devboxRemoteFn = origT, origR })
-	devboxForgetTargetFn = func(context.Context, *pveclient.Client, *vm.Ref, *deleteFlags) (*sshTarget, error) {
+	origT, origR := yardoForgetTargetFn, yardoRemoteFn
+	t.Cleanup(func() { yardoForgetTargetFn, yardoRemoteFn = origT, origR })
+	yardoForgetTargetFn = func(context.Context, *pveclient.Client, *vm.Ref, *deleteFlags) (*sshTarget, error) {
 		return &sshTarget{IP: "10.0.0.5", User: "pmox", Name: "web1"}, nil
 	}
 	var ran []string
 	shutdownsAtForget := int32(-1)
-	devboxRemoteFn = func(_ context.Context, _ *sshTarget, command string, _ time.Duration) (string, error) {
+	yardoRemoteFn = func(_ context.Context, _ *sshTarget, command string, _ time.Duration) (string, error) {
 		ran = append(ran, command)
 		switch command {
-		case devboxCreatedCheck:
+		case yardoCreatedCheck:
 			if checkErr != nil {
 				return "", checkErr
 			}
@@ -36,7 +36,7 @@ func forgetSeams(t *testing.T, f *fakePVE, present bool, checkErr error) (*[]str
 				return "present\n", nil
 			}
 			return "", nil
-		case devboxForgetCommand:
+		case yardoForgetCommand:
 			shutdownsAtForget = atomic.LoadInt32(&f.shutdownHits)
 			return "✓ removed the GitHub key 'web1 (pmox)'\n", nil
 		}
@@ -55,7 +55,7 @@ func TestDelete_ForgetFlagRunsBeforeShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
-	if len(*ran) != 2 || (*ran)[1] != devboxForgetCommand {
+	if len(*ran) != 2 || (*ran)[1] != yardoForgetCommand {
 		t.Fatalf("remote commands = %q, want the check then forget", *ran)
 	}
 	if *atShutdown != 0 {
@@ -80,7 +80,7 @@ func TestDelete_ForgetPromptDefaultYes(t *testing.T) {
 	if err := executeDelete(cmd.Context(), cmd, f.client(), []string{"web1"}, df, yesConfirmer); err != nil {
 		t.Fatalf("executeDelete: %v", err)
 	}
-	if !strings.Contains(asked, "Remove the credentials devbox-setup created on web1 first? [Y/n]") {
+	if !strings.Contains(asked, "Remove the credentials yardo created on web1 first? [Y/n]") {
 		t.Errorf("prompt = %q", asked)
 	}
 	if len(*ran) != 2 {

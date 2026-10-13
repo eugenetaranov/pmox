@@ -59,21 +59,21 @@ type Options struct {
 	Wait          time.Duration
 	NoWaitSSH     bool
 	CloudInitPath string
-	// DevboxSetup installs devbox-setup (internal/bootstrap) once the VM
-	// answers SSH, via PushDevboxFn, and turns unattended upgrades off in
+	// Yardo installs yardo (internal/bootstrap) once the VM
+	// answers SSH, via PushYardoFn, and turns unattended upgrades off in
 	// the uploaded user-data. The user's cloud-init file is not changed.
-	DevboxSetup bool
-	// PushDevboxFn copies bootstrap.Tarball to the VM at ip and installs
+	Yardo bool
+	// PushYardoFn copies bootstrap.Tarball to the VM at ip and installs
 	// it. The CLI wires it to ssh; nil skips the push.
-	PushDevboxFn func(ctx context.Context, ip string) error
+	PushYardoFn func(ctx context.Context, ip string) error
 	// NewIPFn is told the new VM's IP before anything connects to it
 	// (pmox drops a host key pinned for that IP by a deleted VM).
 	NewIPFn func(ip string)
-	// DevboxProfileFn applies a devbox-setup profile on the VM at ip once
-	// devbox-setup is installed (`sudo devbox-setup --profile … --yes`),
+	// YardoProfileFn applies a yardo profile on the VM at ip once
+	// yardo is installed (`sudo yardo --profile … --yes`),
 	// streaming its output. Nil skips it. A failure warns, or fails the
 	// launch with StrictHooks.
-	DevboxProfileFn func(ctx context.Context, ip string, stdout, stderr io.Writer) error
+	YardoProfileFn func(ctx context.Context, ip string, stdout, stderr io.Writer) error
 	// ClockSync adds chrony following the Proxmox host's clock to the
 	// uploaded user-data (bootstrap.ClockSync).
 	ClockSync bool
@@ -169,7 +169,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
 	}
-	if opts.DevboxSetup {
+	if opts.Yardo {
 		cloudInitBytes = withUserDataEdit(cloudInitBytes, bootstrap.Inject, "automatic updates left on", opts.CloudInitPath, opts.Stderr)
 	}
 	if opts.ClockSync {
@@ -314,11 +314,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
-	// Phase 8c — install devbox-setup over SSH, before any hook so a hook
+	// Phase 8c — install yardo over SSH, before any hook so a hook
 	// can run it. Best-effort: the VM is fine without it.
 	pushed := false
-	if opts.DevboxSetup {
-		pushed = pushDevbox(ctx, opts, ip)
+	if opts.Yardo {
+		pushed = pushYardo(ctx, opts, ip)
 	}
 
 	// Phase 9 — mark ready: the VM is cloned, tagged, resized, cloud-init
@@ -330,10 +330,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		fmt.Fprintf(opts.Stderr, "warning: could not mark vm %d ready (harmless: 'pmox cleanup's opt-in vm category may flag it): %v\n", vmid, err)
 	}
 
-	// Phase 9b — apply the devbox-setup profile, before the hook so a hook
+	// Phase 9b — apply the yardo profile, before the hook so a hook
 	// sees the tools installed.
-	if opts.DevboxProfileFn != nil {
-		if err := applyDevboxProfile(ctx, opts, ip, pushed); err != nil {
+	if opts.YardoProfileFn != nil {
+		if err := applyYardoProfile(ctx, opts, ip, pushed); err != nil {
 			return nil, err
 		}
 	}
@@ -423,9 +423,9 @@ func withUserDataEdit(userData []byte, change func([]byte) ([]byte, error), what
 	return out
 }
 
-// applyDevboxProfile runs DevboxProfileFn, streaming like a hook. Its
+// applyYardoProfile runs YardoProfileFn, streaming like a hook. Its
 // failure is a warning, or a *HookError with StrictHooks.
-func applyDevboxProfile(ctx context.Context, opts Options, ip string, pushed bool) error {
+func applyYardoProfile(ctx context.Context, opts Options, ip string, pushed bool) error {
 	stdout, stderr := opts.Stdout, opts.Stderr
 	if stdout == nil {
 		stdout = os.Stdout
@@ -436,40 +436,40 @@ func applyDevboxProfile(ctx context.Context, opts Options, ip string, pushed boo
 	var err error
 	switch {
 	case opts.NoWaitSSH:
-		fmt.Fprintln(stderr, "warning: --no-wait-ssh set; the devbox profile will not be applied")
+		fmt.Fprintln(stderr, "warning: --no-wait-ssh set; the yardo profile will not be applied")
 		return nil
 	case !pushed:
-		err = errors.New("devbox-setup is not installed")
+		err = errors.New("yardo is not installed")
 	default:
-		fmt.Fprintln(stderr, "Applying the devbox profile…")
-		err = opts.DevboxProfileFn(ctx, ip, stdout, stderr)
+		fmt.Fprintln(stderr, "Applying the yardo profile…")
+		err = opts.YardoProfileFn(ctx, ip, stdout, stderr)
 	}
 	if err == nil {
-		fmt.Fprintln(stderr, "✓ devbox profile applied")
+		fmt.Fprintln(stderr, "✓ yardo profile applied")
 		return nil
 	}
-	fmt.Fprintf(stderr, "warning: devbox profile failed: %v. Retry with: pmox exec %s -- sudo devbox-setup --yes\n", err, opts.Name)
+	fmt.Fprintf(stderr, "warning: yardo profile failed: %v. Retry with: pmox exec %s -- sudo yardo --yes\n", err, opts.Name)
 	if opts.StrictHooks {
-		return &HookError{Hook: "devbox-profile", Err: err}
+		return &HookError{Hook: "yardo-profile", Err: err}
 	}
 	return nil
 }
 
-// pushDevbox installs devbox-setup on the VM, warning on failure. It
+// pushYardo installs yardo on the VM, warning on failure. It
 // reports whether it was installed.
-func pushDevbox(ctx context.Context, opts Options, ip string) bool {
-	hint := "pmox devbox push " + opts.Name
-	if opts.NoWaitSSH || opts.PushDevboxFn == nil {
+func pushYardo(ctx context.Context, opts Options, ip string) bool {
+	hint := "pmox yardo push " + opts.Name
+	if opts.NoWaitSSH || opts.PushYardoFn == nil {
 		if opts.NoWaitSSH && opts.Stderr != nil {
-			fmt.Fprintf(opts.Stderr, "note: --no-wait-ssh set; devbox-setup not installed. Once the VM is up: %s\n", hint)
+			fmt.Fprintf(opts.Stderr, "note: --no-wait-ssh set; yardo not installed. Once the VM is up: %s\n", hint)
 		}
 		return false
 	}
-	opts.pStart("Installing devbox-setup")
-	err := opts.PushDevboxFn(ctx, ip)
+	opts.pStart("Installing yardo")
+	err := opts.PushYardoFn(ctx, ip)
 	opts.pDone(nil)
 	if err != nil && opts.Stderr != nil {
-		fmt.Fprintf(opts.Stderr, "warning: devbox-setup not installed on %s: %v. Retry with: %s\n", opts.Name, err, hint)
+		fmt.Fprintf(opts.Stderr, "warning: yardo not installed on %s: %v. Retry with: %s\n", opts.Name, err, hint)
 	}
 	return err == nil
 }

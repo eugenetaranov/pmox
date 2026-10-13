@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eugenetaranov/pmox/internal/bootstrap"
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
@@ -63,14 +62,14 @@ func TestSelectFleet(t *testing.T) {
 
 func TestFleetCommand(t *testing.T) {
 	cmd, stdin, err := fleetCommand(nil, false)
-	if err != nil || cmd != "sudo -n devbox-setup --yes" || stdin != nil {
+	if err != nil || cmd != "sudo -n yardo --yes" || stdin != nil {
 		t.Errorf("no profiles: %q %v", cmd, err)
 	}
 	cmd, stdin, err = fleetCommand([][]byte{[]byte("picks = [\"cli\"]\n"), []byte("user = \"ada\"\n")}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cmd, "devbox-setup --profile /var/lib/devbox-setup/pmox-profiles/1.toml --profile /var/lib/devbox-setup/pmox-profiles/2.toml --verify'") {
+	if !strings.Contains(cmd, "yardo --profile /var/lib/yardo/pmox-profiles/1.toml --profile /var/lib/yardo/pmox-profiles/2.toml --verify'") {
 		t.Errorf("cmd = %s", cmd)
 	}
 	tr := tar.NewReader(bytes.NewReader(stdin))
@@ -97,21 +96,21 @@ func TestFleetOne(t *testing.T) {
 	if err := os.WriteFile(key, []byte("k"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldIP, oldPush, oldRun := fleetIPFn, devboxPushFn, devboxFleetRunFn
-	t.Cleanup(func() { fleetIPFn, devboxPushFn, devboxFleetRunFn = oldIP, oldPush, oldRun })
+	oldIP, oldPush, oldRun := fleetIPFn, yardoPushFn, yardoFleetRunFn
+	t.Cleanup(func() { fleetIPFn, yardoPushFn, yardoFleetRunFn = oldIP, oldPush, oldRun })
 	fleetIPFn = func(_ context.Context, _ *pveclient.Client, r pveclient.Resource) (string, error) {
 		if r.Name == "web3" {
 			return "", errors.New("not running")
 		}
 		return "10.0.0.1", nil
 	}
-	devboxPushFn = func(_ context.Context, target *sshTarget) error {
+	yardoPushFn = func(_ context.Context, target *sshTarget) error {
 		if target.Name == "web2" {
 			return errors.New("ssh: connect to host 10.0.0.1 port 22: Connection refused")
 		}
 		return nil
 	}
-	devboxFleetRunFn = func(context.Context, *sshTarget, string, []byte) (string, error) {
+	yardoFleetRunFn = func(context.Context, *sshTarget, string, []byte) (string, error) {
 		return "ok         zsh\nmissing    starship: not in mise ls\nmissing    Docker: docker not found\n", errors.New("exit status 1")
 	}
 	f := &fleetFlags{}
@@ -123,19 +122,19 @@ func TestFleetOne(t *testing.T) {
 			t.Errorf("%s: %q (ok %v), want %q", name, line, ok, want)
 		}
 	}
-	devboxFleetRunFn = func(context.Context, *sshTarget, string, []byte) (string, error) { return "ok         zsh\n", nil }
+	yardoFleetRunFn = func(context.Context, *sshTarget, string, []byte) (string, error) { return "ok         zsh\n", nil }
 	if line, ok := fleetOne(context.Background(), nil, pveclient.Resource{Name: "web1"}, f, res, "cmd", nil, false); !ok || line != "applied" {
 		t.Errorf("apply: %q %v", line, ok)
 	}
 }
 
-func TestDevboxTeamFiles(t *testing.T) {
+func TestYardoTeamFiles(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
-	if files, err := devboxTeamFiles(); err != nil || len(files) != 0 {
+	if files, err := yardoTeamFiles(); err != nil || len(files) != 0 {
 		t.Fatalf("no team dir: %v %v", files, err)
 	}
-	dir := filepath.Join(cfg, "pmox", "devbox")
+	dir := filepath.Join(cfg, "pmox", "yardo")
 	write := func(p, s string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, p)), 0o755); err != nil {
@@ -148,7 +147,7 @@ func TestDevboxTeamFiles(t *testing.T) {
 	write("catalog.d/acme.toml", "[[item]]\nid = \"acmecli\"\ntab = \"dev\"\nlabel = \"Acme CLI\"\n[[item.step]]\ntype = \"apt\"\npackages = [\"jq\"]\n")
 	write("mcp-catalog/acme-docs.spec", "NAME=acme-docs\nKIND=http\nURL=https://docs.acme/mcp\n")
 	write("mcp-catalog/notes.txt", "ignored")
-	files, err := devboxTeamFiles()
+	files, err := yardoTeamFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,11 +155,12 @@ func TestDevboxTeamFiles(t *testing.T) {
 	for _, f := range files {
 		got = append(got, f.Path)
 	}
-	if want := bootstrap.TeamDir + "/catalog.d/acme.toml " + bootstrap.TeamDir + "/mcp-catalog/acme-docs.spec"; strings.Join(got, " ") != want {
+	if want := "catalog.d/acme.toml mcp-catalog/acme-docs.spec"; strings.Join(got, " ") != want {
 		t.Errorf("files = %v", got)
 	}
-	write("catalog.d/broken.toml", "[[item]]\nid = \"x\"\ntab = \"nope\"\n")
-	if _, err := devboxTeamFiles(); err == nil || !strings.Contains(err.Error(), "catalog.d") {
+
+	write("catalog.d/broken.toml", "[[item]\nid = \"x\"\n")
+	if _, err := yardoTeamFiles(); err == nil || !strings.Contains(err.Error(), "catalog.d") {
 		t.Errorf("broken item: err = %v", err)
 	}
 }

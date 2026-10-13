@@ -668,16 +668,16 @@ func TestRun_WaitsForBootAfterSSH(t *testing.T) {
 	}
 }
 
-// TestRun_PushesDevboxBeforeHook: devbox-setup is installed over SSH
+// TestRun_PushesYardoBeforeHook: yardo is installed over SSH
 // after the SSH wait and before the hook, and never in user-data.
-func TestRun_PushesDevboxBeforeHook(t *testing.T) {
+func TestRun_PushesYardoBeforeHook(t *testing.T) {
 	f := newLaunchFake(t)
 	var order []string
 	opts, stub := baseOpts(t, f.client())
 	opts.NoWaitSSH = false
 	opts.WaitForSSHFn = func(context.Context, string, time.Duration) error { order = append(order, "ssh"); return nil }
-	opts.DevboxSetup = true
-	opts.PushDevboxFn = func(_ context.Context, ip string) error {
+	opts.Yardo = true
+	opts.PushYardoFn = func(_ context.Context, ip string) error {
 		order = append(order, "push:"+ip)
 		return nil
 	}
@@ -689,8 +689,8 @@ func TestRun_PushesDevboxBeforeHook(t *testing.T) {
 	if got := strings.Join(order, ","); got != "ip:10.9.8.7,ssh,push:10.9.8.7,hook" {
 		t.Errorf("order = %s, want ip:10.9.8.7,ssh,push:10.9.8.7,hook", got)
 	}
-	if bytes.Contains(stub.content, []byte(bootstrap.ScriptPath)) {
-		t.Errorf("user-data carries devbox-setup:\n%s", stub.content)
+	if bytes.Contains(stub.content, []byte("yardo/releases")) {
+		t.Errorf("user-data carries yardo:\n%s", stub.content)
 	}
 	if !bytes.Contains(stub.content, []byte("20auto-upgrades")) {
 		t.Errorf("user-data lacks the auto-upgrades switch-off:\n%s", stub.content)
@@ -705,13 +705,13 @@ func TestRun_PushFailureWarns(t *testing.T) {
 	opts, _ := baseOpts(t, f.client())
 	opts.NoWaitSSH = false
 	opts.WaitForSSHFn = fakeWaitSSH()
-	opts.DevboxSetup = true
-	opts.PushDevboxFn = func(context.Context, string) error { return errors.New("sudo: a password is required") }
+	opts.Yardo = true
+	opts.PushYardoFn = func(context.Context, string) error { return errors.New("sudo: a password is required") }
 	opts.Stderr = &stderr
 	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "pmox devbox push web1") {
+	if !strings.Contains(stderr.String(), "pmox yardo push web1") {
 		t.Errorf("stderr = %q, want the push hint", stderr.String())
 	}
 	bodies := f.configBodies()
@@ -724,13 +724,13 @@ func TestRun_NoWaitSSHSkipsPush(t *testing.T) {
 	f := newLaunchFake(t)
 	var stderr bytes.Buffer
 	opts, _ := baseOpts(t, f.client())
-	opts.DevboxSetup = true
-	opts.PushDevboxFn = func(context.Context, string) error { t.Error("pushed with --no-wait-ssh"); return nil }
+	opts.Yardo = true
+	opts.PushYardoFn = func(context.Context, string) error { t.Error("pushed with --no-wait-ssh"); return nil }
 	opts.Stderr = &stderr
 	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "devbox-setup not installed") || !strings.Contains(stderr.String(), "pmox devbox push web1") {
+	if !strings.Contains(stderr.String(), "yardo not installed") || !strings.Contains(stderr.String(), "pmox yardo push web1") {
 		t.Errorf("stderr = %q, want the not-installed note", stderr.String())
 	}
 }
@@ -756,9 +756,9 @@ func (h hookFunc) Name() string { return "func" }
 
 func (h hookFunc) Run(context.Context, hook.Env, io.Writer, io.Writer) error { h(); return nil }
 
-// TestRun_DevboxProfile: the profile is applied after the push and before
+// TestRun_YardoProfile: the profile is applied after the push and before
 // the hook; a failure warns, and fails the launch with --strict-hooks.
-func TestRun_DevboxProfile(t *testing.T) {
+func TestRun_YardoProfile(t *testing.T) {
 	setup := func(t *testing.T, pushErr, profErr error) (Options, *[]string, *bytes.Buffer) {
 		f := newLaunchFake(t)
 		var order []string
@@ -766,10 +766,10 @@ func TestRun_DevboxProfile(t *testing.T) {
 		opts, _ := baseOpts(t, f.client())
 		opts.NoWaitSSH = false
 		opts.WaitForSSHFn = fakeWaitSSH()
-		opts.DevboxSetup = true
+		opts.Yardo = true
 		opts.Stderr = &stderr
-		opts.PushDevboxFn = func(context.Context, string) error { order = append(order, "push"); return pushErr }
-		opts.DevboxProfileFn = func(_ context.Context, ip string, _, _ io.Writer) error {
+		opts.PushYardoFn = func(context.Context, string) error { order = append(order, "push"); return pushErr }
+		opts.YardoProfileFn = func(_ context.Context, ip string, _, _ io.Writer) error {
 			order = append(order, "profile:"+ip)
 			return profErr
 		}
@@ -789,22 +789,22 @@ func TestRun_DevboxProfile(t *testing.T) {
 	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("a failed profile should only warn: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "devbox profile failed") {
+	if !strings.Contains(stderr.String(), "yardo profile failed") {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 
 	opts, _, _ = setup(t, nil, errors.New("exit status 1"))
 	opts.StrictHooks = true
 	var he *HookError
-	if _, err := Run(context.Background(), opts); !errors.As(err, &he) || he.Hook != "devbox-profile" {
-		t.Errorf("strict: err = %v, want a devbox-profile HookError", err)
+	if _, err := Run(context.Background(), opts); !errors.As(err, &he) || he.Hook != "yardo-profile" {
+		t.Errorf("strict: err = %v, want a yardo-profile HookError", err)
 	}
 
 	opts, order, stderr = setup(t, errors.New("ssh: refused"), nil)
 	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if strings.Contains(strings.Join(*order, ","), "profile") || !strings.Contains(stderr.String(), "devbox-setup is not installed") {
+	if strings.Contains(strings.Join(*order, ","), "profile") || !strings.Contains(stderr.String(), "yardo is not installed") {
 		t.Errorf("a failed push should skip the profile with a warning; order %v stderr %q", *order, stderr.String())
 	}
 }

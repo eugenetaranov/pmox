@@ -50,7 +50,7 @@ type launchFlags struct {
 	wait           time.Duration
 	noWaitSSH      bool
 	noClockSync    bool
-	devboxProfile  string
+	yardoProfile   string
 	postCreate     string
 	tack           string
 	ansible        string
@@ -130,7 +130,7 @@ automatic rollback. If anything after clone fails, run
 // addClockSyncFlag registers --no-clock-sync on launch and clone.
 func addClockSyncFlag(cmd *cobra.Command, f *launchFlags) {
 	cmd.Flags().BoolVar(&f.noClockSync, "no-clock-sync", false, "don't add chrony following the Proxmox host's clock to the VM's cloud-init (config: clock_sync: false)")
-	cmd.Flags().StringVar(&f.devboxProfile, "devbox-profile", "", "apply this devbox-setup profile once the VM is up: sudo devbox-setup --profile <file> --yes (config: devbox_profile)")
+	cmd.Flags().StringVar(&f.yardoProfile, "yardo-profile", "", "apply this yardo profile once the VM is up: sudo yardo --profile <file> --yes (config: yardo_profile)")
 }
 
 // addHookFlags registers the post-create hook flags on a launch-style
@@ -281,8 +281,8 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 	applyHookOptions(&opts, hk, f, resolved.Server, resolved.URL, SSHInsecure())
 	applyForgetHostKey(&opts)
-	applyDevboxPush(&opts)
-	if err := applyDevboxProfileOpt(&opts, f.devboxProfile, resolved.Server); err != nil {
+	applyYardoPush(&opts)
+	if err := applyYardoProfileOpt(&opts, f.yardoProfile, resolved.Server); err != nil {
 		return err
 	}
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
@@ -298,8 +298,8 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	recordVMIdentity(cmd.ErrOrStderr(), resolved.URL, r.VMID, opts.CloudInitPath)
 	applySharedAccessFn(ctx, cmd.ErrOrStderr(), client, resolved.URL, r.VMID, opts.Node, name)
 	fmt.Fprintf(cmd.OutOrStdout(), "%slaunched %s (vmid=%d, ip=%s)\n", doneMark(opts.Progress != nil), name, r.VMID, r.IP)
-	if opts.DevboxSetup {
-		fmt.Fprintf(cmd.ErrOrStderr(), "next: pmox shell %s, then 'sudo devbox-setup' to pick tools, languages and AI setup\n", name)
+	if opts.Yardo {
+		fmt.Fprintf(cmd.ErrOrStderr(), "next: pmox shell %s, then 'sudo yardo' to pick tools, languages and AI setup\n", name)
 	}
 	return nil
 }
@@ -485,7 +485,7 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 		Wait:           wait,
 		NoWaitSSH:      f.noWaitSSH,
 		CloudInitPath:  cloudInitPath,
-		DevboxSetup:    srv.DevboxSetupEnabled(),
+		Yardo:          srv.YardoEnabled(),
 		ClockSync:      srv.ClockSyncEnabled() && !f.noClockSync,
 		Stderr:         stderr,
 	}, nil

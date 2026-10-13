@@ -4,34 +4,37 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
 )
 
-func newDevboxGitKeyCmd() *cobra.Command {
+// gitHost is a host name with an optional :port (yardo checks it again).
+var gitHost = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+
+func newYardoGitKeyCmd() *cobra.Command {
 	f := &sshFlags{}
 	var hosts []string
 	cmd := &cobra.Command{
 		Use:   "gitkey [name|vmid] <private key file>",
 		Short: "Send an SSH key for git (a deploy key, or yours) to a VM",
 		Long: `Copy an SSH private key to a VM for git, and set it up there with
-devbox-setup's "SSH key for git" item: the key goes to
-~/.ssh/devbox_git_key (0600), ~/.ssh/config makes every connection to
+yardo's "SSH key for git" item: the key goes to
+~/.ssh/yardo_git_key (0600), ~/.ssh/config makes every connection to
 github.com (or the --host ones) use it, and GitHub's host keys are added.
 It then works for any repo the key may reach: the one repo of a deploy
 key, or all of yours for a key on your GitHub account.
 
-The key goes over SSH to devbox-setup's stdin; pmox keeps no copy, and
-devbox-setup saves only which hosts it is for. Re-run to replace it.`,
-		Example: `  pmox devbox gitkey text2cad ~/.ssh/text2cad_deploy
-  pmox devbox gitkey web1 ~/.ssh/id_ed25519 --host github.com --host gitlab.example.com`,
+The key goes over SSH to 'sudo yardo gitkey' on stdin; pmox keeps no copy, and
+yardo saves only which hosts it is for. Re-run to replace it.`,
+		Example: `  pmox yardo gitkey text2cad ~/.ssh/text2cad_deploy
+  pmox yardo gitkey web1 ~/.ssh/id_ed25519 --host github.com --host gitlab.example.com`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDevboxGitKey(cmd, args, f, hosts)
+			return runYardoGitKey(cmd, args, f, hosts)
 		},
 	}
 	addSSHFlags(cmd, f)
@@ -39,7 +42,7 @@ devbox-setup saves only which hosts it is for. Re-run to replace it.`,
 	return cmd
 }
 
-func runDevboxGitKey(cmd *cobra.Command, args []string, f *sshFlags, hosts []string) error {
+func runYardoGitKey(cmd *cobra.Command, args []string, f *sshFlags, hosts []string) error {
 	keyFile := args[len(args)-1]
 	key, err := os.ReadFile(sshkey.ExpandHome(keyFile))
 	if err != nil {
@@ -51,9 +54,9 @@ func runDevboxGitKey(cmd *cobra.Command, args []string, f *sshFlags, hosts []str
 		}
 		return fmt.Errorf("%s isn't an SSH private key", keyFile)
 	}
-	command := "sudo -n devbox-setup gitkey"
+	command := "sudo -n yardo gitkey"
 	for _, h := range hosts {
-		if !answers.ValidHost(h) {
+		if !gitHost.MatchString(h) {
 			return fmt.Errorf("--host %q is not a host name", h)
 		}
 		command += " --host " + h
@@ -71,18 +74,18 @@ func runDevboxGitKey(cmd *cobra.Command, args []string, f *sshFlags, hosts []str
 	if err != nil {
 		return err
 	}
-	// The VM's devbox-setup must know the gitkey item: push this version.
-	sp := startSpin(fmt.Sprintf("Updating devbox-setup on %s…", target.Name))
-	err = devboxPushFn(ctx, target)
+	// The VM's yardo must know the gitkey item: push this version.
+	sp := startSpin(fmt.Sprintf("Updating yardo on %s…", target.Name))
+	err = yardoPushFn(ctx, target)
 	sp.Stop()
 	if err != nil {
-		return explainSSHFailure(ctx, target, resolved.URL, fmt.Errorf("install devbox-setup on %s: %w", target.Name, err), true)
+		return explainSSHFailure(ctx, target, resolved.URL, fmt.Errorf("install yardo on %s: %w", target.Name, err), true)
 	}
 	sp = startSpin(fmt.Sprintf("Setting up the git key on %s…", target.Name))
-	out, err := devboxFleetRunFn(ctx, target, command, key)
+	out, err := yardoFleetRunFn(ctx, target, command, key)
 	sp.Stop()
 	if err != nil {
-		return fmt.Errorf("devbox-setup gitkey on %s: %w: %s", target.Name, err, lastLines(out, 4))
+		return fmt.Errorf("yardo gitkey on %s: %w: %s", target.Name, err, lastLines(out, 4))
 	}
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.HasPrefix(l, "! ") || strings.Contains(l, "git SSH key") {

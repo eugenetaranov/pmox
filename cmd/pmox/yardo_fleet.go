@@ -17,8 +17,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/bootstrap"
-	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
-	"github.com/eugenetaranov/pmox/internal/devbox/profile"
 	"github.com/eugenetaranov/pmox/internal/paths"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
@@ -30,22 +28,22 @@ import (
 // fleetParallel is how many VMs apply and verify work on at once.
 const fleetParallel = 4
 
-// devboxTeamDir is where a team's devbox-setup additions live on this
+// yardoTeamDir is where a team's yardo additions live on this
 // machine: catalog.d/*.toml (items) and mcp-catalog/*.spec (MCP servers).
-func devboxTeamDir() (string, error) {
+func yardoTeamDir() (string, error) {
 	dir, err := paths.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "devbox"), nil
+	return filepath.Join(dir, "yardo"), nil
 }
 
 var teamName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// devboxTeamFiles are the team's files to ship with a push, the catalog
-// items checked first (a broken item would stop devbox-setup on every VM).
-func devboxTeamFiles() ([]bootstrap.File, error) {
-	base, err := devboxTeamDir()
+// yardoTeamFiles are the team's files to ship with a push (paths relative
+// to the team tarball), each catalog file checked to be TOML first.
+func yardoTeamFiles() ([]bootstrap.File, error) {
+	base, err := yardoTeamDir()
 	if err != nil {
 		return nil, err
 	}
@@ -62,12 +60,12 @@ func devboxTeamFiles() ([]bootstrap.File, error) {
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, bootstrap.File{Path: bootstrap.TeamDir + "/" + k.sub + "/" + name, Permissions: "0644", Content: b})
-		}
-		if k.sub == "catalog.d" && len(m) > 0 {
-			if _, err := catalog.Load(os.DirFS(dir), nil); err != nil {
-				return nil, fmt.Errorf("%s: %w", dir, err)
+			if k.ext == ".toml" {
+				if err := checkTOML(p, b); err != nil {
+					return nil, err
+				}
 			}
+			out = append(out, bootstrap.File{Path: k.sub + "/" + name, Permissions: "0644", Content: b})
 		}
 	}
 	return out, nil
@@ -80,38 +78,38 @@ type fleetFlags struct {
 	profiles []string
 }
 
-func newDevboxApplyCmd() *cobra.Command {
+func newYardoApplyCmd() *cobra.Command {
 	f := &fleetFlags{}
 	cmd := &cobra.Command{
 		Use:   "apply [name|vmid ...]",
-		Short: "Push devbox-setup to VMs and apply profiles (or their saved choices)",
-		Long: `Push this pmox version's devbox-setup (with your team's catalog.d and
-MCP specs from ~/.config/pmox/devbox/) to each running VM, then run
-'sudo devbox-setup --profile … --yes' there (with no --profile,
-'sudo devbox-setup --yes', which re-applies the saved choices).
+		Short: "Install yardo on VMs and apply profiles (or their saved choices)",
+		Long: `Install yardo's release on each running VM (with your team's
+catalog.d and MCP specs from ~/.config/pmox/yardo/), then run
+'sudo yardo --profile … --yes' there (with no --profile,
+'sudo yardo --yes', which re-applies the saved choices).
 
 VMs: the ones named, or --all pmox VMs, or those with --tag. Four at a
 time; one result line per VM; exits non-zero if any VM failed.`,
-		Example: `  pmox devbox apply --tag team --profile team.toml
-  pmox devbox apply web1 web2 --profile team.toml --profile me.toml
-  pmox devbox apply --all`,
-		RunE: func(cmd *cobra.Command, args []string) error { return runDevboxFleet(cmd, args, f, false) },
+		Example: `  pmox yardo apply --tag team --profile team.toml
+  pmox yardo apply web1 web2 --profile team.toml --profile me.toml
+  pmox yardo apply --all`,
+		RunE: func(cmd *cobra.Command, args []string) error { return runYardoFleet(cmd, args, f, false) },
 	}
 	addFleetFlags(cmd, f)
 	return cmd
 }
 
-func newDevboxVerifyCmd() *cobra.Command {
+func newYardoVerifyCmd() *cobra.Command {
 	f := &fleetFlags{}
 	cmd := &cobra.Command{
 		Use:   "verify [name|vmid ...]",
 		Short: "Check that VMs have what their profiles (or saved choices) pick",
-		Long: `Push devbox-setup to each running VM and run 'devbox-setup --verify'
+		Long: `Push yardo to each running VM and run 'yardo --verify'
 there, with the profiles when given: one line per VM, listing what is
-missing. Changes nothing but devbox-setup itself. Exits non-zero if any
+missing. Changes nothing but yardo itself. Exits non-zero if any
 VM is missing something or failed.`,
-		Example: `  pmox devbox verify --tag team --profile team.toml`,
-		RunE:    func(cmd *cobra.Command, args []string) error { return runDevboxFleet(cmd, args, f, true) },
+		Example: `  pmox yardo verify --tag team --profile team.toml`,
+		RunE:    func(cmd *cobra.Command, args []string) error { return runYardoFleet(cmd, args, f, true) },
 	}
 	addFleetFlags(cmd, f)
 	return cmd
@@ -121,7 +119,7 @@ func addFleetFlags(cmd *cobra.Command, f *fleetFlags) {
 	addSSHFlags(cmd, &f.ssh)
 	cmd.Flags().BoolVar(&f.all, "all", false, "every running pmox VM")
 	cmd.Flags().StringVar(&f.tag, "tag", "", "the running pmox VMs with this Proxmox tag")
-	cmd.Flags().StringArrayVar(&f.profiles, "profile", nil, "a devbox-setup profile to apply (repeatable; later ones win)")
+	cmd.Flags().StringArrayVar(&f.profiles, "profile", nil, "a yardo profile to apply (repeatable; later ones win)")
 }
 
 // selectFleet picks the VMs: the named ones (by name or vmid), --all
@@ -175,9 +173,9 @@ func fleetCommand(profiles [][]byte, verify bool) (string, []byte, error) {
 		mode = "--verify"
 	}
 	if len(profiles) == 0 {
-		return "sudo -n devbox-setup " + mode, nil, nil
+		return "sudo -n yardo " + mode, nil, nil
 	}
-	const dir = "/var/lib/devbox-setup/pmox-profiles"
+	const dir = "/var/lib/yardo/pmox-profiles"
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	var flags []string
@@ -195,21 +193,20 @@ func fleetCommand(profiles [][]byte, verify bool) (string, []byte, error) {
 		return "", nil, err
 	}
 	cmd := "sudo -n sh -c 'umask 077 && rm -rf " + dir + " && mkdir -p " + dir + " && tar -xf - -C " + dir +
-		" && devbox-setup " + strings.Join(flags, " ") + " " + mode + "'"
+		" && yardo " + strings.Join(flags, " ") + " " + mode + "'"
 	return cmd, buf.Bytes(), nil
 }
 
-// devboxFleetRunFn runs command on the target with stdin and returns its
+// yardoFleetRunFn runs command on the target with stdin and returns its
 // combined output. A seam for tests.
-var devboxFleetRunFn = func(ctx context.Context, target *sshTarget, command string, stdin []byte) (string, error) {
+var yardoFleetRunFn = func(ctx context.Context, target *sshTarget, command string, stdin []byte) (string, error) {
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		return "", errors.New("ssh binary not found on PATH")
 	}
-	ctx, cancel := context.WithTimeout(ctx, devboxProfileTimeout)
+	ctx, cancel := context.WithTimeout(ctx, yardoProfileTimeout)
 	defer cancel()
-	args := devboxPushArgs(target, guestHostKeyOpts())
-	args[len(args)-1] = command
+	args := yardoSSHArgs(target, guestHostKeyOpts(), command)
 	c := exec.CommandContext(ctx, sshPath, args...)
 	if stdin != nil {
 		c.Stdin = bytes.NewReader(stdin)
@@ -234,7 +231,7 @@ var fleetIPFn = func(ctx context.Context, client *pveclient.Client, r pveclient.
 	return ip, nil
 }
 
-func runDevboxFleet(cmd *cobra.Command, args []string, f *fleetFlags, verify bool) error {
+func runYardoFleet(cmd *cobra.Command, args []string, f *fleetFlags, verify bool) error {
 	ctx := cmd.Context()
 	var profiles [][]byte
 	for _, p := range f.profiles {
@@ -242,12 +239,12 @@ func runDevboxFleet(cmd *cobra.Command, args []string, f *fleetFlags, verify boo
 		if err != nil {
 			return fmt.Errorf("profile: %w", err)
 		}
-		if _, err := profile.Parse(p, b); err != nil {
+		if err := checkTOML(p, b); err != nil {
 			return fmt.Errorf("profile: %w", err)
 		}
 		profiles = append(profiles, b)
 	}
-	if _, err := devboxTeamFiles(); err != nil {
+	if _, err := yardoTeamFiles(); err != nil {
 		return err
 	}
 	command, stdin, err := fleetCommand(profiles, verify)
@@ -304,10 +301,10 @@ func fleetOne(ctx context.Context, client *pveclient.Client, r pveclient.Resourc
 		return err.Error(), false
 	}
 	target := &sshTarget{IP: ip, User: user, Key: key, VMID: r.VMID, Name: r.Name}
-	if err := devboxPushFn(ctx, target); err != nil {
+	if err := yardoPushFn(ctx, target); err != nil {
 		return "push: " + err.Error(), false
 	}
-	out, err := devboxFleetRunFn(ctx, target, command, stdin)
+	out, err := yardoFleetRunFn(ctx, target, command, stdin)
 	switch {
 	case err == nil && verify:
 		return "everything installed", true
@@ -319,7 +316,7 @@ func fleetOne(ctx context.Context, client *pveclient.Client, r pveclient.Resourc
 	return fmt.Sprintf("%v: %s", err, lastLines(out, 2)), false
 }
 
-// verifyLine sums up devbox-setup --verify's output.
+// verifyLine sums up yardo --verify's output.
 func verifyLine(out string) string {
 	var missing []string
 	for _, l := range strings.Split(out, "\n") {
@@ -329,7 +326,7 @@ func verifyLine(out string) string {
 		}
 	}
 	if len(missing) == 0 {
-		return "missing items (see 'sudo devbox-setup --verify' on the VM)"
+		return "missing items (see 'sudo yardo --verify' on the VM)"
 	}
 	return fmt.Sprintf("%d missing: %s", len(missing), strings.Join(missing, ", "))
 }

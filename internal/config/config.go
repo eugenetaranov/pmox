@@ -45,9 +45,9 @@ type Server struct {
 	// meaningful when Insecure is true.
 	TLSPinSHA256 string `yaml:"tls_pin_sha256,omitempty"`
 
-	// DevboxSetup controls whether launched VMs get the devbox-setup
-	// installer (copied over SSH once the VM is up). Nil (unset) means yes.
-	DevboxSetup *bool `yaml:"devbox_setup,omitempty"`
+	// Yardo controls whether launched VMs get yardo (its release,
+	// installed over SSH once the VM is up). Nil (unset) means yes.
+	Yardo *bool `yaml:"yardo,omitempty"`
 
 	// ClockSync controls whether launched VMs get chrony following the
 	// Proxmox host's clock (KVM PTP) in their cloud-init. Nil means yes.
@@ -57,13 +57,13 @@ type Server struct {
 	// ssh-agent to this server's VMs (ssh -A); --forward-agent overrides.
 	ForwardAgent bool `yaml:"forward_agent,omitempty"`
 
-	// DevboxProfile is a devbox-setup profile applied to launched and
-	// cloned VMs (--devbox-profile overrides it).
-	DevboxProfile string `yaml:"devbox_profile,omitempty"`
+	// YardoProfile is a yardo profile applied to launched and
+	// cloned VMs (--yardo-profile overrides it).
+	YardoProfile string `yaml:"yardo_profile,omitempty"`
 }
 
-// DevboxSetupEnabled reports whether launched VMs get devbox-setup.
-func (s *Server) DevboxSetupEnabled() bool { return s.DevboxSetup == nil || *s.DevboxSetup }
+// YardoEnabled reports whether launched VMs get yardo.
+func (s *Server) YardoEnabled() bool { return s.Yardo == nil || *s.Yardo }
 
 // ClockSyncEnabled reports whether launched VMs get host clock sync.
 func (s *Server) ClockSyncEnabled() bool { return s.ClockSync == nil || *s.ClockSync }
@@ -209,6 +209,9 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", p, err)
 	}
+	if err := checkRenamedKeys(data); err != nil {
+		return nil, fmt.Errorf("config %s: %w", p, err)
+	}
 	if cfg.Servers == nil {
 		cfg.Servers = map[string]*Server{}
 	}
@@ -216,6 +219,34 @@ func Load() (*Config, error) {
 	// must not break commands that never use node SSH. The resolver
 	// records it for node-SSH users, and doctor reports it.
 	return &cfg, nil
+}
+
+// renamedKeys are server keys renamed when the on-VM installer became
+// yardo: an old key would otherwise be ignored without a word (and
+// "off" quietly turn into "on").
+var renamedKeys = map[string]string{"devbox" + "_setup": "yardo", "devbox" + "_profile": "yardo_profile"}
+
+// checkRenamedKeys fails on a server key that has a new name, naming it.
+func checkRenamedKeys(data []byte) error {
+	var raw struct {
+		Servers map[string]map[string]any `yaml:"servers"`
+	}
+	if yaml.Unmarshal(data, &raw) != nil {
+		return nil
+	}
+	urls := make([]string, 0, len(raw.Servers))
+	for u := range raw.Servers {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	for _, u := range urls {
+		for old, now := range renamedKeys {
+			if _, ok := raw.Servers[u][old]; ok {
+				return fmt.Errorf("server %s: %q is now %q; rename it (pmox config edit)", u, old, now)
+			}
+		}
+	}
+	return nil
 }
 
 // Validate checks semantic constraints yaml decoding cannot express. It is

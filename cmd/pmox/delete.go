@@ -37,13 +37,13 @@ type deleteFlags struct {
 	// signatures.
 	serverURL string
 
-	// forget / noForget: run (or skip) `devbox-setup forget` on a running
+	// forget / noForget: run (or skip) `yardo forget` on a running
 	// VM before deleting it; with neither, askForget decides (nil when
 	// non-interactive, which skips with a hint).
 	forget, noForget bool
 	askForget        func(ctx context.Context, prompt string) (bool, error)
 	// srv is the resolved server (for the VM's SSH user and key); nil
-	// skips the devbox-setup step.
+	// skips the yardo step.
 	srv *config.Server
 }
 
@@ -77,9 +77,9 @@ alone. Both are orthogonal to --yes: using them alone still prompts.
 If the VM has already been destroyed, delete exits 0 with a note on
 stderr so scripted loops are idempotent.
 
-When a running VM has credentials devbox-setup created (GitHub keys it
+When a running VM has credentials yardo created (GitHub keys it
 uploaded, its logins and secret files), delete offers to run
-'devbox-setup forget' on it first, so the keys don't outlive the VM.
+'yardo forget' on it first, so the keys don't outlive the VM.
 --forget does it without asking, --no-forget skips it; with --yes and
 neither flag it is skipped with a hint.`,
 		Args: cobra.ArbitraryArgs,
@@ -90,8 +90,8 @@ neither flag it is skipped with a hint.`,
 	cmd.Flags().BoolVar(&f.force, "force", false, "bypass the pmox tag check (allow deleting untagged VMs)")
 	cmd.Flags().BoolVar(&f.hard, "hard", false, "hard power-off instead of graceful ACPI shutdown")
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt (env: PMOX_ASSUME_YES)")
-	cmd.Flags().BoolVar(&f.forget, "forget", false, "first remove what devbox-setup created on the VM (GitHub keys, logins, secrets), without asking")
-	cmd.Flags().BoolVar(&f.noForget, "no-forget", false, "don't offer to run devbox-setup forget on the VM")
+	cmd.Flags().BoolVar(&f.forget, "forget", false, "first remove what yardo created on the VM (GitHub keys, logins, secrets), without asking")
+	cmd.Flags().BoolVar(&f.noForget, "no-forget", false, "don't offer to run yardo forget on the VM")
 	cmd.MarkFlagsMutuallyExclusive("forget", "no-forget")
 	return cmd
 }
@@ -284,10 +284,10 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 	sp.Stop()
 
 	if status.IsRunning() && !f.noForget && f.srv != nil {
-		if target, err := devboxForgetTargetFn(ctx, client, ref, f); err == nil {
-			forgetDevboxCredentials(ctx, cmd, f, target)
+		if target, err := yardoForgetTargetFn(ctx, client, ref, f); err == nil {
+			forgetYardoCredentials(ctx, cmd, f, target)
 		} else if f.forget {
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", tui.Warnf(fmt.Sprintf("warning: can't reach %s to run devbox-setup forget (%v); deleting anyway", ref.Name, err)))
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", tui.Warnf(fmt.Sprintf("warning: can't reach %s to run yardo forget (%v); deleting anyway", ref.Name, err)))
 		}
 	}
 
@@ -400,9 +400,9 @@ func newDeleteSpinner(stderr io.Writer) stepProgress {
 	return p
 }
 
-// devboxForgetTargetFn finds how to SSH to a running VM for the
-// devbox-setup forget step. A seam for tests.
-var devboxForgetTargetFn = func(ctx context.Context, client *pveclient.Client, ref *vm.Ref, f *deleteFlags) (*sshTarget, error) {
+// yardoForgetTargetFn finds how to SSH to a running VM for the
+// yardo forget step. A seam for tests.
+var yardoForgetTargetFn = func(ctx context.Context, client *pveclient.Client, ref *vm.Ref, f *deleteFlags) (*sshTarget, error) {
 	ifaces, err := client.AgentNetwork(ctx, ref.Node, ref.VMID)
 	if err != nil {
 		return nil, fmt.Errorf("guest agent: %w", err)
@@ -418,16 +418,16 @@ var devboxForgetTargetFn = func(ctx context.Context, client *pveclient.Client, r
 	return &sshTarget{IP: ip, User: user, Key: key, VMID: ref.VMID, Name: ref.Name}, nil
 }
 
-// forgetDevboxCredentials runs `devbox-setup forget --yes` on the VM when
-// devbox-setup recorded creating something there and the user wants it
+// forgetYardoCredentials runs `yardo forget --yes` on the VM when
+// yardo recorded creating something there and the user wants it
 // (--forget, or yes at the prompt). Best effort: every failure is a
 // warning and the delete goes on.
-func forgetDevboxCredentials(ctx context.Context, cmd *cobra.Command, f *deleteFlags, target *sshTarget) {
+func forgetYardoCredentials(ctx context.Context, cmd *cobra.Command, f *deleteFlags, target *sshTarget) {
 	stderr := cmd.ErrOrStderr()
 	warn := func(msg string) { fmt.Fprintf(stderr, "%s\n", tui.Warnf("warning: "+msg)) }
-	out, err := devboxRemoteFn(ctx, target, devboxCreatedCheck, 20*time.Second)
+	out, err := yardoRemoteFn(ctx, target, yardoCreatedCheck, 20*time.Second)
 	if err != nil {
-		warn(fmt.Sprintf("couldn't check %s for devbox-setup credentials (%v); deleting anyway", target.Name, err))
+		warn(fmt.Sprintf("couldn't check %s for yardo credentials (%v); deleting anyway", target.Name, err))
 		return
 	}
 	if !strings.Contains(out, "present") {
@@ -435,16 +435,16 @@ func forgetDevboxCredentials(ctx context.Context, cmd *cobra.Command, f *deleteF
 	}
 	if !f.forget {
 		if f.askForget == nil {
-			fmt.Fprintf(stderr, "note: devbox-setup created credentials on %s (GitHub keys, logins); pass --forget to remove them before deleting\n", target.Name)
+			fmt.Fprintf(stderr, "note: yardo created credentials on %s (GitHub keys, logins); pass --forget to remove them before deleting\n", target.Name)
 			return
 		}
-		ok, err := f.askForget(ctx, fmt.Sprintf("Remove the credentials devbox-setup created on %s first? [Y/n]: ", target.Name))
+		ok, err := f.askForget(ctx, fmt.Sprintf("Remove the credentials yardo created on %s first? [Y/n]: ", target.Name))
 		if err != nil || !ok {
 			return
 		}
 	}
-	sp := startSpin(fmt.Sprintf("Running devbox-setup forget on %s…", target.Name))
-	out, err = devboxRemoteFn(ctx, target, devboxForgetCommand, 2*time.Minute)
+	sp := startSpin(fmt.Sprintf("Running yardo forget on %s…", target.Name))
+	out, err = yardoRemoteFn(ctx, target, yardoForgetCommand, 2*time.Minute)
 	sp.Stop()
 	if msg := strings.TrimSpace(out); msg != "" {
 		for _, line := range strings.Split(msg, "\n") {
@@ -452,7 +452,7 @@ func forgetDevboxCredentials(ctx context.Context, cmd *cobra.Command, f *deleteF
 		}
 	}
 	if err != nil {
-		warn(fmt.Sprintf("devbox-setup forget on %s failed (%v); deleting anyway", target.Name, err))
+		warn(fmt.Sprintf("yardo forget on %s failed (%v); deleting anyway", target.Name, err))
 	}
 }
 

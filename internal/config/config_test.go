@@ -373,3 +373,31 @@ func TestForwardAgentRoundtrip(t *testing.T) {
 		t.Error("ForwardAgent lost in the roundtrip")
 	}
 }
+
+// A key renamed for yardo is an error naming the new key, not ignored.
+func TestRenamedYardoKeys(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	p, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("servers:\n  https://pve:8006/api2/json:\n    token_id: a@pam!x\n    devbox_setup: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), `is now "yardo"`) {
+		t.Errorf("err = %v", err)
+	}
+	if err := os.WriteFile(p, []byte("servers:\n  https://pve:8006/api2/json:\n    token_id: a@pam!x\n    yardo: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Servers["https://pve:8006/api2/json"].YardoEnabled() {
+		t.Error("yardo: false didn't turn it off")
+	}
+}
