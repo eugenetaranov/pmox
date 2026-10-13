@@ -17,6 +17,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/devbox/profile"
 	"github.com/eugenetaranov/pmox/internal/launch"
+	"github.com/eugenetaranov/pmox/internal/pvessh"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
 )
 
@@ -76,6 +77,20 @@ func runDevboxPush(cmd *cobra.Command, args []string, f *sshFlags) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "%sdevbox-setup installed on %s\n", doneMark(true), target.Name)
 	fmt.Fprintf(cmd.ErrOrStderr(), "next: pmox shell %s, then 'sudo devbox-setup' (or 'sudo devbox-setup --yes' to re-apply saved choices)\n", target.Name)
 	return nil
+}
+
+// applyForgetHostKey drops, at launch, a guest host key pinned for the new
+// VM's IP: a VM deleted earlier may have had it (DHCP reuses addresses),
+// and a brand-new VM's key can't be known yet. Without this the first SSH
+// fails host key verification.
+func applyForgetHostKey(opts *launch.Options) {
+	opts.NewIPFn = func(ip string) {
+		path, err := guestKnownHostsPath()
+		if err != nil {
+			return
+		}
+		_, _ = pvessh.KnownHostsPrune(path, func(host string) bool { return host != ip })
+	}
 }
 
 // applyDevboxPush wires launch's devbox-setup phase to devboxPushFn, with

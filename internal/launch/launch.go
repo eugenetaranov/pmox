@@ -66,6 +66,9 @@ type Options struct {
 	// PushDevboxFn copies bootstrap.Tarball to the VM at ip and installs
 	// it. The CLI wires it to ssh; nil skips the push.
 	PushDevboxFn func(ctx context.Context, ip string) error
+	// NewIPFn is told the new VM's IP before anything connects to it
+	// (pmox drops a host key pinned for that IP by a deleted VM).
+	NewIPFn func(ip string)
 	// DevboxProfileFn applies a devbox-setup profile on the VM at ip once
 	// devbox-setup is installed (`sudo devbox-setup --profile … --yes`),
 	// streaming its output. Nil skips it. A failure warns, or fails the
@@ -273,6 +276,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	opts.pDone(err)
 	if err != nil {
 		return nil, fmt.Errorf("%w (run pmox delete %d)", err, vmid)
+	}
+	if opts.NewIPFn != nil {
+		opts.NewIPFn(ip)
 	}
 
 	// Phase 8 — wait for sshd to complete a handshake, unless skipped.

@@ -681,12 +681,13 @@ func TestRun_PushesDevboxBeforeHook(t *testing.T) {
 		order = append(order, "push:"+ip)
 		return nil
 	}
+	opts.NewIPFn = func(ip string) { order = append(order, "ip:"+ip) }
 	opts.Hook = hookFunc(func() { order = append(order, "hook") })
 	if _, err := Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run err: %v", err)
 	}
-	if got := strings.Join(order, ","); got != "ssh,push:10.9.8.7,hook" {
-		t.Errorf("order = %s, want ssh,push:10.9.8.7,hook", got)
+	if got := strings.Join(order, ","); got != "ip:10.9.8.7,ssh,push:10.9.8.7,hook" {
+		t.Errorf("order = %s, want ip:10.9.8.7,ssh,push:10.9.8.7,hook", got)
 	}
 	if bytes.Contains(stub.content, []byte(bootstrap.ScriptPath)) {
 		t.Errorf("user-data carries devbox-setup:\n%s", stub.content)

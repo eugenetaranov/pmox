@@ -280,6 +280,7 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 		return err
 	}
 	applyHookOptions(&opts, hk, f, resolved.Server, resolved.URL, SSHInsecure())
+	applyForgetHostKey(&opts)
 	applyDevboxPush(&opts)
 	if err := applyDevboxProfileOpt(&opts, f.devboxProfile, resolved.Server); err != nil {
 		return err

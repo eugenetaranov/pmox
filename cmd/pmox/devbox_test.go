@@ -131,3 +131,27 @@ func TestApplyDevboxProfileOpt(t *testing.T) {
 		t.Errorf("command = %s", devboxProfileCommand)
 	}
 }
+
+// A launch drops the host key a deleted VM pinned for the new VM's IP,
+// and only that one.
+func TestForgetHostKeyAtLaunch(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := guestKnownHostsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pins := "192.168.0.17 ssh-ed25519 AAAAold\n192.168.0.95 ssh-ed25519 AAAAkeep\n"
+	if err := os.WriteFile(path, []byte(pins), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var opts launch.Options
+	applyForgetHostKey(&opts)
+	opts.NewIPFn("192.168.0.17")
+	b, _ := os.ReadFile(path)
+	if string(b) != "192.168.0.95 ssh-ed25519 AAAAkeep\n" {
+		t.Errorf("known_hosts_guests = %q", b)
+	}
+}

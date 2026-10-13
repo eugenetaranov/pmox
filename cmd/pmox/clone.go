@@ -113,6 +113,7 @@ func runClone(cmd *cobra.Command, srcArg, newName string, f *launchFlags) error 
 	partial.UploadSnippet = upload
 	partial.Progress = newLaunchProgress(cmd.ErrOrStderr())
 	applyHookOptions(&partial, hk, f, resolved.Server, resolved.URL, SSHInsecure())
+	applyForgetHostKey(&partial)
 	applyDevboxPush(&partial)
 	if err := applyDevboxProfileOpt(&partial, f.devboxProfile, resolved.Server); err != nil {
 		return err
