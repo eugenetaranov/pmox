@@ -301,12 +301,13 @@ func resolveMountArgs(cmd *cobra.Command, client *pveclient.Client, f *mountFlag
 	if err := targetRunFn(ctx, fields...); err != nil {
 		return "", "", err
 	}
-	localPath = local.Result()
+	// Typed fields can carry stray spaces ("~/projects/app ").
+	localPath = strings.TrimSpace(local.Result())
 	if len(args) == 1 {
 		localPath = args[0]
 	}
 	v, p := remote.Result()
-	return localPath, v.Name + ":" + p, nil
+	return localPath, v.Name + ":" + strings.TrimSpace(p), nil
 }
 
 func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
@@ -335,6 +336,11 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 		return err
 	}
 	if err := checkMountSource(localPath); err != nil {
+		return err
+	}
+	// The background daemon runs from another directory: it (and the
+	// record) get the absolute path, never "." or "./src".
+	if localPath, err = mountSourcePath(localPath); err != nil {
 		return err
 	}
 
@@ -372,6 +378,27 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	fmt.Fprintf(stderr, "%s initial sync complete\n", timestamp())
 
 	return watchAndSync(cmd, rsyncPath, rsyncArgs, localPath, f.debounce, stderr)
+}
+
+// mountSourcePath is localPath made absolute. It refuses your home
+// directory and / as a whole: a mirror of either would copy everything
+// (keys and tokens included) to the VM.
+func mountSourcePath(localPath string) (string, error) {
+	abs, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", localPath, err)
+	}
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = r
+	}
+	home, _ := os.UserHomeDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	if abs == "/" || (home != "" && abs == home) {
+		return "", fmt.Errorf("%w: refusing to mount %s as a whole: it would copy everything in it to the VM; mount a project directory instead", exitcode.ErrUserInput, abs)
+	}
+	return abs, nil
 }
 
 // checkMountSource requires localPath to be an existing directory.

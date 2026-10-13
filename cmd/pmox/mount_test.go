@@ -634,3 +634,22 @@ func TestMountUmountHelpIncludesBareExamples(t *testing.T) {
 	umountHelp := newUmountCmd().Long
 	assert.Contains(t, umountHelp, "pmox umount\n", "umount --help must show zero-arg example")
 }
+
+// The daemon runs elsewhere: the source must be absolute, and never the
+// home directory or / as a whole.
+func TestMountSourcePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	proj := filepath.Join(home, "projects", "app")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	t.Chdir(proj)
+	got, err := mountSourcePath(".")
+	require.NoError(t, err)
+	want, _ := filepath.EvalSymlinks(proj)
+	assert.Equal(t, want, got)
+	t.Chdir(home)
+	_, err = mountSourcePath(".")
+	assert.ErrorContains(t, err, "refusing to mount")
+	_, err = mountSourcePath("/")
+	assert.ErrorContains(t, err, "refusing to mount")
+}
