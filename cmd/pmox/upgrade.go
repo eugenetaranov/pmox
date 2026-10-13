@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,18 @@ var (
 		return c.Run()
 	}
 	confirmUpgradeFn = tui.Confirm
+	// brewVersionsFn lists the installed versions of a formula.
+	brewVersionsFn = func(brew, formula string) ([]string, error) {
+		out, err := exec.Command(brew, "list", "--versions", formula).Output()
+		if err != nil {
+			return nil, err
+		}
+		f := strings.Fields(string(out))
+		if len(f) < 2 {
+			return nil, nil
+		}
+		return f[1:], nil
+	}
 	// dirWritableFn reports whether pmox can create files in dir.
 	dirWritableFn = dirWritable
 )
@@ -66,7 +79,8 @@ func newVersionUpgradeCmd() *cobra.Command {
 		Long: `Upgrade pmox to the latest GitHub release, the same way it was
 installed:
 
-  Homebrew      runs 'brew upgrade ` + upgradeFormula + `'
+  Homebrew      runs 'brew update', then 'brew upgrade ` + upgradeFormula + `',
+                and checks that the new version was installed
   plain binary  downloads the release archive, verifies its sha256,
                 and replaces the pmox binary (with sudo when its
                 directory isn't writable; sudo asks for your password)
@@ -458,9 +472,18 @@ func runVersionUpgrade(cmd *cobra.Command, f *upgradeFlags) error {
 	}
 
 	if info.method == installBrew {
+		// brew upgrade reads the tap's formula as Homebrew last fetched it,
+		// which can be older than the release: fetch it first.
+		if err := runAttachedFn(info.brew, "update", "--quiet"); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: brew update: %v\n", err)
+		}
 		if err := runAttachedFn(info.brew, "upgrade", upgradeFormula); err != nil {
 			return fmt.Errorf("brew upgrade %s: %w", upgradeFormula, err)
 		}
+		if vs, err := brewVersionsFn(info.brew, upgradeFormula); err == nil && !slices.Contains(vs, target.String()) {
+			return fmt.Errorf("brew installed pmox %s, not %s: the tap's formula isn't updated yet (the release publishes it a few minutes after the tag); run 'pmox version up' again shortly", strings.Join(vs, " "), target)
+		}
+		fmt.Fprintf(out, "✓ pmox upgraded %s → %s (Homebrew)\n", from, target)
 		return nil
 	}
 

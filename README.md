@@ -32,8 +32,9 @@ Or download a pre-built binary from the
 [releases page](https://github.com/eugenetaranov/pmox/releases).
 
 To upgrade later, run `pmox version upgrade`. It finds the latest release
-and upgrades the same way pmox was installed: through `brew upgrade` for
-the Homebrew tap, or by downloading the release, verifying its checksum and
+and upgrades the same way pmox was installed: through `brew update` and
+`brew upgrade` for the Homebrew tap (it says so if the tap's formula hasn't
+caught up with the release yet), or by downloading the release, verifying its checksum and
 replacing the binary for everything else. It uses sudo, which asks for
 your password, when the binary's directory isn't writable. It asks before
 upgrading; `--check` only reports, and `--yes` skips the question (needed

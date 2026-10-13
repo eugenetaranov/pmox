@@ -329,11 +329,25 @@ func TestUpgradeHomebrewRunsBrew(t *testing.T) {
 	withVersion(t, "0.34.1")
 	withExecutable(t, "/opt/homebrew/Cellar/pmox/0.34.1/bin/pmox")
 	calls := recordAttached(t)
-	if _, err := runUpgrade(t, &upgradeFlags{yes: true}); err != nil {
+	installed := []string{"9.9.9"}
+	origVersions := brewVersionsFn
+	brewVersionsFn = func(string, string) ([]string, error) { return installed, nil }
+	t.Cleanup(func() { brewVersionsFn = origVersions })
+	out, err := runUpgrade(t, &upgradeFlags{yes: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*calls) != 1 || !strings.HasSuffix((*calls)[0], "brew upgrade "+upgradeFormula) {
+	// The tap is fetched first: brew upgrade alone reads a stale formula.
+	if len(*calls) != 2 || !strings.HasSuffix((*calls)[0], "brew update --quiet") || !strings.HasSuffix((*calls)[1], "brew upgrade "+upgradeFormula) {
 		t.Errorf("calls = %v", *calls)
+	}
+	if !strings.Contains(out, "✓ pmox upgraded 0.34.1 → 9.9.9 (Homebrew)") {
+		t.Errorf("output %q", out)
+	}
+	// The formula still behind the release: say so, don't claim success.
+	installed = []string{"0.34.1"}
+	if _, err := runUpgrade(t, &upgradeFlags{yes: true}); err == nil || !strings.Contains(err.Error(), "formula isn't updated yet") {
+		t.Errorf("stale formula: err = %v", err)
 	}
 	if fr.downloads.Load() != 0 {
 		t.Error("a Homebrew install must not download the archive itself")
