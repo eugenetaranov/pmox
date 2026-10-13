@@ -54,3 +54,6 @@ else
 fi
 
 unset _devbox_sh
+
+# Your own settings for zsh and bash: devbox-setup never writes local.sh.
+[ -r ~/.config/devbox/local.sh ] && . ~/.config/devbox/local.sh

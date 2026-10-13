@@ -28,7 +28,7 @@
 - [x] 3.1 `cred` step type porting `CRED_ROWS` (agentkeys, npmrc; registries and agekey as Go steps); reject secret keys in profiles
 - [x] 3.2 Layered `--profile`, named layers that replace, `user` / `--user` (create the account), review lists dropped items
 - [x] 3.3 `export --lock` and installing from `[lock]` (mise exact, apt best effort with a warning)
-- [ ] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section
+- [x] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section
 - [ ] 3.5 Per-user state (system.json, users/<u>.json, split from answers.json); `mcpjungle@<user>` with port allocation
 - [ ] 3.6 `mcp-<user>` service user owning the MCP env files; sudo-mediated edits; opt-in `sudopw`
 - [ ] 3.7 Require `key_fingerprint` on `apt_repo` and `sha256` or `unverified` on downloads; "Installed without a pinned checksum" list

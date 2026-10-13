@@ -500,9 +500,14 @@ func (l lineStep) Apply(_ context.Context, e *Env) error {
 	return e.chown(p, uid, gid)
 }
 
+// LastMark starts the block that sources a user's local override file;
+// it stays at the end of the file (WithLine adds lines before it).
+const LastMark = "# devbox: local overrides (keep last)"
+
 // WithLine returns b with line in it: in place of every line matching the
 // regexp match (when there is one and it matches), else appended after a
-// blank line (none in an empty file), unless b already has it.
+// blank line (none in an empty file), unless b already has it. An
+// appended line goes before the LastMark block when there is one.
 func WithLine(b []byte, line, match string) []byte {
 	lines := strings.Split(string(b), "\n")
 	if match != "" {
@@ -524,6 +529,9 @@ func WithLine(b []byte, line, match string) []byte {
 	}
 	if len(b) == 0 {
 		return []byte(line + "\n")
+	}
+	if i := slices.Index(lines, LastMark); i >= 0 {
+		return []byte(strings.Join(slices.Insert(lines, i, line, ""), "\n"))
 	}
 	return append(append([]byte{}, b...), "\n"+line+"\n"...)
 }

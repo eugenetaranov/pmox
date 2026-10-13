@@ -499,7 +499,8 @@ clears the search; Esc on an empty search quits.
    shared Terraform/OpenTofu provider cache, kubecolor) through
    `~/.config/devbox/shell.sh`, sourced from `.zshrc` and `.bashrc`; "tmux
    config" writes `~/.tmux.conf`. The shell, vim and tmux entries replace your
-   files, keeping the old ones as `.orig`.
+   files, keeping the old ones as `.orig`; keep your own lines in the local
+   files instead (see [Your own settings](#your-own-settings)).
 3. **Dev tools:** lazygit, just + watchexec + hyperfine, Task, yq, xh + hurl,
    linters and hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit),
    database clients, pgcli + usql, perf/valgrind/bpftrace, act, a private npm
@@ -532,6 +533,24 @@ tools, git name and email, timezone, how to reach GitHub, and the
 credentials of the items you picked. Then a review screen offers Install,
 Start over or Quit. `~/devbox-setup.txt` lists everything installed so far,
 grouped by how it was installed, with how to update or remove it.
+
+### Your own settings
+
+devbox-setup rewrites `.zshrc`, `.vimrc`, `.tmux.conf` and
+`~/.config/devbox/shell.sh` on a re-run, so lines you add to them are
+lost (your first version of each is kept once, as `.orig`). Put your own
+settings in these files instead. devbox-setup never creates or changes
+them, and the files it writes source them last, so yours win:
+
+| File | Read by |
+| --- | --- |
+| `~/.zshrc.local` | zsh (end of `.zshrc`) |
+| `~/.config/devbox/local.sh` | zsh and bash (end of `shell.sh`) |
+| `~/.tmux.local.conf` | tmux (end of `.tmux.conf`) |
+| `~/.vimrc.local` | vim (end of `.vimrc`) |
+
+For example, `echo 'export KUBECONFIG=~/.kube/work' >> ~/.config/devbox/local.sh`
+survives `sudo devbox-setup --yes`.
 
 ### Credentials
 

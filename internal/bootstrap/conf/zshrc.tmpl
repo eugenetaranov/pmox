@@ -40,3 +40,8 @@ export EDITOR=vim
 
 # powerlevel10k: run `p10k configure` to generate ~/.p10k.zsh, then it loads here.
 [ -f ~/.p10k.zsh ] && source ~/.p10k.zsh
+
+# devbox: local overrides (keep last)
+# Your own settings go in ~/.zshrc.local: devbox-setup never writes it, and
+# rewrites this file on a re-run (your first .zshrc is kept as .zshrc.orig).
+[[ -r ~/.zshrc.local ]] && source ~/.zshrc.local

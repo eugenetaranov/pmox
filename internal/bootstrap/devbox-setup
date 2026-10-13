@@ -828,9 +828,18 @@ user_conf() {
 }
 # add_dropin FILE [LINE] — add LINE (the shell drop-in) at the end of FILE, once.
 add_dropin() {
-  local line=${2:-$DROPIN_LINE}
+  local line=${2:-$DROPIN_LINE} mark='# devbox: local overrides (keep last)' tmp
   [ -f "$1" ] || return 0
-  grep -qxF "$line" "$1" || printf '\n%s\n' "$line" >> "$1"
+  grep -qxF "$line" "$1" && return 0
+  if grep -qxF "$mark" "$1"; then
+    # Before the block sourcing the user's local file, which stays last.
+    tmp=$(mktemp) || return 1
+    awk -v l="$line" -v m="$mark" '$0 == m && !done { print l; print ""; done = 1 } { print }' "$1" > "$tmp" &&
+      cat "$tmp" > "$1"
+    rm -f "$tmp"
+  else
+    printf '\n%s\n' "$line" >> "$1"
+  fi
 }
 codename() { . /etc/os-release; echo "${VERSION_CODENAME:-noble}"; }
 

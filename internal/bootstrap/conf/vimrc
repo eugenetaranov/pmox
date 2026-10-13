@@ -64,3 +64,8 @@ set noshowmode
 " Colorscheme (silent on first run before plugins are installed).
 set background=dark
 silent! colorscheme gruvbox
+
+" Your own settings go in ~/.vimrc.local: devbox-setup never writes it.
+if filereadable(expand('~/.vimrc.local'))
+  source ~/.vimrc.local
+endif

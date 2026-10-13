@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -174,5 +175,46 @@ func TestAptKernel(t *testing.T) {
 	apply(t, e, st)
 	if got := x.commands(); len(got) != 1 || !strings.HasSuffix(got[0], " install linux-tools-6.8.0-45-generic") {
 		t.Errorf("ran %q", got)
+	}
+}
+
+// The local override files are sourced last: drop-ins and line steps go
+// before the block that sources ~/.zshrc.local, and each config file
+// devbox-setup writes ends by sourcing its local file.
+func TestLocalOverridesLast(t *testing.T) {
+	e := shellEnv(t)
+	put(t, e.Path("~/.config/devbox/shell.sh"), "")
+	apply(t, e, step(t, catalog.Step{Type: "go:zshrc"}))
+	apply(t, e, step(t, catalog.Step{Type: "line", To: "~/.zshrc", Line: ". ~/.config/devbox/agent-env.sh", IfExists: true}))
+	got := read(t, e.Path("~/.zshrc"))
+	last := "[[ -r ~/.zshrc.local ]] && source ~/.zshrc.local\n"
+	if !strings.HasSuffix(got, last) {
+		t.Errorf(".zshrc doesn't end by sourcing .zshrc.local:\n%s", got)
+	}
+	mark := strings.Index(got, LastMark)
+	for _, l := range []string{Dropins[0].Line, ". ~/.config/devbox/agent-env.sh"} {
+		if i := strings.Index(got, l); i < 0 || i > mark {
+			t.Errorf("%q isn't before the local overrides:\n%s", l, got)
+		}
+	}
+	for f, want := range map[string]string{
+		"shell.sh":  "[ -r ~/.config/devbox/local.sh ] && . ~/.config/devbox/local.sh\n",
+		"tmux.conf": "source-file -q ~/.tmux.local.conf\n",
+		"vimrc":     "if filereadable(expand('~/.vimrc.local'))\n  source ~/.vimrc.local\nendif\n",
+	} {
+		b, err := fs.ReadFile(e.Files, f)
+		if err != nil || !strings.HasSuffix(string(b), want) {
+			t.Errorf("%s doesn't end with %q (%v)", f, want, err)
+		}
+	}
+}
+
+func TestWithLineBeforeMark(t *testing.T) {
+	b := []byte("a\n\n" + LastMark + "\nsource local\n")
+	if got, want := string(WithLine(b, "x", "")), "a\n\nx\n\n"+LastMark+"\nsource local\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := WithLine(b, "source local", ""); string(got) != string(b) {
+		t.Errorf("a line already there moved: %q", got)
 	}
 }
