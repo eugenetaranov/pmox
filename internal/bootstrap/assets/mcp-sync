@@ -3,6 +3,11 @@
 #
 #   mcp-sync [name ...]    enable these servers (saved to ~/.mcp/servers), then sync
 #   mcp-sync               sync the saved list plus every ~/.mcp/<name>/spec
+#   mcp-sync edit <name>   edit a server's credentials (~/.mcp/<name>/env)
+#
+# When devbox-setup runs the gateway as a service user (mcp-<you>, which
+# owns ~/.mcp so agents running as you can't read the tokens), this re-runs
+# itself as that user through sudo.
 #
 # Each server gets ~/.mcp/<name>/ (mode 700) holding its credentials in `env`
 # (KEY=value lines, no quotes). Docker servers read that file at start; it is
@@ -12,13 +17,36 @@
 # list are deregistered.
 set -eu
 
+me=$(id -un)
+# This user's gateway port (devbox-setup gives each user their own).
+port=$(sed -n 's/^MCP_PORT=//p' "/etc/mcpjungle/$me.env" 2>/dev/null || true)
+if [ -z "${MCP_DIR:-}" ] && id "mcp-$me" >/dev/null 2>&1; then
+  exec sudo -u "mcp-$me" env MCP_DIR="$HOME/.mcp" \
+    MCP_CATALOG="${MCP_CATALOG:-/usr/local/share/mcp-catalog}" \
+    MCPJUNGLE_REGISTRY="${MCPJUNGLE_REGISTRY:-http://127.0.0.1:${port:-8080}}" \
+    EDITOR="${VISUAL:-${EDITOR:-vi}}" "$0" "$@"
+fi
+
 MCP_DIR="${MCP_DIR:-$HOME/.mcp}"
 CATALOG="${MCP_CATALOG:-/usr/local/share/mcp-catalog}"
-REGISTRY="${MCPJUNGLE_REGISTRY:-http://127.0.0.1:8080}"
+REGISTRY="${MCPJUNGLE_REGISTRY:-http://127.0.0.1:${port:-8080}}"
 
 umask 077
 mkdir -p "$MCP_DIR"
 chmod 700 "$MCP_DIR"
+
+if [ "${1:-}" = edit ]; then
+  case "${2:-}" in
+    ''|.*|*/*) echo "usage: mcp-sync edit <server>" >&2; exit 2 ;;
+  esac
+  mkdir -p "$MCP_DIR/$2"
+  chmod 700 "$MCP_DIR/$2"
+  [ -f "$MCP_DIR/$2/env" ] || : > "$MCP_DIR/$2/env"
+  chmod 600 "$MCP_DIR/$2/env"
+  "${EDITOR:-vi}" "$MCP_DIR/$2/env"
+  echo "Now run mcp-sync to register it."
+  exit 0
+fi
 
 if [ $# -gt 0 ]; then
   printf '%s\n' "$@" > "$MCP_DIR/servers"

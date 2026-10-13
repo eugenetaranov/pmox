@@ -22,6 +22,8 @@ type Secrets struct {
 	// asks for it itself).
 	GHPassphrase      string
 	AgeChoice, AgeKey string
+	// SudoPW is a password to set for the user (sudopw), when they have none.
+	SudoPW string
 }
 
 // New returns empty secrets.

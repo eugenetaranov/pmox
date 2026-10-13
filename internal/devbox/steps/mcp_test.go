@@ -137,7 +137,7 @@ func TestMCPUnit(t *testing.T) {
 		t.Fatal("Check = true before the unit is written")
 	}
 	apply(t, e, st)
-	if got := read(t, e.Path(mcpUnit)); !strings.Contains(got, "User=%i\n") || !strings.Contains(got, "EnvironmentFile=/etc/mcpjungle/%i.env") {
+	if got := read(t, e.Path(mcpUnit)); !strings.Contains(got, "User=mcp-%i\n") || !strings.Contains(got, "EnvironmentFile=/etc/mcpjungle/%i.env") {
 		t.Errorf("unit:\n%s", got)
 	}
 	if got := read(t, e.Path("/etc/mcpjungle/ada.env")); got != "MCP_HOST=0.0.0.0\nMCP_PORT=8081\nMCP_DIR=/home/ada/.mcp\n" {
@@ -225,7 +225,72 @@ func TestMCPSyncAlways(t *testing.T) {
 		t.Fatal("mcp_sync is not an Always step")
 	}
 	apply(t, e, st)
-	if got := x.commands(); len(got) != 1 || got[0] != "(as user) env MCP_CATALOG=/usr/local/share/mcp-catalog MCPJUNGLE_REGISTRY=http://127.0.0.1:8080 /usr/local/bin/mcp-sync github" {
+	if got := x.commands(); len(got) != 1 || got[0] != "(as user) env MCP_DIR=/home/ada/.mcp MCP_CATALOG=/usr/local/share/mcp-catalog MCPJUNGLE_REGISTRY=http://127.0.0.1:8080 /usr/local/bin/mcp-sync github" {
 		t.Errorf("ran %q", got)
+	}
+}
+
+// As root, ~/.mcp is the service user's: devbox-setup reads and writes it
+// as mcp-ada, and mcp-sync runs as mcp-ada.
+func TestMCPAsServiceUser(t *testing.T) {
+	old := mcpAsService
+	defer func() { mcpAsService = old }()
+	mcpAsService = func(*Env) bool { return true }
+	x := &fakeExec{}
+	e := mcpEnv(t, x)
+	e.Secrets.MCP["github GITHUB_PERSONAL_ACCESS_TOKEN"] = "ghp_1"
+	apply(t, e, step(t, catalog.Step{Type: "go:mcp_servers"}))
+	got := x.commands()
+	if len(got) != 2 || !strings.HasPrefix(got[0], "(as mcp-ada) sh -c ") || !strings.HasSuffix(got[0], " _ /home/ada/.mcp/github/env") ||
+		!strings.HasPrefix(got[1], "(as mcp-ada) sh -c 'umask 077") {
+		t.Errorf("ran %q", got)
+	}
+	if in := string(x.ran[1].Stdin); !strings.Contains(in, "GITHUB_PERSONAL_ACCESS_TOKEN=ghp_1\n") {
+		t.Errorf("wrote %q", in)
+	}
+	x.ran = nil
+	apply(t, e, step(t, catalog.Step{Type: "go:mcp_sync"}))
+	if got := x.commands(); len(got) != 1 || !strings.HasPrefix(got[0], "(as mcp-ada) env MCP_DIR=/home/ada/.mcp ") {
+		t.Errorf("sync ran %q", got)
+	}
+}
+
+func TestMCPUserStep(t *testing.T) {
+	exists := false
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		switch c.Name {
+		case "id":
+			if !exists {
+				return nil, errors.New("no such user")
+			}
+			return []byte("mcp-ada docker\n"), nil
+		case "stat":
+			return []byte("mcp-ada 700\n"), nil
+		case "getfacl":
+			return []byte("user::rwx\nuser:mcp-ada:--x\ngroup::r-x\n"), nil
+		}
+		return nil, nil
+	}}
+	e := mcpEnv(t, x)
+	st := step(t, catalog.Step{Type: "go:mcp_user"})
+	if check(t, e, st) {
+		t.Fatal("Check = true without the service user")
+	}
+	x.ran = nil
+	apply(t, e, st)
+	want := []string{
+		"id -u mcp-ada",
+		"useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --comment 'MCPJungle gateway for ada' mcp-ada",
+		"usermod -aG docker mcp-ada",
+		"install -d -m 0700 -o mcp-ada -g mcp-ada /home/ada/.mcp",
+		"chown -R mcp-ada:mcp-ada /home/ada/.mcp",
+		"setfacl -m u:mcp-ada:x /home/ada",
+	}
+	if got := x.commands(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("ran\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	exists = true
+	if !check(t, e, st) {
+		t.Error("Check = false with the user, its group, ~/.mcp and the ACL")
 	}
 }

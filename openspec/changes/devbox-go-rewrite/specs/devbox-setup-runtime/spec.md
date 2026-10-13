@@ -52,7 +52,15 @@ devbox-setup SHALL read and write a user's `~/.config/devbox/answers.json` witho
 - **THEN** devbox-setup refuses to read it and says why, without showing its contents
 
 ### Requirement: MCP gateway service user
-Each user's gateway and its MCP containers SHALL run as a system user `mcp-<user>`. That user SHALL own `~<user>/.mcp/*/env`, with mode 0600, so the login user cannot read the tokens without sudo. devbox-setup and `mcp-sync` SHALL edit those files through sudo. An opt-in `sudopw` item SHALL remove the login user's `NOPASSWD` sudo rule.
+Each user's gateway and its MCP containers SHALL run as a system user `mcp-<user>`. That user SHALL own `~<user>/.mcp` (0700) and `~<user>/.mcp/*/env` (0600), so the login user cannot read the tokens without sudo. devbox-setup SHALL read and write those files as `mcp-<user>`, and `mcp-sync` (including `mcp-sync edit <server>`) SHALL switch to `mcp-<user>` through sudo. An opt-in `sudopw` item SHALL remove `NOPASSWD` from the login user's sudo rules, and SHALL NOT do so while the user has no password.
+
+#### Scenario: Symlinked ~/.mcp
+- **WHEN** the login user replaces `~/.mcp` with a symlink to `/etc` and root runs `devbox-setup --yes`
+- **THEN** no file under `/etc` is written, since the writes run as `mcp-<user>`
+
+#### Scenario: No password
+- **WHEN** `sudopw` is applied with `--yes` for a user without a password
+- **THEN** the item fails, saying to set one with `sudo passwd <user>`, and the sudo rules are unchanged
 
 #### Scenario: Agent can't read tokens
 - **WHEN** a process running as `ada` without sudo reads `~/.mcp/github/env`

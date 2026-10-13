@@ -18,8 +18,11 @@ const UserShell = `cd && PATH="$HOME/.local/share/mise/shims:$PATH" && exec "$@"
 // Run runs c and returns its combined output.
 func (x OSExec) Run(ctx context.Context, c Cmd) ([]byte, error) {
 	name, args := c.Name, c.Args
-	if c.AsUser {
+	switch {
+	case c.AsUser:
 		name, args = "runuser", append([]string{"-u", x.User, "--", "sh", "-c", UserShell, "_", c.Name}, c.Args...)
+	case c.As != "":
+		name, args = "runuser", append([]string{"-u", c.As, "--", c.Name}, c.Args...)
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), c.Env...)

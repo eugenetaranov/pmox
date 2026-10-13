@@ -567,10 +567,21 @@ the key, where to get it, and the command that applies it (`mcp-sync`,
 | Item | File |
 |---|---|
 | Agent API keys | `~/.config/devbox/agent.env`, exported by interactive shells only (not services or cron) |
-| MCP servers | `~/.mcp/<name>/env`, then `mcp-sync` |
+| MCP servers | `~/.mcp/<name>/env`, owned by the gateway's user: `mcp-sync edit <name>`, then `mcp-sync` |
 | Private npm registry | a devbox-setup block in `~/.npmrc` (your own lines are kept) |
 | Registry logins | `~/.docker/config.json`, through `docker login` |
 | age key | `~/.config/sops/age/keys.txt`, with `SOPS_AGE_KEY_FILE` set |
+
+Each user's MCPJungle gateway runs as a system user of its own,
+`mcp-<you>`, which owns `~/.mcp`: a coding agent running as you can use the
+MCP servers through the gateway but can't read their tokens. `mcp-sync` and
+`mcp-sync edit <name>` switch to that user through sudo for you. This only
+holds while the agent can't get root: with passwordless sudo (the default
+for the VM's user) or membership of the docker group, it can. The opt-in
+"sudo asks for your password" item (Accounts) removes `NOPASSWD` from your
+sudo rules, after setting a password if you have none; pmox commands that
+use sudo on the VM (`pmox devbox push`, profiles at launch) then need that
+password too.
 
 `sudo devbox-setup --yes` never waits for input: a step that would (the
 GitHub browser login, adding a gh scope, `tailscale up` without a key)

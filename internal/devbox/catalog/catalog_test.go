@@ -66,11 +66,15 @@ func TestMatchesBashCatalog(t *testing.T) {
 		}
 	}
 	for _, it := range c.Items {
-		if !seen[it.ID] {
+		if !seen[it.ID] && !goOnly[it.ID] {
 			t.Errorf("%s: in the TOML catalog, not in the bash one", it.ID)
 		}
 	}
 }
+
+// goOnly are items added after the port: the bash installer, the fallback
+// until the cut-over, doesn't offer them.
+var goOnly = map[string]bool{"sudopw": true}
 
 const teamTab = `
 [[item]]

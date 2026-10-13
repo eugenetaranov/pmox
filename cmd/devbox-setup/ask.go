@@ -203,6 +203,24 @@ func (k *asker) askSecrets(c *choices, has func(string) bool) error {
 			return err
 		}
 	}
+	if has("sudopw") && !hasPassword(k.a.User) {
+		fmt.Fprintf(k.out, "\n%s has no password; sudo will ask for one, so set it now.\n", k.a.User)
+		for {
+			pw, err := ui.Password("New password for "+k.a.User+" (empty: set it later with 'sudo passwd "+k.a.User+"')", "")
+			if err != nil || pw == "" {
+				return err
+			}
+			again, err := ui.Password("The same password again", "")
+			if err != nil {
+				return err
+			}
+			if pw == again {
+				c.secrets.SudoPW = pw
+				break
+			}
+			fmt.Fprintln(k.out, "They don't match.")
+		}
+	}
 	if has("tailscale") && exec.Command("tailscale", "status").Run() != nil {
 		if c.secrets.TSAuthKey, err = ui.Password("Tailscale auth key (empty: run 'sudo tailscale up' later)", ""); err != nil {
 			return err
@@ -352,6 +370,7 @@ func (k *asker) askMCP(ctx context.Context, c *choices, has func(string) bool) e
 			continue
 		}
 		envf := filepath.Join(home, ".mcp", n, "env")
+		envb := readAsOwner(k.a.User, envf)
 		keys := append([]string{}, s.Keys...)
 		if len(s.Optional) > 0 {
 			var opt []*ui.Entry
@@ -366,9 +385,9 @@ func (k *asker) askMCP(ctx context.Context, c *choices, has func(string) bool) e
 				keys = append(keys, chosen...)
 			}
 		}
-		fmt.Fprintf(k.out, "\n%s — %s\nLeave a value empty to fill it in later in %s\n", n, s.Description, envf)
+		fmt.Fprintf(k.out, "\n%s — %s\nLeave a value empty to fill it in later: mcp-sync edit %s\n", n, s.Description, n)
 		for _, key := range keys {
-			cur := envGet(envf, key)
+			cur := steps.EnvGet(envb, key)
 			if cur == "" {
 				cur = s.Defaults[key]
 			}
@@ -585,17 +604,24 @@ func homeOf(name string) string {
 	return "/home/" + name
 }
 
-// envGet reads KEY's value from an env file (the last one wins).
-func envGet(path, key string) string {
-	b, err := os.ReadFile(path)
+// readAsOwner reads a file under login's ~/.mcp as its owner: the
+// gateway's service user, or login before there is one. A symlink planted
+// there then can't show root's files.
+func readAsOwner(login, path string) []byte {
+	owner := "mcp-" + login
+	if _, err := user.Lookup(owner); err != nil {
+		owner = login
+	}
+	out, err := exec.Command("runuser", "-u", owner, "--", "cat", "--", path).Output()
 	if err != nil {
-		return ""
+		return nil
 	}
-	v := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		if rest, ok := strings.CutPrefix(line, key+"="); ok {
-			v = rest
-		}
-	}
-	return v
+	return out
+}
+
+// hasPassword reports whether the user has a usable password (passwd -S).
+func hasPassword(name string) bool {
+	out, err := exec.Command("passwd", "-S", name).Output()
+	f := strings.Fields(string(out))
+	return err == nil && len(f) > 1 && f[1] == "P"
 }

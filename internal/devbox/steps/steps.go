@@ -27,6 +27,8 @@ type Cmd struct {
 	// AsUser runs it as the target user, from their home, with mise's
 	// shims on PATH.
 	AsUser bool
+	// As runs it as this user (a service user), as it is.
+	As string
 }
 
 func (c Cmd) String() string {
@@ -39,6 +41,9 @@ func (c Cmd) String() string {
 	}
 	if c.AsUser {
 		s = "(as user) " + s
+	}
+	if c.As != "" {
+		s = "(as " + c.As + ") " + s
 	}
 	return s
 }

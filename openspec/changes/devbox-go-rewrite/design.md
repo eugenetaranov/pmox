@@ -103,10 +103,11 @@ Existing devbox-* specs describe behaviour, not bash, and they are the acceptanc
   - `--yes` without `--user` or a profile re-applies for every user in `system.json`; with `--user` (or a profile), only that user. Each user's run is the system picks plus that user's picks, so per-user parts of system items (the docker group) reach each user.
   - MCPJungle becomes a template unit, `mcpjungle@<user>`, reading `/etc/mcpjungle/<user>.env` (host, port, data directory), with a port allocated from 8080 upwards and recorded in `system.json`. Agent wiring uses that port, and is corrected when the port changes. The old single `mcpjungle.service` is stopped and removed when its user's instance is set up.
 - **The `mcp` service user.**
-  - The gateway and its docker containers run as a system user `mcp-<user>`, which owns `~<user>/.mcp/*/env`: 0600, readable only by that service user.
-  - devbox-setup and `mcp-sync` edit the files through sudo.
-  - This keeps an agent running as the login user from reading every MCP token directly. It doesn't stop a user with passwordless sudo, and the README says so.
-  - The opt-in `sudopw` item drops `NOPASSWD` for that user.
+  - The gateway and its docker containers run as a system user `mcp-<user>` (no login, no home, in the docker group), which owns `~<user>/.mcp` (0700) and its `*/env` files (0600). It gets only search (`x`) on the user's home, through an ACL, not the user's group.
+  - devbox-setup reads and writes `~/.mcp` as `mcp-<user>` (`runuser`), never as root: the login user can replace `~/.mcp` with a symlink, and that must lead nowhere the service user couldn't reach anyway.
+  - `mcp-sync` re-runs itself as `mcp-<user>` through sudo when the login user runs it; `mcp-sync edit <server>` opens a server's env file in `$EDITOR` the same way (`sudoedit` refuses files under a directory the user can write, which the home is).
+  - This keeps an agent running as the login user from reading every MCP token directly. It doesn't stop a user with passwordless sudo or in the docker group, and the README says so.
+  - The opt-in `sudopw` item drops `NOPASSWD` from that user's rules in `/etc/sudoers.d` (each change checked with `visudo -c`). A user without a password would be locked out of sudo, so it asks for one interactively, and otherwise fails with how to set one. pmox's commands that use sudo on the VM then need that password too; the item's label says so.
 - **Supply chain.**
   - Every `apt_repo` needs `key_fingerprint`; the step checks it with `gpg --show-keys` before installing the key.
   - Every download step needs `sha256`, or `unverified = "reason"`.

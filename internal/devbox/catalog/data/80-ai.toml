@@ -205,11 +205,11 @@ id = "mcpjungle"
 tab = "ai"
 label = "MCPJungle + MCP servers (Docker)"
 needs = ["docker"]
-source = "release binary · systemd mcpjungle · mcp-sync"
+source = "release binary · systemd mcpjungle@<user> as mcp-<user> · mcp-sync"
 
 [[item.step]]
 type = "apt"
-packages = ["curl", "jq", "tar"]
+packages = ["curl", "jq", "tar", "acl"]
 
 [[item.step]]
 type = "run"
@@ -231,15 +231,10 @@ creates = "/usr/local/bin/mcpjungle"
 [[item.step]]
 type = "go:mcp_files"
 
+# The gateway runs as mcp-<user>, which owns ~/.mcp: an agent running as
+# the login user can't read the MCP tokens without sudo.
 [[item.step]]
-type = "run"
-cmd = "usermod -aG docker {{user}}"
-check = "id -nG {{user}} | tr ' ' '\\n' | grep -qx docker"
-
-[[item.step]]
-type = "run"
-cmd = "install -d -m 0700 -o {{user}} -g {{group}} {{home}}/.mcp"
-creates = "~/.mcp"
+type = "go:mcp_user"
 
 [[item.step]]
 type = "go:mcpjungle_unit"

@@ -38,6 +38,110 @@ func init() {
 	RegisterGo("mcp_servers", func(catalog.Step) Step { return mcpServersStep{} })
 	RegisterGo("mcp_wire", func(catalog.Step) Step { return mcpWireStep{} })
 	RegisterGo("mcp_sync", func(catalog.Step) Step { return mcpSyncStep{} })
+	RegisterGo("mcp_user", func(catalog.Step) Step { return mcpUserStep{} })
+}
+
+// MCPUser is the system user the user's gateway runs as. It owns
+// ~/.mcp, so the login user (and agents running as them) can't read the
+// MCP tokens without sudo.
+func MCPUser(e *Env) string { return "mcp-" + e.User }
+
+// mcpAsService says whether ~/.mcp is reached as the service user (as
+// root, on a VM) or directly (tests, run as a plain user).
+var mcpAsService = func(e *Env) bool { return e.Chown }
+
+// mcpRead reads ~/.mcp/rel as the service user; nil and no error when it
+// doesn't exist. As that user, a symlink planted by the login user leads
+// nowhere it couldn't already read.
+func mcpRead(ctx context.Context, e *Env, rel string) ([]byte, error) {
+	p := filepath.Join(e.Home, ".mcp", rel)
+	if !mcpAsService(e) {
+		b, err := os.ReadFile(e.Path(p))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return b, err
+	}
+	// "x" marks a file that is there (an empty one included).
+	out, err := e.Exec.Run(ctx, Cmd{Name: "sh", Args: []string{"-c", `[ -e "$1" ] || exit 0; printf x; cat -- "$1"`, "_", p}, As: MCPUser(e)})
+	if err != nil {
+		return nil, fmt.Errorf("read %s as %s: %w", p, MCPUser(e), err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out[1:], nil
+}
+
+// mcpWrite writes ~/.mcp/rel (0600, its directory 0700) as the service user.
+func mcpWrite(ctx context.Context, e *Env, rel string, b []byte) error {
+	p := filepath.Join(e.Home, ".mcp", rel)
+	if !mcpAsService(e) {
+		dir := filepath.Dir(e.Path(p))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := errors.Join(os.Chmod(dir, 0o700), e.chown(dir, e.UID, e.GID)); err != nil {
+			return err
+		}
+		if err := writeFile(e.Path(p), b, 0o600); err != nil {
+			return err
+		}
+		return e.chown(e.Path(p), e.UID, e.GID)
+	}
+	_, err := e.run(ctx, Cmd{Name: "sh", Args: []string{"-c",
+		`umask 077 && mkdir -p -- "$(dirname -- "$1")" && cat > "$1.tmp" && chmod 600 "$1.tmp" && mv -f -- "$1.tmp" "$1"`, "_", p},
+		Stdin: b, As: MCPUser(e)})
+	return err
+}
+
+// --- go:mcp_user: the gateway's service user, owning ~/.mcp -----------------
+
+type mcpUserStep struct{}
+
+func (mcpUserStep) Plan(e *Env) []Action {
+	return []Action{{"run", fmt.Sprintf("system user %s (docker group) owns ~/.mcp; it may pass through %s (ACL)", MCPUser(e), e.Home)}}
+}
+
+func (mcpUserStep) Check(ctx context.Context, e *Env) (bool, error) {
+	svc := MCPUser(e)
+	groups, err := e.Exec.Run(ctx, Cmd{Name: "id", Args: []string{"-nG", svc}})
+	if err != nil || !slices.Contains(strings.Fields(string(groups)), "docker") {
+		return false, nil
+	}
+	owner, err := e.Exec.Run(ctx, Cmd{Name: "stat", Args: []string{"-c", "%U %a", filepath.Join(e.Home, ".mcp")}})
+	if err != nil || strings.TrimSpace(string(owner)) != svc+" 700" {
+		return false, nil
+	}
+	acl, err := e.Exec.Run(ctx, Cmd{Name: "getfacl", Args: []string{"-cp", e.Home}})
+	return err == nil && hasLine(acl, "user:"+svc+":--x"), nil
+}
+
+func (mcpUserStep) Apply(ctx context.Context, e *Env) error {
+	svc := MCPUser(e)
+	if len(svc) > 32 {
+		return fmt.Errorf("%s: user names are at most 32 characters; the gateway needs a shorter login name", svc)
+	}
+	dir := filepath.Join(e.Home, ".mcp")
+	if _, err := e.Exec.Run(ctx, Cmd{Name: "id", Args: []string{"-u", svc}}); err != nil {
+		if _, err := e.run(ctx, Cmd{Name: "useradd", Args: []string{"--system", "--user-group", "--no-create-home",
+			"--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", "--comment", "MCPJungle gateway for " + e.User, svc}}); err != nil {
+			return err
+		}
+	}
+	for _, args := range [][]string{
+		{"usermod", "-aG", "docker", svc},
+		// The login user's own ~/.mcp from before: the service user's now
+		// (chown -R doesn't follow symlinks).
+		{"install", "-d", "-m", "0700", "-o", svc, "-g", svc, dir},
+		{"chown", "-R", svc + ":" + svc, dir},
+		{"setfacl", "-m", "u:" + svc + ":x", e.Home},
+	} {
+		if _, err := e.run(ctx, Cmd{Name: args[0], Args: args[1:]}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MCPPort is the user's gateway port.
@@ -151,9 +255,9 @@ Wants=docker.service
 
 [Service]
 Type=simple
-User=%i
+# The service user owns ~<user>/.mcp: the login user can't read the tokens.
+User=mcp-%i
 SupplementaryGroups=docker
-WorkingDirectory=~
 EnvironmentFile=/etc/mcpjungle/%i.env
 # Docker-based servers can take a while to start the first time.
 Environment=MCP_SERVER_INIT_REQ_TIMEOUT_SEC=120
@@ -303,15 +407,16 @@ func typed(e *Env, n string) map[string]string {
 	return out
 }
 
-func (mcpServersStep) Check(_ context.Context, e *Env) (bool, error) {
+func (mcpServersStep) Check(ctx context.Context, e *Env) (bool, error) {
 	for _, n := range servers(e) {
-		p := e.Path("~/.mcp/" + n + "/env")
-		b, err := os.ReadFile(p)
-		if err != nil {
+		b, err := mcpRead(ctx, e, n+"/env")
+		if err != nil || b == nil {
 			return false, nil
 		}
-		if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
-			return false, nil
+		if !mcpAsService(e) {
+			if fi, _ := os.Stat(e.Path(filepath.Join(e.Home, ".mcp", n, "env"))); fi.Mode().Perm() != 0o600 {
+				return false, nil
+			}
 		}
 		for k, v := range typed(e, n) {
 			if EnvGet(b, k) != v {
@@ -324,16 +429,11 @@ func (mcpServersStep) Check(_ context.Context, e *Env) (bool, error) {
 
 func (mcpServersStep) Apply(ctx context.Context, e *Env) error {
 	for _, n := range servers(e) {
-		dir := e.Path("~/.mcp/" + n)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		b, err := mcpRead(ctx, e, n+"/env")
+		if err != nil {
 			return err
 		}
-		if err := errors.Join(os.Chmod(dir, 0o700), e.chown(dir, e.UID, e.GID)); err != nil {
-			return err
-		}
-		p := filepath.Join(dir, "env")
-		b, err := os.ReadFile(p)
-		if errors.Is(err, fs.ErrNotExist) {
+		if b == nil {
 			spec, err := mcp.Load(ctx, mcp.Dirs(e.Share), n)
 			if err != nil {
 				return err
@@ -342,8 +442,6 @@ func (mcpServersStep) Apply(ctx context.Context, e *Env) error {
 			if err := e.record("file", filepath.Join(e.Home, ".mcp", n, "env")); err != nil {
 				return err
 			}
-		} else if err != nil {
-			return err
 		}
 		keys := typed(e, n)
 		names := make([]string, 0, len(keys))
@@ -354,10 +452,7 @@ func (mcpServersStep) Apply(ctx context.Context, e *Env) error {
 		for _, k := range names {
 			b = EnvSet(b, k, keys[k])
 		}
-		if err := writeFile(p, b, 0o600); err != nil {
-			return err
-		}
-		if err := e.chown(p, e.UID, e.GID); err != nil {
+		if err := mcpWrite(ctx, e, n+"/env", b); err != nil {
 			return err
 		}
 	}
@@ -581,9 +676,13 @@ func (mcpSyncStep) Plan(e *Env) []Action {
 func (mcpSyncStep) Check(context.Context, *Env) (bool, error) { return true, nil }
 
 func (mcpSyncStep) Apply(ctx context.Context, e *Env) error {
-	args := append([]string{"MCP_CATALOG=" + mcpCatalog, "MCPJUNGLE_REGISTRY=" + mcpURL(e), mcpSync}, servers(e)...)
-	if _, err := e.run(ctx, Cmd{Name: "env", Args: args, AsUser: true}); err != nil {
-		return fmt.Errorf("some MCP servers did not register (see the log); fill in ~/.mcp/<name>/env, then run mcp-sync: %w", err)
+	args := append([]string{"MCP_DIR=" + filepath.Join(e.Home, ".mcp"), "MCP_CATALOG=" + mcpCatalog, "MCPJUNGLE_REGISTRY=" + mcpURL(e), mcpSync}, servers(e)...)
+	c := Cmd{Name: "env", Args: args, As: MCPUser(e)}
+	if !mcpAsService(e) {
+		c = Cmd{Name: "env", Args: args, AsUser: true}
+	}
+	if _, err := e.run(ctx, c); err != nil {
+		return fmt.Errorf("some MCP servers did not register (see the log); fill in the keys with 'mcp-sync edit <server>', then run mcp-sync: %w", err)
 	}
 	return nil
 }

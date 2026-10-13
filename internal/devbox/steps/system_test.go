@@ -247,3 +247,50 @@ func TestGitConfig(t *testing.T) {
 		t.Errorf("git config = %v", cfg)
 	}
 }
+
+func TestSudoPW(t *testing.T) {
+	hasPW := false
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		if c.Name == "passwd" {
+			if hasPW {
+				return []byte("ada P 2026-10-13 0 99999 7 -1\n"), nil
+			}
+			return []byte("ada L 2026-10-13 0 99999 7 -1\n"), nil
+		}
+		return nil, nil
+	}}
+	e := testEnv(t, x)
+	e.Secrets = creds.New()
+	put(t, e.Path("/etc/sudoers.d/90-cloud-init-users"), "# Created by cloud-init\n\n# User rules for ada\nada ALL=(ALL) NOPASSWD:ALL\n")
+	put(t, e.Path("/etc/sudoers.d/README"), "bob ALL=(ALL) NOPASSWD:ALL\n")
+	st := step(t, catalog.Step{Type: "go:sudopw"})
+	if check(t, e, st) {
+		t.Fatal("Check = true with NOPASSWD")
+	}
+	if err := st.Apply(context.Background(), e); err == nil || !strings.Contains(err.Error(), "sudo passwd ada") {
+		t.Fatalf("no password: err = %v", err)
+	}
+	if got := read(t, e.Path("/etc/sudoers.d/90-cloud-init-users")); !strings.Contains(got, "NOPASSWD") {
+		t.Error("NOPASSWD removed while ada has no password")
+	}
+	e.Secrets.SudoPW = "s3cret"
+	apply(t, e, st)
+	if got := x.commands(); !strings.Contains(strings.Join(got, "\n"), "chpasswd") || !strings.HasSuffix(got[len(got)-1], "visudo -cqf /etc/sudoers.d/90-cloud-init-users.devbox-new") {
+		t.Errorf("ran %q", got)
+	}
+	if got := read(t, e.Path("/etc/sudoers.d/90-cloud-init-users")); got != "# Created by cloud-init\n\n# User rules for ada\nada ALL=(ALL) ALL\n" {
+		t.Errorf("rules = %q", got)
+	}
+	if got := read(t, e.Path("/etc/sudoers.d/README")); !strings.Contains(got, "bob ALL=(ALL) NOPASSWD:ALL") {
+		t.Errorf("bob's rule changed: %q", got)
+	}
+	if !check(t, e, st) {
+		t.Error("Check = false after Apply")
+	}
+	hasPW, e.Secrets.SudoPW = true, ""
+	put(t, e.Path("/etc/sudoers.d/90-devbox-ada"), "ada ALL=(ALL) NOPASSWD:ALL\n")
+	apply(t, e, st)
+	if got := read(t, e.Path("/etc/sudoers.d/90-devbox-ada")); got != "ada ALL=(ALL) ALL\n" {
+		t.Errorf("with a password already: %q", got)
+	}
+}

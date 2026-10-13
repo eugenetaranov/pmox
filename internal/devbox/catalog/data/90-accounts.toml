@@ -103,3 +103,15 @@ label = "GitLab CLI (glab)"
 [[item.step]]
 type = "mise"
 tools = ["glab@latest"]
+
+# Opt-in: the login user's sudo asks for their password, so an agent
+# running as them can't sudo (and read the MCP tokens) unasked. pmox
+# commands that use sudo on the VM then need that password too.
+[[item]]
+id = "sudopw"
+tab = "accounts"
+label = "sudo asks for your password (drops NOPASSWD; pmox's sudo commands then ask too)"
+source = "sets a password if there is none · removes NOPASSWD from your /etc/sudoers.d rules"
+
+[[item.step]]
+type = "go:sudopw"
