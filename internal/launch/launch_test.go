@@ -692,6 +692,9 @@ func TestRun_PushesYardoBeforeHook(t *testing.T) {
 	if bytes.Contains(stub.content, []byte("yardo/releases")) {
 		t.Errorf("user-data carries yardo:\n%s", stub.content)
 	}
+	if !bytes.Contains(stub.content, []byte("hostname: "+opts.Name+"\n")) || !bytes.Contains(stub.content, []byte("manage_etc_hosts: true")) {
+		t.Errorf("user-data doesn't name the VM %q:\n%s", opts.Name, stub.content)
+	}
 	if !bytes.Contains(stub.content, []byte("20auto-upgrades")) {
 		t.Errorf("user-data lacks the auto-upgrades switch-off:\n%s", stub.content)
 	}

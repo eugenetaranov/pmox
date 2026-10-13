@@ -494,6 +494,10 @@ for a server, set `yardo: false` under that server in `config.yaml`.
   deleting it (default yes): it removes the keys, logins and secrets yardo
   set up. `--forget` runs it without asking and `--no-forget` skips it.
 
+Every VM's hostname is its name: pmox adds `hostname` (and `fqdn` for a dotted
+name) and `manage_etc_hosts: true` to the cloud-init it uploads, unless your
+cloud-init file sets a hostname itself.
+
 pmox also adds a line to the VM's cloud-init that turns off
 unattended-upgrades and the apt-daily timers: on first boot they hold the
 dpkg lock and make installs fail. Security updates on these VMs are then up

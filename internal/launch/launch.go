@@ -169,6 +169,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if !snippet.HasSSHKeys(cloudInitBytes) && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: cloud-init file %s has no ssh_authorized_keys; you may not be able to SSH in\n", opts.CloudInitPath)
 	}
+	// The VM's hostname is its name (shown in shell prompts).
+	cloudInitBytes = withUserDataEdit(cloudInitBytes, bootstrap.Hostname(opts.Name), "hostname not set", opts.CloudInitPath, opts.Stderr)
 	if opts.Yardo {
 		cloudInitBytes = withUserDataEdit(cloudInitBytes, bootstrap.Inject, "automatic updates left on", opts.CloudInitPath, opts.Stderr)
 	}

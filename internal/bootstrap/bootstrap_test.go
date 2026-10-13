@@ -228,3 +228,25 @@ func TestTeamSync(t *testing.T) {
 		t.Errorf("no team files: %s", got)
 	}
 }
+
+func TestHostname(t *testing.T) {
+	out, err := Hostname("web1")([]byte("#cloud-config\npackages: [curl]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := parse(t, out)
+	if doc["hostname"] != "web1" || doc["manage_etc_hosts"] != true || doc["fqdn"] != nil {
+		t.Errorf("doc = %v", doc)
+	}
+	out, _ = Hostname("api.dev.example.com")([]byte("#cloud-config\npackages: [curl]\n"))
+	doc, _ = parse(t, out)
+	if doc["hostname"] != "api" || doc["fqdn"] != "api.dev.example.com" {
+		t.Errorf("dotted: %v", doc)
+	}
+	// The user's own hostname wins.
+	out, _ = Hostname("web1")([]byte("#cloud-config\nhostname: mine\n"))
+	doc, _ = parse(t, out)
+	if doc["hostname"] != "mine" || doc["manage_etc_hosts"] != nil {
+		t.Errorf("own hostname: %v", doc)
+	}
+}
