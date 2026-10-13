@@ -27,7 +27,7 @@ func DryRun(w io.Writer, e *steps.Env, items []*catalog.Item, extraMise []string
 		}
 	}
 	if len(extraMise) > 0 {
-		fmt.Fprintf(w, "Extra mise tools\n  %-6s %s\n", "mise", strings.Join(extraMise, " "))
+		fmt.Fprintf(w, "Extra mise tools\n  %-6s %s\n", "mise", strings.Join(steps.LockedTools(e, extraMise), " "))
 	}
 	return nil
 }

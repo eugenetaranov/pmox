@@ -100,6 +100,14 @@ func TestExportAndProfile(t *testing.T) {
 	if err := cli([]string{"--state", src, "export", f}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := cli([]string{"--state", src, "export", "a.toml", "b.toml"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Error("export with two files: want an error")
+	}
+	// Nothing is installed here, so the lock is empty and left out.
+	var locked bytes.Buffer
+	if err := cli([]string{"--state", src, "export", "--lock"}, &locked, &bytes.Buffer{}); err != nil || strings.Contains(locked.String(), "[lock") || !strings.Contains(locked.String(), "terraform") {
+		t.Errorf("export --lock: %v\n%s", err, locked.String())
+	}
 	me2 := t.TempDir() + "/me.toml"
 	if err := os.WriteFile(me2, []byte("[system]\ntz = \"Europe/Berlin\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -177,5 +185,25 @@ func TestCreateUser(t *testing.T) {
 	b, err := os.ReadFile(sudoersDir + "/90-devbox-ada")
 	if err != nil || string(b) != "ada ALL=(ALL) NOPASSWD:ALL\n" {
 		t.Errorf("sudo rule = %q, %v", b, err)
+	}
+}
+
+// A profile's [lock] shows in the plan: exact mise versions, apt pkg=ver.
+func TestProfileLockPlan(t *testing.T) {
+	me, _ := user.Current()
+	t.Setenv("SUDO_USER", me.Username)
+	f := t.TempDir() + "/locked.toml"
+	src := "picks = [\"zsh\", \"terraform\"]\nmise_extra = [\"starship\"]\n[lock.mise]\nterraform = \"1.9.8\"\nstarship = \"1.21.1\"\n[lock.apt]\nzsh = \"5.9-6ubuntu2\"\n"
+	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := cli([]string{"--state", t.TempDir(), "--profile", f, "--yes", "--dry-run"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"apt    zsh=5.9-6ubuntu2 git\n", "mise   terraform@1.9.8\n", "Extra mise tools\n  mise   starship@1.21.1\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
 	}
 }

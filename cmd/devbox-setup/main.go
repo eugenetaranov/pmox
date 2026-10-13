@@ -7,6 +7,9 @@
 //	devbox-setup --dry-run        ask, then show what would happen
 //	sudo devbox-setup --profile team.toml --profile me.toml [--yes]
 //	                              apply profiles (review first without --yes)
+//	sudo devbox-setup export [--lock] [file]
+//	                              write the saved choices as a profile
+//	                              (--lock: with the installed versions)
 package main
 
 import (
@@ -71,6 +74,8 @@ type options struct {
 	yes, dryRun, verify, showVersion, list bool
 	state, log, legacy, user               string
 	profiles                               list
+	// lock is the profiles' [lock] tables, merged.
+	lock *answers.Lock
 }
 
 // list is a repeatable string flag.
@@ -125,8 +130,8 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "devbox-setup: "+n)
 	}
 	if fs.NArg() > 0 {
-		if fs.Arg(0) == "export" && fs.NArg() <= 2 {
-			return export(stdout, a, fs.Arg(1))
+		if fs.Arg(0) == "export" {
+			return o.export(stdout, stderr, cat, a, fs.Args()[1:])
 		}
 		return fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
@@ -144,6 +149,12 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		}
 		if interactive && strings.HasPrefix(src, "https://") {
 			fmt.Fprintf(stdout, "Profile %s:\n%s\n", src, b)
+		}
+		if p.Lock != nil {
+			if o.lock == nil {
+				o.lock = &answers.Lock{}
+			}
+			o.lock.Add(p.Lock)
 		}
 		d, warn := p.Apply(a, cat)
 		for _, w := range warn {
@@ -334,7 +345,7 @@ func (o *options) env(a *answers.Answers, sec *creds.Secrets, log io.Writer) (*s
 	if err != nil {
 		return nil, err
 	}
-	env.Share, env.State, env.Answers, env.Secrets = o.share(), o.state, a, sec
+	env.Share, env.State, env.Answers, env.Secrets, env.Lock = o.share(), o.state, a, sec, o.lock
 	env.Note = func(text string) {
 		if log != nil {
 			fmt.Fprintf(log, "NOTE: %s\n", text)
@@ -423,17 +434,69 @@ func (o *options) ensureUser(ctx context.Context, name string, w io.Writer) (cre
 	return true, nil
 }
 
-// export writes the saved answers as a profile, to file or stdout.
-func export(stdout io.Writer, a *answers.Answers, file string) error {
+// export writes the saved answers as a profile, to file or stdout. With
+// --lock it adds the installed versions of the plan's mise tools and apt
+// packages.
+func (o *options) export(stdout, stderr io.Writer, cat *catalog.Catalog, a *answers.Answers, args []string) error {
+	fs := flag.NewFlagSet("devbox-setup export", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	lock := fs.Bool("lock", false, "add a [lock] table with the installed mise and apt versions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return fmt.Errorf("export: unexpected argument %q", fs.Arg(1))
+	}
+	file := fs.Arg(0)
 	if len(a.Picks) == 0 {
 		return errors.New("no saved choices to export yet")
 	}
-	b := profile.Export(a)
+	var l *answers.Lock
+	if *lock {
+		var err error
+		if l, err = o.versions(context.Background(), stderr, cat, a); err != nil {
+			return err
+		}
+	}
+	b := profile.Export(a, l)
 	if file == "" {
 		_, err := stdout.Write(b)
 		return err
 	}
 	return os.WriteFile(file, b, 0o644)
+}
+
+// versions reads the installed versions of the saved plan's mise tools
+// and apt packages.
+func (o *options) versions(ctx context.Context, stderr io.Writer, cat *catalog.Catalog, a *answers.Answers) (*answers.Lock, error) {
+	items, err := plan.Resolve(cat, a.Picks, len(a.MiseExtra) > 0)
+	if err != nil {
+		return nil, err
+	}
+	env, err := o.env(a, creds.New(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var tools, pkgs []string
+	for _, it := range items {
+		for _, s := range it.Steps {
+			switch s.Type {
+			case "mise":
+				tools = append(tools, s.Tools...)
+			case "apt":
+				for _, p := range s.Packages {
+					if !strings.Contains(p, "{{") { // per-kernel names don't carry over
+						pkgs = append(pkgs, p)
+					}
+				}
+			}
+		}
+	}
+	l, missing := steps.Versions(ctx, env, answers.Merge(tools, a.MiseExtra), answers.Merge(nil, pkgs))
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr, "devbox-setup: not installed, so not locked: %s\n", strings.Join(missing, " "))
+	}
+	return l, nil
 }
 
 // legacyRunner runs the bash installer with args (logged), or is nil when

@@ -28,6 +28,8 @@ type Profile struct {
 	Git       *Git     `toml:"git"`
 	System    *System  `toml:"system"`
 	MCP       *MCP     `toml:"mcp"`
+	// Lock pins versions (export --lock).
+	Lock *answers.Lock `toml:"lock,omitempty"`
 }
 
 // Git is the git identity.
@@ -68,6 +70,11 @@ func Parse(name string, b []byte) (*Profile, error) {
 	}
 	if p.MCP != nil && p.MCP.Listen != "" && p.MCP.Listen != "127.0.0.1" && p.MCP.Listen != "0.0.0.0" {
 		return nil, fmt.Errorf("%s: mcp.listen %q: want 127.0.0.1 or 0.0.0.0", name, p.MCP.Listen)
+	}
+	if p.Lock != nil {
+		if err := p.Lock.Check(); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
 	}
 	if p.Name != "" && !layerName.MatchString(p.Name) {
 		return nil, fmt.Errorf("%s: name %q: want letters, digits, '.', '_' or '-'", name, p.Name)
@@ -136,9 +143,13 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (dropped, warnin
 	return dropped, warnings
 }
 
-// Export writes the saved answers as a profile.
-func Export(a *answers.Answers) []byte {
+// Export writes the saved answers as a profile, with lock's versions when
+// it pins any.
+func Export(a *answers.Answers, lock *answers.Lock) []byte {
 	p := Profile{Picks: a.Picks, MiseExtra: a.MiseExtra}
+	if !lock.Empty() {
+		p.Lock = lock
+	}
 	if a.Git.Name != "" || a.Git.Email != "" {
 		p.Git = &Git{Name: a.Git.Name, Email: a.Git.Email}
 	}

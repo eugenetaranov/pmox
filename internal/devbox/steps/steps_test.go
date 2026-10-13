@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 )
 
@@ -296,5 +298,77 @@ func TestAptUpdateWaitsForTheListsLock(t *testing.T) {
 	n = 0
 	if err := AptUpdate(context.Background(), testEnv(t, x)); err == nil || len(x.ran) == 0 {
 		t.Error("other errors fail at once")
+	}
+}
+
+func TestMiseLock(t *testing.T) {
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		return []byte(`{"terraform": [{"version": "1.10.0", "installed": true, "active": true}]}`), nil
+	}}
+	e := testEnv(t, x)
+	st := step(t, catalog.Step{Type: "mise", Tools: []string{"terraform@latest", "pipx:aider-chat[uvx_args=--python=3.12]", "node"}})
+	e.Lock = &answers.Lock{Mise: map[string]string{"terraform": "1.9.8", "pipx:aider-chat": "0.80.0"}}
+	if got, want := LockedTools(e, []string{"terraform@latest", "pipx:aider-chat[uvx_args=--python=3.12]", "node"}),
+		[]string{"terraform@1.9.8", "pipx:aider-chat[uvx_args=--python=3.12]@0.80.0", "node"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("LockedTools = %v, want %v", got, want)
+	}
+	if check(t, e, step(t, catalog.Step{Type: "mise", Tools: []string{"terraform@latest"}})) {
+		t.Error("terraform 1.10.0 is installed, the lock wants 1.9.8: not done")
+	}
+	apply(t, e, st)
+	if got := x.commands(); got[len(got)-2] != "(as user) mise use -g --yes terraform@1.9.8 pipx:aider-chat[uvx_args=--python=3.12]@0.80.0 node" {
+		t.Errorf("commands = %v", got)
+	}
+	e.Lock.Mise["terraform"] = "1.10.0"
+	if !check(t, e, step(t, catalog.Step{Type: "mise", Tools: []string{"terraform@latest"}})) {
+		t.Error("the locked version is installed: done")
+	}
+}
+
+func TestAptLock(t *testing.T) {
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		if c.Name == "apt-cache" {
+			if c.Args[2] == "jq=1.7.1-3build1" {
+				return []byte("Package: jq\nVersion: 1.7.1-3build1\n"), nil
+			}
+			return []byte("E: No packages found"), errors.New("exit status 100")
+		}
+		return nil, nil
+	}}
+	e := testEnv(t, x)
+	var notes []string
+	e.Note = func(s string) { notes = append(notes, s) }
+	e.Lock = &answers.Lock{Apt: map[string]string{"jq": "1.7.1-3build1", "curl": "8.0.0-1"}}
+	if err := AptInstall(context.Background(), e, []string{"jq", "curl", "git"}); err != nil {
+		t.Fatal(err)
+	}
+	got := x.commands()
+	if last := got[len(got)-1]; !strings.HasSuffix(last, " install jq=1.7.1-3build1 curl git") {
+		t.Errorf("install = %q", last)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "curl 8.0.0-1") {
+		t.Errorf("notes = %v", notes)
+	}
+	if p := step(t, catalog.Step{Type: "apt", Packages: []string{"jq", "git"}}).Plan(e); p[0].Target != "jq=1.7.1-3build1 git" {
+		t.Errorf("plan = %v", p)
+	}
+}
+
+func TestVersions(t *testing.T) {
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		switch {
+		case c.Name == "mise":
+			return []byte(`{"go": [{"version": "1.22.0", "installed": true}, {"version": "1.23.4", "installed": true, "active": true}], "k9s": [{"version": "0.32.0", "installed": false}]}`), nil
+		case c.Name == "dpkg-query" && c.Args[2] == "jq":
+			return []byte("install ok installed\t1.7.1-3build1"), nil
+		}
+		return []byte(""), errors.New("exit status 1")
+	}}
+	l, missing := Versions(context.Background(), testEnv(t, x), []string{"go@latest", "k9s@latest"}, []string{"jq", "nope"})
+	if !reflect.DeepEqual(l.Mise, map[string]string{"go": "1.23.4"}) || !reflect.DeepEqual(l.Apt, map[string]string{"jq": "1.7.1-3build1"}) {
+		t.Errorf("lock = %+v", l)
+	}
+	if !reflect.DeepEqual(missing, []string{"k9s", "nope"}) {
+		t.Errorf("missing = %v", missing)
 	}
 }

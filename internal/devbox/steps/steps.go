@@ -76,6 +76,8 @@ type Env struct {
 	// (never saved).
 	Answers *answers.Answers
 	Secrets *creds.Secrets
+	// Lock pins mise and apt versions (a profile's [lock]); nil: latest.
+	Lock *answers.Lock
 	// Note shows text after the run (a step that has to leave something
 	// for the user to do).
 	Note func(text string)

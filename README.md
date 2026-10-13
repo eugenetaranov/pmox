@@ -612,6 +612,11 @@ ones it dropped (they stay installed, but aren't re-applied). Picks you
 made yourself are never dropped. `user = "ada"` in a profile, or
 `--user ada` (which wins), sets up that account, creating it like the VM's
 first user (passwordless sudo, same groups) if it doesn't exist.
+`devbox-setup export --lock` adds a `[lock]` table with the installed
+versions of the picked items' mise tools and apt packages. Applying a
+locked profile installs exactly those mise versions, and those apt
+versions while the archive still has them (otherwise the current one, with
+a note naming the package), so a VM built next month matches.
 
 pmox also adds a line to the VM's cloud-init that turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security

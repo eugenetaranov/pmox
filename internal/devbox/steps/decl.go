@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 )
 
@@ -23,7 +25,15 @@ import (
 
 type aptStep struct{ s catalog.Step }
 
-func (a aptStep) Plan(e *Env) []Action { return []Action{{"apt", strings.Join(a.Packages(e), " ")}} }
+func (a aptStep) Plan(e *Env) []Action {
+	pkgs := a.Packages(e)
+	for i, p := range pkgs {
+		if v := e.lockedApt(p); v != "" {
+			pkgs[i] = p + "=" + v
+		}
+	}
+	return []Action{{"apt", strings.Join(pkgs, " ")}}
+}
 
 func (a aptStep) Check(ctx context.Context, e *Env) (bool, error) {
 	missing, err := MissingPackages(ctx, e, a.Packages(e))
@@ -63,13 +73,40 @@ var AptOpts = []string{"-q", "-y", "-o", "DPkg::Lock::Timeout=900",
 // restarting (a docker restart mid-run would kill MCP containers).
 var AptEnv = []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"}
 
-// AptInstall installs pkgs.
+// AptInstall installs pkgs, at their locked versions while the archive
+// still has them (otherwise the current one, with a note).
 func AptInstall(ctx context.Context, e *Env, pkgs []string) error {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	_, err := e.run(ctx, Cmd{Name: "apt-get", Args: append(append(append([]string{}, AptOpts...), "install"), pkgs...), Env: AptEnv})
+	args := append(append([]string{}, AptOpts...), "install")
+	for _, p := range pkgs {
+		v := e.lockedApt(p)
+		switch {
+		case v == "":
+			args = append(args, p)
+		case aptHasVersion(ctx, e, p, v):
+			args = append(args, p+"="+v)
+		default:
+			e.note(fmt.Sprintf("apt: %s %s (locked) is no longer in the archive; installed the current version", p, v))
+			args = append(args, p)
+		}
+	}
+	_, err := e.run(ctx, Cmd{Name: "apt-get", Args: args, Env: AptEnv})
 	return err
+}
+
+// aptHasVersion reports whether the package lists have pkg at version v.
+func aptHasVersion(ctx context.Context, e *Env, pkg, v string) bool {
+	out, err := e.Exec.Run(ctx, Cmd{Name: "apt-cache", Args: []string{"show", "--no-all-versions", pkg + "=" + v}})
+	return err == nil && strings.Contains(string(out), "Version: "+v)
+}
+
+func (e *Env) lockedApt(pkg string) string {
+	if e.Lock == nil {
+		return ""
+	}
+	return e.Lock.Apt[pkg]
 }
 
 // AptUpdate refreshes the package lists. DPkg::Lock::Timeout covers
@@ -100,13 +137,32 @@ var AptRetryDelay = 5 * time.Second
 
 type miseStep struct{ s catalog.Step }
 
-func (m miseStep) Plan(*Env) []Action {
-	return []Action{{"mise", strings.Join(m.s.Tools, " ")}}
+func (m miseStep) Plan(e *Env) []Action {
+	return []Action{{"mise", strings.Join(LockedTools(e, m.s.Tools), " ")}}
 }
 
-// miseName is the name `mise ls` reports for a tool spec: no version, no
+// LockedTools returns tools with each locked one's version replaced by
+// the lock's.
+func LockedTools(e *Env, tools []string) []string {
+	if e.Lock == nil || len(e.Lock.Mise) == 0 {
+		return tools
+	}
+	out := make([]string, len(tools))
+	for i, t := range tools {
+		out[i] = t
+		if v := e.Lock.Mise[MiseName(t)]; v != "" {
+			if j := strings.LastIndexByte(t, '@'); j > 0 && j > strings.LastIndexByte(t, ']') {
+				t = t[:j]
+			}
+			out[i] = t + "@" + v
+		}
+	}
+	return out
+}
+
+// MiseName is the name `mise ls` reports for a tool spec: no version, no
 // [options].
-func miseName(spec string) string {
+func MiseName(spec string) string {
 	if i := strings.IndexByte(spec, '['); i >= 0 {
 		spec = spec[:i]
 	}
@@ -118,29 +174,82 @@ func miseName(spec string) string {
 
 func (m miseStep) Check(ctx context.Context, e *Env) (bool, error) { return MiseHas(ctx, e, m.s.Tools) }
 
-// MiseHas reports whether every tool is in the user's global mise config.
+// MiseHas reports whether every tool is in the user's global mise config,
+// at its locked version when there is one.
 func MiseHas(ctx context.Context, e *Env, tools []string) (bool, error) {
-	out, err := e.Exec.Run(ctx, Cmd{Name: "mise", Args: []string{"ls", "--global", "--json"}, AsUser: true})
-	if err != nil {
-		return false, nil
-	}
-	var have map[string]json.RawMessage
-	if json.Unmarshal(out, &have) != nil {
+	have, ok := miseList(ctx, e)
+	if !ok {
 		return false, nil
 	}
 	for _, t := range tools {
-		if _, ok := have[miseName(t)]; !ok {
+		name := MiseName(t)
+		vs, ok := have[name]
+		if !ok {
+			return false, nil
+		}
+		if e.Lock != nil && e.Lock.Mise[name] != "" && !slices.ContainsFunc(vs, func(v miseVersion) bool { return v.Version == e.Lock.Mise[name] }) {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
+type miseVersion struct {
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	Active    bool   `json:"active"`
+}
+
+// miseList is `mise ls --global --json`: tool → its versions.
+func miseList(ctx context.Context, e *Env) (map[string][]miseVersion, bool) {
+	out, err := e.Exec.Run(ctx, Cmd{Name: "mise", Args: []string{"ls", "--global", "--json"}, AsUser: true})
+	if err != nil {
+		return nil, false
+	}
+	var have map[string][]miseVersion
+	if json.Unmarshal(out, &have) != nil {
+		return nil, false
+	}
+	return have, true
+}
+
+// Versions reads the installed versions of mise tools (the active
+// one) and apt packages, for `export --lock`. missing lists what isn't
+// installed (so isn't locked).
+func Versions(ctx context.Context, e *Env, tools, pkgs []string) (l *answers.Lock, missing []string) {
+	l = &answers.Lock{Mise: map[string]string{}, Apt: map[string]string{}}
+	have, _ := miseList(ctx, e)
+	for _, t := range tools {
+		name := MiseName(t)
+		v := ""
+		for _, x := range have[name] {
+			if x.Installed && (v == "" || x.Active) {
+				v = x.Version
+			}
+		}
+		if v == "" {
+			missing = append(missing, name)
+			continue
+		}
+		l.Mise[name] = v
+	}
+	for _, p := range pkgs {
+		out, err := e.Exec.Run(ctx, Cmd{Name: "dpkg-query", Args: []string{"-W", "-f=${Status}\t${Version}", p}})
+		st, v, _ := strings.Cut(string(out), "\t")
+		if err != nil || !strings.Contains(st, "install ok installed") || v == "" {
+			missing = append(missing, p)
+			continue
+		}
+		l.Apt[p] = v
+	}
+	return l, missing
+}
+
 func (m miseStep) Apply(ctx context.Context, e *Env) error { return MiseUse(ctx, e, m.s.Tools) }
 
-// MiseUse installs tools globally for the user.
+// MiseUse installs tools globally for the user, at their locked versions.
 func MiseUse(ctx context.Context, e *Env, tools []string) error {
-	if _, err := e.run(ctx, Cmd{Name: "mise", Args: append([]string{"use", "-g", "--yes"}, tools...), AsUser: true}); err != nil {
+	if _, err := e.run(ctx, Cmd{Name: "mise", Args: append([]string{"use", "-g", "--yes"}, LockedTools(e, tools)...), AsUser: true}); err != nil {
 		return err
 	}
 	_, err := e.run(ctx, Cmd{Name: "mise", Args: []string{"reshim"}, AsUser: true})
