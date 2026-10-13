@@ -60,8 +60,9 @@ type upgradeFlags struct {
 func newVersionUpgradeCmd() *cobra.Command {
 	f := &upgradeFlags{}
 	cmd := &cobra.Command{
-		Use:   "upgrade",
-		Short: "Upgrade pmox to the latest release",
+		Use:     "upgrade",
+		Aliases: []string{"up"},
+		Short:   "Upgrade pmox to the latest release",
 		Long: `Upgrade pmox to the latest GitHub release, the same way it was
 installed:
 
