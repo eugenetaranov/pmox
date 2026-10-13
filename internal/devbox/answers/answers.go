@@ -54,6 +54,8 @@ type Answers struct {
 	Registries []string `json:"registries"`
 	// Dotfiles is the user's dotfiles repo (cloned to ~/.dotfiles).
 	Dotfiles string `json:"dotfiles,omitempty"`
+	// GitKeyHosts are the git hosts the git SSH key (gitkey) is used for.
+	GitKeyHosts []string `json:"gitkey_hosts,omitempty"`
 	// Layers are the picks each named profile set, by its name. Applying
 	// a profile with that name again replaces its layer (SetLayer).
 	Layers map[string][]string `json:"layers,omitempty"`
@@ -383,3 +385,9 @@ func CheckRepo(u string) error {
 	}
 	return nil
 }
+
+var hostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+
+// ValidHost reports whether h is a host name (with an optional :port) for
+// ~/.ssh/config.
+func ValidHost(h string) bool { return hostRe.MatchString(h) }

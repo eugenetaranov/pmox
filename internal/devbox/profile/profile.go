@@ -30,6 +30,9 @@ type Profile struct {
 	MCP       *MCP     `toml:"mcp"`
 	// Dotfiles is the dotfiles item's repo (a personal profile's).
 	Dotfiles *Dotfiles `toml:"dotfiles,omitempty"`
+	// GitKey is the gitkey item's hosts (the key itself never: pmox devbox
+	// gitkey sends it).
+	GitKey *GitKey `toml:"gitkey,omitempty"`
 	// Lock pins versions (export --lock).
 	Lock *answers.Lock `toml:"lock,omitempty"`
 }
@@ -50,6 +53,11 @@ type System struct {
 	NoProxy  string `toml:"no_proxy,omitempty"`
 	CABundle string `toml:"ca_bundle,omitempty"`
 	CASHA256 string `toml:"ca_sha256,omitempty"`
+}
+
+// GitKey lists the git hosts the git SSH key is used for.
+type GitKey struct {
+	Hosts []string `toml:"hosts"`
 }
 
 // Dotfiles is a dotfiles repo.
@@ -100,6 +108,13 @@ func Parse(name string, b []byte) (*Profile, error) {
 		for _, port := range p.System.DevPorts {
 			if !answers.ValidPort(port) {
 				return nil, fmt.Errorf("%s: system.dev_ports: %q: want a port, a range (8000-8010), or either with /udp", name, port)
+			}
+		}
+	}
+	if p.GitKey != nil {
+		for _, h := range p.GitKey.Hosts {
+			if !answers.ValidHost(h) {
+				return nil, fmt.Errorf("%s: gitkey.hosts: %q is not a host name", name, h)
 			}
 		}
 	}
@@ -158,6 +173,9 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (dropped, warnin
 	if p.Dotfiles != nil && p.Dotfiles.Repo != "" {
 		a.Dotfiles = p.Dotfiles.Repo
 	}
+	if p.GitKey != nil {
+		a.GitKeyHosts = answers.Merge(a.GitKeyHosts, p.GitKey.Hosts)
+	}
 	a.MiseExtra = answers.Merge(a.MiseExtra, p.MiseExtra)
 	if p.Git != nil {
 		if p.Git.Name != "" {
@@ -207,6 +225,9 @@ func Export(a *answers.Answers, lock *answers.Lock) []byte {
 	}
 	if a.Dotfiles != "" {
 		p.Dotfiles = &Dotfiles{Repo: a.Dotfiles}
+	}
+	if len(a.GitKeyHosts) > 0 {
+		p.GitKey = &GitKey{Hosts: a.GitKeyHosts}
 	}
 	if len(a.MCPServers) > 0 || a.MCPListen != "" || a.WireAgents != nil {
 		p.MCP = &MCP{Servers: a.MCPServers, Listen: a.MCPListen, WireAgents: a.WireAgents}

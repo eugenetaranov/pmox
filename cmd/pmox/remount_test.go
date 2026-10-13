@@ -135,7 +135,9 @@ func TestWatchAndSyncRetries(t *testing.T) {
 	dir := t.TempDir()
 	var log bytes.Buffer
 	done := make(chan error, 1)
-	go func() { done <- watchAndSync(cmd, "rsync", []string{"rsync", "old"}, dir, time.Millisecond, &log, refresh) }()
+	go func() {
+		done <- watchAndSync(cmd, "rsync", []string{"rsync", "old"}, dir, time.Millisecond, &log, refresh)
+	}()
 	// The first sync comes from a change.
 	time.Sleep(50 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {

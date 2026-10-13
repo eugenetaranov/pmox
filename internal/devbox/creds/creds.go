@@ -24,6 +24,8 @@ type Secrets struct {
 	AgeChoice, AgeKey string
 	// SudoPW is a password to set for the user (sudopw), when they have none.
 	SudoPW string
+	// GitKey is a private key for gitkey, sent by pmox devbox gitkey.
+	GitKey []byte
 }
 
 // New returns empty secrets.

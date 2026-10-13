@@ -49,19 +49,20 @@ type UserInfo struct {
 }
 
 type userFile struct {
-	Version    int                 `json:"version"`
-	Picks      []string            `json:"picks"`
-	MiseExtra  []string            `json:"mise_extra"`
-	MCPListen  string              `json:"mcp_listen"`
-	MCPServers []string            `json:"mcp_servers"`
-	WireAgents *bool               `json:"wire_agents"`
-	Git        Git                 `json:"git"`
-	GitHub     GitHub              `json:"github"`
-	NPM        NPM                 `json:"npm"`
-	Registries []string            `json:"registries"`
-	Dotfiles   string              `json:"dotfiles,omitempty"`
-	Layers     map[string][]string `json:"layers,omitempty"`
-	Hand       []string            `json:"hand,omitempty"`
+	Version     int                 `json:"version"`
+	Picks       []string            `json:"picks"`
+	MiseExtra   []string            `json:"mise_extra"`
+	MCPListen   string              `json:"mcp_listen"`
+	MCPServers  []string            `json:"mcp_servers"`
+	WireAgents  *bool               `json:"wire_agents"`
+	Git         Git                 `json:"git"`
+	GitHub      GitHub              `json:"github"`
+	NPM         NPM                 `json:"npm"`
+	Registries  []string            `json:"registries"`
+	Dotfiles    string              `json:"dotfiles,omitempty"`
+	GitKeyHosts []string            `json:"gitkey_hosts,omitempty"`
+	Layers      map[string][]string `json:"layers,omitempty"`
+	Hand        []string            `json:"hand,omitempty"`
 }
 
 // Account is a user's home and ids.
@@ -216,7 +217,7 @@ func (s *Store) Load(name string) (*Answers, []string, error) {
 				name, strings.Join(refused, " ")))
 		}
 		a.MiseExtra, a.MCPListen, a.MCPServers, a.WireAgents = uf.MiseExtra, uf.MCPListen, uf.MCPServers, uf.WireAgents
-		a.Git, a.GitHub, a.NPM, a.Registries, a.Dotfiles = uf.Git, uf.GitHub, uf.NPM, uf.Registries, uf.Dotfiles
+		a.Git, a.GitHub, a.NPM, a.Registries, a.Dotfiles, a.GitKeyHosts = uf.Git, uf.GitHub, uf.NPM, uf.Registries, uf.Dotfiles, uf.GitKeyHosts
 	}
 	if len(a.Layers) == 0 {
 		a.Layers = nil
@@ -253,7 +254,7 @@ func (s *Store) Save(a *Answers) error {
 		return Merge(nil, system), Merge(nil, own)
 	}
 	uf := &userFile{Version: Version, MiseExtra: a.MiseExtra, MCPListen: a.MCPListen, MCPServers: a.MCPServers,
-		WireAgents: a.WireAgents, Git: a.Git, GitHub: a.GitHub, NPM: a.NPM, Registries: a.Registries, Dotfiles: a.Dotfiles}
+		WireAgents: a.WireAgents, Git: a.Git, GitHub: a.GitHub, NPM: a.NPM, Registries: a.Registries, Dotfiles: a.Dotfiles, GitKeyHosts: a.GitKeyHosts}
 	sys.Version, sys.TZ, sys.DevPorts, sys.Proxy, sys.CA = Version, a.TZ, a.DevPorts, a.Proxy, a.CA
 	sys.Picks, uf.Picks = split(a.Picks)
 	sys.Hand, uf.Hand = split(a.Hand)

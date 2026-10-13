@@ -75,6 +75,19 @@ cmd = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keygen -q -t ed25519 -N "" -C 
 as_user = true
 creates = "~/.ssh/id_ed25519"
 
+# The SSH key git uses for github.com (and other git hosts): one sent
+# from your machine with `pmox devbox gitkey <vm> <key>` (a deploy key, or
+# your account's), or one made here. ~/.ssh/config points every
+# connection to those hosts at it, so it works for any repo it may reach.
+[[item]]
+id = "gitkey"
+tab = "accounts"
+label = "SSH key for git (send yours: pmox devbox gitkey; or make one)"
+source = "~/.ssh/devbox_git_key · ~/.ssh/config Host github.com … IdentitiesOnly · GitHub host keys"
+
+[[item.step]]
+type = "go:gitkey"
+
 [[item]]
 id = "github"
 tab = "accounts"

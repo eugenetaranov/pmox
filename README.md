@@ -181,7 +181,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `mount create` / `list` / `delete` | Continuous one-way rsync of a local dir to a VM, `.git` and gitignored files included (`--gitignore` leaves those out); changes on the VM are overwritten, so commit locally; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
-| `devbox push` / `apply` / `verify` | Install devbox-setup on a VM; apply profiles across VMs (4 at a time); check them for drift | `pmox devbox apply --tag team --profile team.toml` |
+| `devbox push` / `apply` / `verify` / `gitkey` | Install devbox-setup on a VM; apply profiles across VMs (4 at a time); check them for drift; send an SSH key for git | `pmox devbox gitkey web1 ~/.ssh/deploy_key` |
 
 ### Maintenance
 
@@ -664,6 +664,17 @@ over (before any `--post-create`/`--tack` hook, so a hook can run
 downloaded for it at boot. A failed copy only warns. With `--no-wait-ssh`
 nothing is copied. `pmox devbox push web1` installs it, or refreshes it to
 your pmox version, on an existing VM; saved choices are kept.
+
+**An SSH key for git.** `pmox devbox gitkey web1 ~/.ssh/deploy_key` sends a
+private key (a deploy key, or one on your GitHub account) to the VM and
+sets it up with devbox-setup's "SSH key for git" item: it lands in
+`~/.ssh/devbox_git_key` (0600), `~/.ssh/config` makes every connection to
+github.com use it (`--host gitlab.example.com` adds other hosts; repeat
+it), and GitHub's host keys are added. It then works for any repo the key
+may reach: a deploy key's one repo, or all of yours for an account key.
+pmox keeps no copy and devbox-setup saves only the hosts; re-run to replace
+it. Picking the item in `sudo devbox-setup` without sending a key makes one
+on the VM, and the closing notes show its public key and where to add it.
 
 **Across VMs.** `pmox devbox apply [vm…] --profile team.toml` (or `--all`, or
 `--tag team` for the running pmox VMs with that Proxmox tag) pushes

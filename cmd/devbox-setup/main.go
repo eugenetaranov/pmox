@@ -76,6 +76,11 @@ type options struct {
 	profiles                               list
 	// lock is the profiles' [lock] tables, merged.
 	lock *answers.Lock
+	// only limits a --yes run to one item (gitkey), with gitKey (from
+	// stdin) and gitHosts.
+	only     string
+	gitKey   []byte
+	gitHosts []string
 }
 
 // list is a repeatable string flag.
@@ -124,10 +129,16 @@ func cli(args []string, stdout, stderr io.Writer) error {
 	}
 	st := o.store(cat)
 	if fs.NArg() > 0 {
-		if fs.Arg(0) == "export" {
+		switch fs.Arg(0) {
+		case "export":
 			return o.export(stdout, stderr, cat, st, fs.Args()[1:])
+		case "gitkey":
+			if err := o.gitKeyArgs(fs.Args()[1:], stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown argument %q", fs.Arg(0))
 		}
-		return fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
 	interactive := !o.yes && !o.verify
 	if o.user != "" && !profile.ValidUser(o.user) {
@@ -280,11 +291,20 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 		items, extra, sec = c.items, c.miseExtra, c.secrets
 		changed = true
 	} else {
+		if o.only != "" {
+			a.Pick([]string{o.only})
+			a.GitKeyHosts = answers.Merge(a.GitKeyHosts, o.gitHosts)
+			sec.GitKey = o.gitKey
+			changed = true
+		}
 		if len(a.Picks) == 0 {
 			return errors.New("no saved choices yet; run devbox-setup without --yes first")
 		}
 		if items, err = plan.Resolve(cat, a.Picks, len(a.MiseExtra) > 0); err != nil {
 			return err
+		}
+		if o.only != "" {
+			items = slices.DeleteFunc(items, func(it *catalog.Item) bool { return it.ID != o.only })
 		}
 		listDropped(stdout, cat, dropped)
 	}
@@ -392,7 +412,9 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 				fmt.Fprintf(stdout, "! %s\n", l)
 			}
 		}
-		if err := writeSummary(env, items, extra); err != nil {
+		if o.only != "" {
+			// One item: the summary of everything stays as it is.
+		} else if err := writeSummary(env, items, extra); err != nil {
 			fmt.Fprintf(stderr, "devbox-setup: %s/devbox-setup.txt: %v\n", env.Home, err)
 		}
 	}
@@ -403,6 +425,42 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 		}
 		return fmt.Errorf("failed: %s — fix and re-run devbox-setup", strings.Join(res.Failed, " "))
 	}
+	return nil
+}
+
+// gitKeyArgs reads `devbox-setup gitkey [--host h]...`: the private key
+// on stdin (as pmox devbox gitkey sends it) for the sudo user (or --user),
+// set up alone, as with --yes.
+func (o *options) gitKeyArgs(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("devbox-setup gitkey", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var hosts list
+	fs.Var(&hosts, "host", "a git host to use the key for (repeatable; default github.com)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		if !answers.ValidHost(h) {
+			return fmt.Errorf("--host %q is not a host name", h)
+		}
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("gitkey reads the private key on stdin: pmox devbox gitkey <vm> <key file> sends it")
+	}
+	key, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+	if err != nil {
+		return err
+	}
+	if !bytes.Contains(key, []byte("PRIVATE KEY-----")) {
+		return errors.New("stdin isn't an SSH private key")
+	}
+	if o.user == "" {
+		o.user = os.Getenv("SUDO_USER")
+	}
+	if o.user == "" {
+		return errors.New("no user to set the key up for: give --user")
+	}
+	o.yes, o.only, o.gitKey, o.gitHosts = true, "gitkey", key, hosts
 	return nil
 }
 

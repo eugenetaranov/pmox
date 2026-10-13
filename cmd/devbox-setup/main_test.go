@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"os/user"
 	"strings"
 	"testing"
@@ -257,5 +258,41 @@ func TestTargets(t *testing.T) {
 	o.user = "dee"
 	if got, _ := o.targets(st, []*profile.Profile{{User: "cy"}}, false, &bytes.Buffer{}); strings.Join(got, " ") != "dee" {
 		t.Errorf("--user: %v", got)
+	}
+}
+
+// devbox-setup gitkey: the key on stdin, set up alone for the sudo user.
+func TestGitKeySubcommand(t *testing.T) {
+	me, _ := user.Current()
+	t.Setenv("SUDO_USER", me.Username)
+	state := t.TempDir()
+	if err := answers.Write(state, &answers.Answers{User: me.Username, Picks: []string{"zsh", "cli"}}); err != nil {
+		t.Fatal(err)
+	}
+	keyf := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyf, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in, err := os.Open(keyf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	old := os.Stdin
+	os.Stdin = in
+	defer func() { os.Stdin = old }()
+	var out bytes.Buffer
+	if err := cli([]string{"--state", state, "--dry-run", "gitkey", "--host", "github.com", "--host", "git.acme.io"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "SSH key for git") || !strings.Contains(got, "write the key sent by pmox") || !strings.Contains(got, "github.com, git.acme.io") {
+		t.Errorf("plan:\n%s", got)
+	}
+	if strings.Contains(got, "zsh (login shell)") {
+		t.Errorf("gitkey ran more than its item:\n%s", got)
+	}
+	if err := cli([]string{"--state", state, "--dry-run", "gitkey", "--host", "bad host"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Error("want an error for a bad --host")
 	}
 }

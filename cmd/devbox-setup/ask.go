@@ -146,6 +146,11 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 			return nil, err
 		}
 	}
+	if has("gitkey") {
+		if err := k.askGitKey(); err != nil {
+			return nil, err
+		}
+	}
 	return c, k.askSecrets(c, has)
 }
 
@@ -401,6 +406,33 @@ func (k *asker) askCA() error {
 		}
 		k.a.CA = cur
 		return nil
+	}
+}
+
+// askGitKey asks which git hosts the git SSH key is for.
+func (k *asker) askGitKey() error {
+	cur := strings.Join(k.a.GitKeyHosts, " ")
+	if cur == "" {
+		cur = "github.com"
+	}
+	fmt.Fprintln(k.out, "\nSSH key for git: send yours from your machine with 'pmox devbox gitkey <vm> <key file>',\nor devbox-setup makes one here (the closing notes show where to add it).")
+	for {
+		v, err := ui.Input("Git hosts to use it for, space-separated", "", cur)
+		if err != nil {
+			return err
+		}
+		var bad []string
+		for _, h := range strings.Fields(v) {
+			if !answers.ValidHost(h) {
+				bad = append(bad, h)
+			}
+		}
+		if len(bad) == 0 && v != "" {
+			k.a.GitKeyHosts = strings.Fields(v)
+			return nil
+		}
+		fmt.Fprintf(k.out, "Not host names: %s\n", strings.Join(bad, " "))
+		cur = v
 	}
 }
 

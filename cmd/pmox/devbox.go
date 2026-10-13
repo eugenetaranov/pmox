@@ -35,6 +35,7 @@ every push.`,
 		newDevboxPushCmd(),
 		newDevboxApplyCmd(),
 		newDevboxVerifyCmd(),
+		newDevboxGitKeyCmd(),
 	)
 }
 
