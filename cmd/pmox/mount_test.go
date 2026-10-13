@@ -101,7 +101,7 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 		name         string
 		localPath    string
 		remotePath   string
-		noGitignore  bool
+		gitignore    bool
 		noDelete     bool
 		excludes     []string
 		extra        []string
@@ -116,24 +116,21 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 			excludes:   defaultMountExcludes,
 			wantContains: []string{
 				"-az", "--partial", "--delete",
-				"--filter=:- .gitignore",
-				"--exclude=.git",
 				"--exclude=node_modules",
 				"--exclude=__pycache__",
 			},
+			// .git and what .gitignore lists are synced.
+			wantAbsent: []string{"--exclude=.git", "--filter"},
 			wantSuffix: []string{"./src/", "pmox@10.0.0.1:/opt/app"},
 		},
 		{
-			name:        "no-gitignore",
-			localPath:   "./src",
-			remotePath:  "/opt/app",
-			noGitignore: true,
-			excludes:    defaultMountExcludes,
+			name:       "gitignore",
+			localPath:  "./src",
+			remotePath: "/opt/app",
+			gitignore:  true,
+			excludes:   defaultMountExcludes,
 			wantContains: []string{
-				"--delete",
-			},
-			wantAbsent: []string{
-				"--filter",
+				"--delete", "--filter=:- .gitignore",
 			},
 		},
 		{
@@ -142,11 +139,8 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 			remotePath: "/opt/app",
 			noDelete:   true,
 			excludes:   defaultMountExcludes,
-			wantContains: []string{
-				"--filter=:- .gitignore",
-			},
 			wantAbsent: []string{
-				"--delete",
+				"--delete", "--filter",
 			},
 		},
 		{
@@ -188,17 +182,17 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 			wantSuffix: []string{"./src/", "pmox@10.0.0.1:/opt/app"},
 		},
 		{
-			name:        "no-gitignore and no-delete combined",
-			localPath:   "./src",
-			remotePath:  "/opt/app",
-			noGitignore: true,
-			noDelete:    true,
-			excludes:    []string{".git"},
+			name:       "gitignore and no-delete combined",
+			localPath:  "./src",
+			remotePath: "/opt/app",
+			gitignore:  true,
+			noDelete:   true,
+			excludes:   []string{".git"},
 			wantContains: []string{
-				"-az", "--partial", "--exclude=.git",
+				"-az", "--partial", "--exclude=.git", "--filter=:- .gitignore",
 			},
 			wantAbsent: []string{
-				"--delete", "--filter",
+				"--delete",
 			},
 		},
 	}
@@ -206,7 +200,7 @@ func TestBuildMountRsyncArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			args := buildMountRsyncArgs("/usr/bin/rsync", target, tt.localPath, tt.remotePath,
-				tt.noGitignore, tt.noDelete, tt.excludes, testInsecureHostKeyOpts, tt.extra)
+				tt.gitignore, tt.noDelete, tt.excludes, testInsecureHostKeyOpts, tt.extra)
 			joined := strings.Join(args, " ")
 
 			assert.Equal(t, "/usr/bin/rsync", args[0])
@@ -298,11 +292,11 @@ func TestMountChildArgs(t *testing.T) {
 
 	t.Run("global flags precede the rsync pass-through args", func(t *testing.T) {
 		f := &mountFlags{
-			sshFlags:    sshFlags{identity: "/k", force: true},
-			debounce:    time.Second,
-			noGitignore: true,
-			noDelete:    true,
-			excludes:    []string{"*.log"},
+			sshFlags:  sshFlags{identity: "/k", force: true},
+			debounce:  time.Second,
+			gitignore: true,
+			noDelete:  true,
+			excludes:  []string{"*.log"},
 		}
 		args := mountChildArgs("/bin/pmox", f, url, "./src", "web1", "/opt/app", true, []string{"--bwlimit=1000"})
 		dash := -1
@@ -314,7 +308,7 @@ func TestMountChildArgs(t *testing.T) {
 		require.NotEqual(t, -1, dash)
 		assert.Equal(t, []string{"--bwlimit=1000"}, args[dash+1:])
 		head := strings.Join(args[:dash], " ")
-		for _, want := range []string{"--server " + url, "--identity /k", "--force", "--ssh-insecure", "--no-gitignore", "--no-delete", "--debounce 1s", "--exclude=*.log", "./src web1:/opt/app"} {
+		for _, want := range []string{"--server " + url, "--identity /k", "--force", "--ssh-insecure", "--gitignore", "--no-delete", "--debounce 1s", "--exclude=*.log", "./src web1:/opt/app"} {
 			assert.Contains(t, head, want)
 		}
 	})
@@ -491,7 +485,7 @@ func TestDebounceDefault(t *testing.T) {
 
 func TestDefaultMountExcludes(t *testing.T) {
 	expected := []string{
-		".git", ".venv", ".terraform", ".terraform.*",
+		".venv", ".terraform", ".terraform.*",
 		"node_modules", "__pycache__", ".DS_Store",
 		"*.swp", "*.swo", "*~",
 	}

@@ -26,8 +26,9 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tui/target"
 )
 
+// defaultMountExcludes leave out what is rebuilt per machine. .git is
+// synced, so git works on the VM (as a mirror: local wins).
 var defaultMountExcludes = []string{
-	".git",
 	".venv",
 	".terraform",
 	".terraform.*",
@@ -41,8 +42,12 @@ var defaultMountExcludes = []string{
 
 type mountFlags struct {
 	sshFlags
-	foreground  bool
-	debounce    time.Duration
+	foreground bool
+	debounce   time.Duration
+	// gitignore leaves out what .gitignore lists (off: those files sync
+	// too, .env and data included). noGitignore is the old opt-out, now
+	// the default.
+	gitignore   bool
 	noGitignore bool
 	noDelete    bool
 	excludes    []string
@@ -95,19 +100,27 @@ and streams sync activity to a log file. Pass --foreground / -F to
 run attached to the terminal instead; stop background mounts with
 pmox umount.
 
-Default rsync flags: -az --partial --delete --filter=':- .gitignore'
-plus built-in excludes (.git, node_modules, .venv, etc.).
+Default rsync flags: -az --partial --delete plus built-in excludes
+(node_modules, .venv, etc.). Files .gitignore lists (.env, data, build
+output) sync too; --gitignore leaves them out.
+
+The sync is one way, from this machine to the VM.
 
 Built-in default excludes (replaced by --exclude or config mount_excludes):
-  .git  .venv  .terraform  .terraform.*  node_modules
+  .venv  .terraform  .terraform.*  node_modules
   __pycache__  .DS_Store  *.swp  *.swo  *~
+
+.git is synced, so git status, log and diff work on the VM. The VM copy
+is a mirror of yours: commit and switch branches locally, since the next
+sync overwrites what changed on the VM (--delete included). To leave
+.git out, pass --exclude=.git (with the other excludes you want).
 
 Examples:
   pmox mount ./src /opt/app
   pmox mount ./src web1:/opt/app
   pmox mount -F ./src web1:/opt/app
-  pmox mount --no-delete --no-gitignore ./src web1:/opt/app
-  pmox mount --exclude=.git --exclude='*.log' ./src web1:/opt/app
+  pmox mount --no-delete --gitignore ./src web1:/opt/app
+  pmox mount --exclude=.git --exclude=node_modules ./src web1:/opt/app
   pmox mount ./src web1:/opt/app -- --bwlimit=1000
 
 On a terminal, 'pmox mount' alone asks for the local directory and the
@@ -127,7 +140,9 @@ asking.`,
 	addSSHFlags(cmd, &f.sshFlags)
 	cmd.Flags().BoolVarP(&f.foreground, "foreground", "F", false, "run attached to the terminal instead of in the background")
 	cmd.Flags().DurationVar(&f.debounce, "debounce", 300*time.Millisecond, "debounce duration for filesystem events")
-	cmd.Flags().BoolVar(&f.noGitignore, "no-gitignore", false, "disable .gitignore filtering")
+	cmd.Flags().BoolVar(&f.gitignore, "gitignore", false, "leave out what .gitignore lists")
+	cmd.Flags().BoolVar(&f.noGitignore, "no-gitignore", false, "sync what .gitignore lists (the default now)")
+	_ = cmd.Flags().MarkHidden("no-gitignore")
 	cmd.Flags().BoolVar(&f.noDelete, "no-delete", false, "disable --delete from rsync")
 	cmd.Flags().StringArrayVarP(&f.excludes, "exclude", "x", nil, "rsync exclude pattern (replaces defaults; repeatable)")
 	cmd.Flags().BoolVar(&f.mkdir, "mkdir", false, "create the remote directory if it doesn't exist, without asking")
@@ -337,7 +352,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 
 	excludes := resolveExcludes(f.excludes)
-	rsyncArgs := buildMountRsyncArgs(rsyncPath, sshT, localPath, remotePath, f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash(cmd))
+	rsyncArgs := buildMountRsyncArgs(rsyncPath, sshT, localPath, remotePath, f.gitignore && !f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extraArgsAfterDash(cmd))
 
 	stderr := cmd.ErrOrStderr()
 
@@ -398,7 +413,7 @@ func resolveExcludes(flagExcludes []string) []string {
 // mountConfigLoadFn loads config for mount_excludes. Tests override this.
 var mountConfigLoadFn = config.Load
 
-func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, noGitignore, noDelete bool, excludes, hostKeyOpts, extra []string) []string {
+func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remotePath string, gitignore, noDelete bool, excludes, hostKeyOpts, extra []string) []string {
 	args := []string{rsyncPath}
 	args = append(args, "-e", rsyncSSHOption(target, hostKeyOpts))
 	args = append(args, "-az", "--partial")
@@ -406,7 +421,7 @@ func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remoteP
 	if !noDelete {
 		args = append(args, "--delete")
 	}
-	if !noGitignore {
+	if gitignore {
 		args = append(args, "--filter=:- .gitignore")
 	}
 
@@ -555,8 +570,8 @@ func mountChildArgs(exe string, f *mountFlags, serverURL, localPath, vmName, rem
 		// same verification behavior the operator chose for the parent.
 		args = append(args, "--ssh-insecure")
 	}
-	if f.noGitignore {
-		args = append(args, "--no-gitignore")
+	if f.gitignore && !f.noGitignore {
+		args = append(args, "--gitignore")
 	}
 	if f.noDelete {
 		args = append(args, "--no-delete")

@@ -177,7 +177,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `template create` / `list` | Build an Ubuntu cloud-image template (9000–9099) / list templates | `pmox template create` |
 | `context list` / `add` / `use` / `current` / `rename` / `delete` | Add and switch between Proxmox servers | `pmox context add` |
 | `config edit` / `path` / `cloud-init` | Edit a context; config file path; show or `--regenerate` the cloud-init template | `pmox config edit prod` |
-| `mount create` / `list` / `delete` | Continuous rsync of a local dir to a VM; list or stop background mounts | `pmox mount list` |
+| `mount create` / `list` / `delete` | Continuous one-way rsync of a local dir to a VM, `.git` and gitignored files included (`--gitignore` leaves those out); changes on the VM are overwritten, so commit locally; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
 | `devbox push` / `apply` / `verify` | Install devbox-setup on a VM; apply profiles across VMs (4 at a time); check them for drift | `pmox devbox apply --tag team --profile team.toml` |
@@ -855,8 +855,8 @@ servers:
       auth: key
       key_path: /home/you/.ssh/id_ed25519
 mount_excludes:
-  - .git
   - node_modules
+  - "*.log"
 ```
 
 API token secrets, node SSH passwords, and key passphrases are

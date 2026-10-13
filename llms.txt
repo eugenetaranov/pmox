@@ -75,7 +75,7 @@ Resolution order: `--server` → `--context` → `PMOX_SERVER` → `PMOX_CONTEXT
 `--user` / `-u`, `--identity` / `-i`, `--force`, `--command` (print an `ssh` command instead of a config block), `--output json`.
 
 `pmox mount`:
-`--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable), `--no-delete`, `--mkdir`, plus `-- <rsync-extras>`.
+`--foreground` / `-F`, `--debounce <duration>`, `--exclude <pattern>` (repeatable; replaces the built-in excludes .venv .terraform .terraform.* node_modules __pycache__ .DS_Store *.swp *.swo *~), `--no-delete`, `--mkdir`, `--gitignore` (leave out what .gitignore lists; by default those files sync too), plus `-- <rsync-extras>`. `.git` is synced (git works on the VM). The sync is one way, local to VM, with --delete: commit locally; changes made on the VM are overwritten.
 
 `pmox doctor`:
 `--strict` (warnings become failures), `--timeout <duration>` (overall budget, default 20s), `--output json` (versioned per-check report, never offers a fix), `--verbose` (list passing checks too), `-y`/`--yes` (apply an offered fix without asking; env `PMOX_ASSUME_YES`), `--no-fix` (report only, never offer a fix), `--fix` (deprecated no-op, kept for compatibility — fixes are offered by default now).
@@ -124,8 +124,8 @@ servers:
       key_path: /home/you/.ssh/id_ed25519
 current_context: prod   # set by 'pmox context use'; targeted when --server/--context/env unset
 mount_excludes:
-  - .git
   - node_modules
+  - "*.log"
 ```
 
 Secrets (API token secret, node SSH password, key passphrase) live
