@@ -776,13 +776,23 @@ func (s *accessStage) newForm() tea.Cmd {
 			huh.NewInput().Title("Default user").
 				Description("created by cloud-init on every VM; also the default SSH login").
 				Value(&s.user).Validate(validateNonEmpty),
-			huh.NewInput().Title("Proxmox node SSH username").Value(&s.sshUser).Validate(validateNonEmpty),
+			huh.NewInput().Title("Proxmox node SSH username").
+				Description("an account on the Proxmox host itself (usually root), not on the VMs").
+				Value(&s.sshUser).Validate(validateNonEmpty),
 			huh.NewSelect[string]().Title("Authenticate with").
 				Options(huh.NewOption("Password", "password"), huh.NewOption("SSH key file", "key")).
 				Value(&s.auth),
 		),
 		huh.NewGroup(
-			huh.NewInput().Title("Password").EchoMode(huh.EchoModePassword).Value(&s.password).Validate(validateNonEmpty),
+			huh.NewInput().TitleFunc(func() string {
+				u := strings.TrimSpace(s.sshUser)
+				if u == "" {
+					u = "the SSH user"
+				}
+				return "Password for " + u + " on the Proxmox node"
+			}, &s.sshUser).
+				Description("the SSH login to the Proxmox host (uploads cloud-init snippets), not the VMs' user; kept in your keychain").
+				EchoMode(huh.EchoModePassword).Value(&s.password).Validate(validateNonEmpty),
 		).WithHideFunc(func() bool { return s.auth != "password" }),
 		huh.NewGroup(
 			huh.NewInput().Title("Path to SSH private key").Value(&s.keyFile).Validate(validateNonEmpty),

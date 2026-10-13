@@ -95,7 +95,7 @@ func promptNodeSSH(ctx context.Context, p prompter, canonicalURL string) (*confi
 		)
 		switch authAns {
 		case "p", "password":
-			pw, err := p.PromptSecret("Password: ")
+			pw, err := p.PromptSecret(fmt.Sprintf("SSH password for %s on the Proxmox node %s (not the VMs' user; kept in your keychain): ", userAns, host))
 			if err != nil {
 				return nil, "", "", err
 			}

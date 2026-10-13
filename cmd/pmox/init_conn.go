@@ -170,7 +170,7 @@ func generateToken(ctx context.Context, p prompter, baseURL string, insecure boo
 	if err != nil {
 		return "", "", err
 	}
-	password, err := p.PromptSecret(fmt.Sprintf("Password for %s: ", user))
+	password, err := p.PromptSecret(fmt.Sprintf("Proxmox password for %s (used once to create the API token; not saved): ", user))
 	if err != nil {
 		return "", "", err
 	}

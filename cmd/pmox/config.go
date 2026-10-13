@@ -216,8 +216,29 @@ func newRenameContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "rename-context <old-name> <new-name>",
 		Short: "Give a context a new name",
-		Args:  exactArgs(2, "pmox context rename <old-name> <new-name>", "pmox context rename 192.168.0.185 prod"),
-		RunE:  func(cmd *cobra.Command, args []string) error { return runRenameContext(cmd, args[0], args[1]) },
+		Args:  zeroOrExactArgs(2, "pmox context rename <old-name> <new-name>", "pmox context rename 192.168.0.185 prod"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				// From the command palette: ask on a terminal.
+				if !tui.Interactive() {
+					return fmt.Errorf("%w: usage: pmox context rename <old-name> <new-name>", exitcode.ErrUserInput)
+				}
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				old, err := pickContext(cfg)
+				if err != nil {
+					return err
+				}
+				name, err := askTextFn("New name for " + old)
+				if err != nil {
+					return err
+				}
+				args = []string{old, name}
+			}
+			return runRenameContext(cmd, args[0], args[1])
+		},
 	}
 }
 
@@ -255,12 +276,20 @@ func newDeleteContextCmd() *cobra.Command {
 		Use:     "delete-context <name>",
 		Aliases: []string{"remove", "rm"},
 		Short:   "Forget a server and its secrets",
-		Args:    exactArgs(1, "pmox context delete <name>", "pmox context delete lab"),
+		Args:    zeroOrExactArgs(1, "pmox context delete <name>", "pmox context delete lab"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cfg, err := config.Load()
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 {
+				// From the command palette: pick and confirm on a terminal.
+				name, err := pickContextToDelete(cfg)
+				if err != nil {
+					return err
+				}
+				args = []string{name}
 			}
 			c, ok := cfg.ContextByName(args[0])
 			if !ok {
@@ -325,6 +354,34 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 // non-obtrusive rules: an explicit name (handled by the caller) always
 // wins; with no name and no interactivity available, it errors with the
 // list of contexts rather than prompting.
+// pickContextToDelete asks which context to forget (always, even with
+// one) and confirms.
+func pickContextToDelete(cfg *config.Config) (string, error) {
+	if !tui.Interactive() {
+		return "", fmt.Errorf("%w: usage: pmox context delete <name>", exitcode.ErrUserInput)
+	}
+	contexts := cfg.Contexts()
+	if len(contexts) == 0 {
+		return "", fmt.Errorf("%w: no contexts configured", exitcode.ErrNotFound)
+	}
+	opts := make([]huh.Option[string], 0, len(contexts))
+	for _, c := range contexts {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%s (%s)", c.Name, c.URL), c.Name))
+	}
+	name, err := tui.Select("Forget which context?", opts)
+	if err != nil {
+		return "", err
+	}
+	ok, err := tui.Confirm(fmt.Sprintf("Forget %s and its secrets (token, node SSH password)?", name), false)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: not deleted", tui.ErrAborted)
+	}
+	return name, nil
+}
+
 func pickContext(cfg *config.Config) (string, error) {
 	contexts := cfg.Contexts()
 	switch len(contexts) {

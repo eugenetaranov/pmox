@@ -4,7 +4,7 @@ Default template: 9000  ubuntu-2404-pmox-9000
 Default storage: local-lvm (lvmthin)
 Snippet storage: local
 Default bridge: vmbr0
-Default SSH public key path: Default user [ubuntu]: Proxmox node SSH username [root]: Authenticate with (p)assword or (k)ey file? [p]: Password: Verifying SSH connectivity to 127.0.0.1:22... ok
+Default SSH public key path: Default user [ubuntu]: Proxmox node SSH username [root]: Authenticate with (p)assword or (k)ey file? [p]: SSH password for root on the Proxmox node 127.0.0.1:22 (not the VMs' user; kept in your keychain): Verifying SSH connectivity to 127.0.0.1:22... ok
 configured server https://HOST:PORT/api2/json
 config saved to CFG/pmox/config.yaml
 wrote cloud-init template to CFG/pmox/cloud-init/HOST-PORT.yaml — edit it to customize packages, users, runcmd

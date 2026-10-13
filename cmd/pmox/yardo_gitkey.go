@@ -9,7 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // gitHost is a host name with an optional :port (yardo checks it again).
@@ -32,8 +34,19 @@ The key goes over SSH to 'sudo yardo gitkey' on stdin; pmox keeps no copy, and
 yardo saves only which hosts it is for. Re-run to replace it.`,
 		Example: `  pmox yardo gitkey text2cad ~/.ssh/text2cad_deploy
   pmox yardo gitkey web1 ~/.ssh/id_ed25519 --host github.com --host gitlab.example.com`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				// From the command palette: ask on a terminal.
+				if !tui.Interactive() {
+					return fmt.Errorf("%w: usage: %s", exitcode.ErrUserInput, cmd.UseLine())
+				}
+				key, err := askTextFn("Private key file to send (e.g. ~/.ssh/deploy_key)")
+				if err != nil {
+					return err
+				}
+				args = []string{strings.TrimSpace(key)}
+			}
 			return runYardoGitKey(cmd, args, f, hosts)
 		},
 	}

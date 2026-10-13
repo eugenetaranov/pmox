@@ -223,3 +223,20 @@ func TestEveryNounIsConsistentWhenBare(t *testing.T) {
 		})
 	}
 }
+
+// The command palette runs a verb with no arguments, so every runnable
+// command must accept none (and ask, or show its usage, itself).
+func TestEveryVerbAcceptsNoArgs(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		if c.Runnable() && !c.Hidden && c.Args != nil {
+			if err := c.Args(c, nil); err != nil {
+				t.Errorf("%s: %v", c.CommandPath(), err)
+			}
+		}
+	}
+	walk(rootCmd)
+}

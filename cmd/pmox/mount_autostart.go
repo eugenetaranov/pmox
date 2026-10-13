@@ -8,9 +8,11 @@ import (
 	"runtime"
 	"strconv"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 // The login job that brings mounts back: `pmox remount --stale` at login
@@ -43,9 +45,23 @@ minutes: a mount whose process ended (a reboot, a logout, the VM or
 Proxmox unreachable for a while) is started again with its options.
 Mounts stopped with 'pmox umount' stay stopped. 'off' removes the job.`,
 		Example:   "  pmox mount autostart on",
-		Args:      cobra.ExactArgs(1),
+		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"on", "off"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				// From the command palette: ask on a terminal.
+				if !tui.Interactive() {
+					return fmt.Errorf("%w: usage: pmox mount autostart on|off", exitcode.ErrUserInput)
+				}
+				v, err := tui.Select("Bring background mounts back at login?", []huh.Option[string]{
+					huh.NewOption("on: restart stopped mounts at login and every 5 minutes", "on"),
+					huh.NewOption("off: remove the login job", "off"),
+				})
+				if err != nil {
+					return err
+				}
+				args = []string{v}
+			}
 			switch args[0] {
 			case "on":
 				return autostartOn(cmd)

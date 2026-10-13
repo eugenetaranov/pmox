@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
@@ -40,12 +42,42 @@ type resizeFlags struct {
 	noRestart bool
 }
 
-// resizeArgs splits [vm] <value>: the VM is optional (the only pmox VM,
-// or a picker).
-func resizeArgs(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, args []string) (vmArg, value string, err error) {
-	value = args[len(args)-1]
-	vmArg, err = resolveTargetArg(ctx, client, args[:len(args)-1], cmd.ErrOrStderr())
-	return vmArg, value, err
+// resizeArgs splits [vm] [value]: the VM is optional (the only pmox VM,
+// or a picker), and on a terminal a missing value is asked for (the
+// command palette runs the verb with no arguments).
+func resizeArgs(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, args []string, ask string) (vmArg, value string, err error) {
+	var vmArgs []string
+	switch len(args) {
+	case 1:
+		value = args[0]
+	case 2:
+		vmArgs, value = args[:1], args[1]
+	}
+	if value == "" && !tui.Interactive() {
+		return "", "", fmt.Errorf("%w: usage: %s", exitcode.ErrUserInput, cmd.UseLine())
+	}
+	if vmArg, err = resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr()); err != nil {
+		return "", "", err
+	}
+	if value == "" {
+		if value, err = askTextFn(fmt.Sprintf("%s for %s", ask, vmArg)); err != nil {
+			return "", "", err
+		}
+	}
+	return vmArg, strings.TrimSpace(value), nil
+}
+
+// askTextFn asks for one line of text on the terminal. A seam for tests.
+var askTextFn = func(title string) (string, error) {
+	var v string
+	err := huh.NewInput().Title(title).Value(&v).
+		Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("required")
+			}
+			return nil
+		}).WithTheme(tui.Theme()).Run()
+	return v, err
 }
 
 func addRestartFlags(cmd *cobra.Command, f *resizeFlags) {
@@ -62,7 +94,7 @@ func newResizeRAMCmd() *cobra.Command {
 		Short:   "Set a VM's memory (GiB, e.g. 8 or 1.5)",
 		Example: `  pmox vm resize ram web1 8
   pmox vm resize ram web1 16 --restart`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResizeSetting(cmd, args, f, "memory")
 		},
@@ -78,7 +110,7 @@ func newResizeCPUCmd() *cobra.Command {
 		Aliases: []string{"cores"},
 		Short:   "Set a VM's CPU cores",
 		Example: `  pmox vm resize cpu web1 4`,
-		Args:    cobra.RangeArgs(1, 2),
+		Args:    cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResizeSetting(cmd, args, f, "cores")
 		},
@@ -120,7 +152,8 @@ func runResizeSetting(cmd *cobra.Command, args []string, f *resizeFlags, key str
 	if err != nil {
 		return err
 	}
-	vmArg, value, err := resizeArgs(ctx, cmd, client, args)
+	ask := map[string]string{"memory": "Memory in GiB (e.g. 8)", "cores": "CPU cores"}[key]
+	vmArg, value, err := resizeArgs(ctx, cmd, client, args, ask)
 	if err != nil {
 		return err
 	}
@@ -200,7 +233,7 @@ On a running VM pmox then grows the partition and the filesystem over SSH
 (no restart); a stopped VM's grow at its next boot (cloud-init).`,
 		Example: `  pmox vm resize disk web1 +20
   pmox vm resize disk web1 60`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResizeDisk(cmd, args, f)
 		},
@@ -247,7 +280,7 @@ func runResizeDisk(cmd *cobra.Command, args []string, f *resizeFlags) error {
 	if err != nil {
 		return err
 	}
-	vmArg, value, err := resizeArgs(ctx, cmd, client, args)
+	vmArg, value, err := resizeArgs(ctx, cmd, client, args, "Disk: +GiB to grow by, or GiB to grow to")
 	if err != nil {
 		return err
 	}
@@ -321,4 +354,3 @@ func executeResizeDisk(ctx context.Context, cmd *cobra.Command, client *pveclien
 var resizeRemoteFn = func(ctx context.Context, target *sshTarget, command string, timeout time.Duration) (string, error) {
 	return yardoRemoteFn(ctx, target, command, timeout)
 }
-

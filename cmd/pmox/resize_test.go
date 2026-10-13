@@ -11,6 +11,8 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/server"
+	"github.com/eugenetaranov/pmox/internal/tui"
+	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
 func newResizeFake(t *testing.T, status, cfg string) *pvetest.Server {
@@ -128,5 +130,42 @@ func TestResizeTree(t *testing.T) {
 	// Only under vm: the root stays uncluttered.
 	if c, _, _ := rootCmd.Find([]string{"resize"}); c != nil && c.Name() == "resize" {
 		t.Error("resize is registered at the root")
+	}
+}
+
+// From the command palette a verb runs with no arguments: on a terminal
+// the VM is picked and the value asked for; without one it's an error
+// showing the usage.
+func TestResizeArgsAsk(t *testing.T) {
+	f := newResizeFake(t, "stopped", `{"memory":"4096"}`)
+	cmd := newResizeRAMCmd()
+	cmd.SetContext(context.Background())
+
+	if _, _, err := resizeArgs(cmd.Context(), cmd, f.Client(), nil, "Memory"); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("no terminal: err = %v", err)
+	}
+
+	in, errT := tui.StdinIsTerminal, tui.StderrIsTerminal
+	tui.StdinIsTerminal = func() bool { return true }
+	tui.StderrIsTerminal = func() bool { return true }
+	t.Cleanup(func() { tui.StdinIsTerminal, tui.StderrIsTerminal = in, errT })
+	oldPick := vmPickFn
+	vmPickFn = func(context.Context, *pveclient.Client) (*vm.Ref, error) {
+		return &vm.Ref{VMID: 104, Name: "web1"}, nil
+	}
+	t.Cleanup(func() { vmPickFn = oldPick })
+	var asked string
+	oldAsk := askTextFn
+	askTextFn = func(title string) (string, error) { asked = title; return " 8 ", nil }
+	t.Cleanup(func() { askTextFn = oldAsk })
+
+	vmArg, value, err := resizeArgs(cmd.Context(), cmd, f.Client(), nil, "Memory in GiB")
+	if err != nil || vmArg != "104" || value != "8" || asked != "Memory in GiB for 104" {
+		t.Errorf("got %q %q %v (asked %q)", vmArg, value, err, asked)
+	}
+	// A value given: no question.
+	asked = ""
+	if _, value, _ := resizeArgs(cmd.Context(), cmd, f.Client(), []string{"web1", "16"}, "Memory"); value != "16" || asked != "" {
+		t.Errorf("given: %q, asked %q", value, asked)
 	}
 }

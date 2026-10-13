@@ -195,7 +195,14 @@ func connectionForm(in *connInputs) *huh.Form {
 		),
 		huh.NewGroup(
 			huh.NewInput().Title("PVE login (user@realm)").Value(&in.loginUser).Validate(validateLoginUser),
-			huh.NewInput().Title("Password").EchoMode(huh.EchoModePassword).Value(&in.password).Validate(validateNonEmpty),
+			huh.NewInput().TitleFunc(func() string {
+				if in.loginUser == "" {
+					return "Password for that Proxmox login"
+				}
+				return "Proxmox password for " + in.loginUser
+			}, &in.loginUser).
+				Description("used once to create the API token; not saved").
+				EchoMode(huh.EchoModePassword).Value(&in.password).Validate(validateNonEmpty),
 			huh.NewInput().Title("New API token name").Value(&in.tokenName).Validate(validateTokenName),
 		).WithHideFunc(func() bool { return in.tokenSource != "generate" }),
 		huh.NewGroup(
