@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -121,6 +122,12 @@ func TestUFWRules(t *testing.T) {
 	added = "ufw limit OpenSSH\n"
 	if check(t, e, st) {
 		t.Error("Check = true without the mosh rule")
+	}
+	// Another user's gateway on every interface is opened too.
+	put(t, e.Path("/etc/mcpjungle/bob.env"), "MCP_HOST=0.0.0.0\nMCP_PORT=8081\nMCP_DIR=/home/bob/.mcp\n")
+	put(t, e.Path("/etc/mcpjungle/cy.env"), "MCP_HOST=127.0.0.1\nMCP_PORT=8082\n")
+	if r := strings.Join(ufwStep{}.rules(context.Background(), e), "; "); r != "limit OpenSSH; allow 60000:61000/udp; allow 8081/tcp" {
+		t.Errorf("rules = %s", r)
 	}
 }
 

@@ -129,13 +129,24 @@ func TestMCPUnit(t *testing.T) {
 		return nil, nil
 	}}
 	e := mcpEnv(t, x)
-	e.Answers.MCPListen = "0.0.0.0"
+	e.Answers.MCPListen, e.Answers.MCPPort = "0.0.0.0", 8081
+	// Phase 1's single gateway ran as ada: the instance replaces it.
+	put(t, e.Path(oldMCPUnit), "[Service]\nUser=ada\n")
 	st := step(t, catalog.Step{Type: "go:mcpjungle_unit"})
+	if check(t, e, st) {
+		t.Fatal("Check = true before the unit is written")
+	}
 	apply(t, e, st)
-	if got := read(t, e.Path(mcpUnit)); !strings.Contains(got, "User=ada\n") || !strings.Contains(got, "--host=0.0.0.0 --port 8080 --sqlite-db-path /home/ada/.mcp/mcpjungle.db") {
+	if got := read(t, e.Path(mcpUnit)); !strings.Contains(got, "User=%i\n") || !strings.Contains(got, "EnvironmentFile=/etc/mcpjungle/%i.env") {
 		t.Errorf("unit:\n%s", got)
 	}
-	if got := strings.Join(x.commands(), "; "); got != "systemctl daemon-reload; systemctl enable mcpjungle; systemctl restart mcpjungle" {
+	if got := read(t, e.Path("/etc/mcpjungle/ada.env")); got != "MCP_HOST=0.0.0.0\nMCP_PORT=8081\nMCP_DIR=/home/ada/.mcp\n" {
+		t.Errorf("env = %q", got)
+	}
+	if _, err := os.Stat(e.Path(oldMCPUnit)); err == nil {
+		t.Error("the old mcpjungle.service is still there")
+	}
+	if got := strings.Join(x.commands(), "; "); got != "systemctl disable --now mcpjungle; systemctl daemon-reload; systemctl enable mcpjungle@ada; systemctl restart mcpjungle@ada" {
 		t.Errorf("ran %s", got)
 	}
 	active = true
@@ -146,8 +157,14 @@ func TestMCPUnit(t *testing.T) {
 	active = false
 	x.ran = nil
 	apply(t, e, st)
-	if got := strings.Join(x.commands(), "; "); got != "systemctl enable --now mcpjungle" {
+	if got := strings.Join(x.commands(), "; "); got != "systemctl enable --now mcpjungle@ada" {
 		t.Errorf("ran %s", got)
+	}
+	// Another user's old gateway is left alone.
+	put(t, e.Path(oldMCPUnit), "[Service]\nUser=bob\n")
+	active = true
+	if !check(t, e, st) {
+		t.Error("bob's old gateway made ada's step undone")
 	}
 }
 
@@ -157,9 +174,9 @@ func TestMCPWaitNotes(t *testing.T) {
 	e.Note = func(s string) { notes = append(notes, s) }
 	oldUp, oldTries := mcpUp, mcpWaitTries
 	defer func() { mcpUp, mcpWaitTries = oldUp, oldTries }()
-	mcpUp, mcpWaitTries = func(context.Context) bool { return false }, 1
+	mcpUp, mcpWaitTries = func(context.Context, string) bool { return false }, 1
 	apply(t, e, step(t, catalog.Step{Type: "go:mcp_wait"}))
-	if len(notes) != 1 || !strings.Contains(notes[0], "journalctl -u mcpjungle") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "journalctl -u mcpjungle@ada") {
 		t.Errorf("notes = %q", notes)
 	}
 }
@@ -183,6 +200,15 @@ func TestMCPWireCodex(t *testing.T) {
 	}
 	if !check(t, e, st) {
 		t.Error("Check after wiring = false")
+	}
+	// The user's port moved: the url is rewritten in place.
+	e.Answers.MCPPort = 8082
+	if check(t, e, st) {
+		t.Error("Check = true with the old port")
+	}
+	apply(t, e, st)
+	if got := read(t, e.Path("~/.codex/config.toml")); got != "model = \"o4\"\n\n[mcp_servers.mcpjungle]\nurl = \"http://localhost:8082/mcp\"\n" {
+		t.Errorf("config.toml after the move = %q", got)
 	}
 	no := false
 	e.Answers.WireAgents = &no

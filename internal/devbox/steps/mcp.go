@@ -9,21 +9,26 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 	"github.com/eugenetaranov/pmox/internal/devbox/mcp"
 )
 
-// MCPJungle: the gateway's port, and where its server catalog and
-// mcp-sync go (the same places as tack-roles' ai-tools role).
+// MCPJungle runs per user, as mcpjungle@<user> on the user's port (from
+// system.json). Its server catalog and mcp-sync are shared (the same
+// places as tack-roles' ai-tools role).
 const (
-	MCPJunglePort = 8080
-	mcpCatalog    = "/usr/local/share/mcp-catalog"
-	mcpSync       = "/usr/local/bin/mcp-sync"
-	mcpUnit       = "/etc/systemd/system/mcpjungle.service"
+	mcpCatalog = "/usr/local/share/mcp-catalog"
+	mcpSync    = "/usr/local/bin/mcp-sync"
+	mcpUnit    = "/etc/systemd/system/mcpjungle@.service"
+	mcpEnvDir  = "/etc/mcpjungle"
+	// oldMCPUnit is Phase 1's single gateway, replaced by its user's instance.
+	oldMCPUnit = "/etc/systemd/system/mcpjungle.service"
 )
 
 func init() {
@@ -35,7 +40,18 @@ func init() {
 	RegisterGo("mcp_sync", func(catalog.Step) Step { return mcpSyncStep{} })
 }
 
-func mcpURL() string { return fmt.Sprintf("http://127.0.0.1:%d", MCPJunglePort) }
+// MCPPort is the user's gateway port.
+func MCPPort(e *Env) int {
+	if e.Answers != nil && e.Answers.MCPPort > 0 {
+		return e.Answers.MCPPort
+	}
+	return answers.FirstMCPPort
+}
+
+func mcpURL(e *Env) string { return fmt.Sprintf("http://127.0.0.1:%d", MCPPort(e)) }
+
+// mcpInstance is the user's gateway unit.
+func mcpInstance(e *Env) string { return "mcpjungle@" + e.User }
 
 // --- go:mcp_files: the server catalog and mcp-sync -------------------------
 
@@ -115,8 +131,8 @@ func (m mcpFilesStep) Apply(_ context.Context, e *Env) error {
 
 type mcpUnitStep struct{}
 
-func (mcpUnitStep) Plan(*Env) []Action {
-	return []Action{{"unit", "enable-now mcpjungle (" + mcpUnit + ")"}}
+func (mcpUnitStep) Plan(e *Env) []Action {
+	return []Action{{"unit", fmt.Sprintf("enable-now %s on port %d (%s)", mcpInstance(e), MCPPort(e), mcpUnit)}}
 }
 
 func listen(e *Env) string {
@@ -126,64 +142,99 @@ func listen(e *Env) string {
 	return "127.0.0.1"
 }
 
-// unit is the same unit as tack-roles' ai-tools role.
-func (mcpUnitStep) unit(e *Env) []byte {
-	dir := filepath.Join(e.Home, ".mcp")
-	return []byte(fmt.Sprintf(`[Unit]
-Description=MCPJungle MCP gateway
+// mcpTemplate is the gateway's template unit: one instance per user, each
+// with its host, port and data directory in /etc/mcpjungle/<user>.env.
+const mcpTemplate = `[Unit]
+Description=MCPJungle MCP gateway for %i
 After=network.target docker.service
 Wants=docker.service
 
 [Service]
 Type=simple
-User=%s
+User=%i
 SupplementaryGroups=docker
-WorkingDirectory=%s
+WorkingDirectory=~
+EnvironmentFile=/etc/mcpjungle/%i.env
 # Docker-based servers can take a while to start the first time.
 Environment=MCP_SERVER_INIT_REQ_TIMEOUT_SEC=120
-# --host is 127.0.0.1 (this machine) or 0.0.0.0 (all interfaces).
-ExecStart=/usr/local/bin/mcpjungle start --host=%s --port %d --sqlite-db-path %s/mcpjungle.db
+# MCP_HOST is 127.0.0.1 (this machine) or 0.0.0.0 (all interfaces).
+ExecStart=/usr/local/bin/mcpjungle start --host=${MCP_HOST} --port ${MCP_PORT} --sqlite-db-path ${MCP_DIR}/mcpjungle.db
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, e.User, dir, listen(e), MCPJunglePort, dir))
+`
+
+func (mcpUnitStep) envFile(e *Env) wantFile {
+	return wantFile{filepath.Join(mcpEnvDir, e.User+".env"),
+		[]byte(fmt.Sprintf("MCP_HOST=%s\nMCP_PORT=%d\nMCP_DIR=%s\n", listen(e), MCPPort(e), filepath.Join(e.Home, ".mcp"))), 0o644}
+}
+
+// oldUnit reports whether Phase 1's single gateway runs as this user.
+func oldUnit(e *Env) bool {
+	b, err := os.ReadFile(e.Path(oldMCPUnit))
+	return err == nil && hasLine(b, "User="+e.User)
 }
 
 func (u mcpUnitStep) Check(ctx context.Context, e *Env) (bool, error) {
-	if !same(e.Path(mcpUnit), wantFile{b: u.unit(e), mode: 0o644}) {
+	env := u.envFile(e)
+	if !same(e.Path(mcpUnit), wantFile{b: []byte(mcpTemplate), mode: 0o644}) || !same(e.Path(env.to), env) || oldUnit(e) {
 		return false, nil
 	}
-	return systemctlStep{catalog.Step{Unit: "mcpjungle"}}.Check(ctx, e)
+	return systemctlStep{catalog.Step{Unit: mcpInstance(e)}}.Check(ctx, e)
 }
 
 func (u mcpUnitStep) Apply(ctx context.Context, e *Env) error {
-	w := wantFile{b: u.unit(e), mode: 0o644}
-	if p := e.Path(mcpUnit); !same(p, w) {
-		if err := writeFile(p, w.b, w.mode); err != nil {
+	var cmds [][]string
+	if oldUnit(e) {
+		// Phase 1's gateway: same user, same database; the instance replaces it.
+		if _, err := e.run(ctx, Cmd{Name: "systemctl", Args: []string{"disable", "--now", "mcpjungle"}}); err != nil {
 			return err
 		}
-		for _, args := range [][]string{{"daemon-reload"}, {"enable", "mcpjungle"}, {"restart", "mcpjungle"}} {
-			if _, err := e.run(ctx, Cmd{Name: "systemctl", Args: args}); err != nil {
+		if err := os.Remove(e.Path(oldMCPUnit)); err != nil {
+			return err
+		}
+		cmds = append(cmds, []string{"daemon-reload"})
+	}
+	changed := false
+	for _, w := range []wantFile{{mcpUnit, []byte(mcpTemplate), 0o644}, u.envFile(e)} {
+		if p := e.Path(w.to); !same(p, w) {
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				return err
 			}
+			if err := writeFile(p, w.b, w.mode); err != nil {
+				return err
+			}
+			changed = true
 		}
-		return nil
 	}
-	_, err := e.run(ctx, Cmd{Name: "systemctl", Args: []string{"enable", "--now", "mcpjungle"}})
-	return err
+	inst := mcpInstance(e)
+	if changed {
+		if len(cmds) == 0 {
+			cmds = append(cmds, []string{"daemon-reload"})
+		}
+		cmds = append(cmds, []string{"enable", inst}, []string{"restart", inst})
+	} else {
+		cmds = append(cmds, []string{"enable", "--now", inst})
+	}
+	for _, args := range cmds {
+		if _, err := e.run(ctx, Cmd{Name: "systemctl", Args: args}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- go:mcp_wait: the gateway answers ----------------------------------------
 
 type mcpWaitStep struct{}
 
-// mcpUp reports whether the gateway answers (tests replace it).
-var mcpUp = func(ctx context.Context) bool {
+// mcpUp reports whether the gateway at url answers (tests replace it).
+var mcpUp = func(ctx context.Context, url string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mcpURL()+"/", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"/", nil)
 	if err != nil {
 		return false
 	}
@@ -198,13 +249,15 @@ var mcpUp = func(ctx context.Context) bool {
 // mcpWaitTries is how many seconds to wait for the gateway.
 var mcpWaitTries = 60
 
-func (mcpWaitStep) Plan(*Env) []Action { return []Action{{"wait", mcpURL()}} }
+func (mcpWaitStep) Plan(e *Env) []Action { return []Action{{"wait", mcpURL(e)}} }
 
-func (mcpWaitStep) Check(ctx context.Context, _ *Env) (bool, error) { return mcpUp(ctx), nil }
+func (mcpWaitStep) Check(ctx context.Context, e *Env) (bool, error) {
+	return mcpUp(ctx, mcpURL(e)), nil
+}
 
 func (mcpWaitStep) Apply(ctx context.Context, e *Env) error {
 	for i := 0; i < mcpWaitTries; i++ {
-		if mcpUp(ctx) {
+		if mcpUp(ctx, mcpURL(e)) {
 			return nil
 		}
 		select {
@@ -213,7 +266,7 @@ func (mcpWaitStep) Apply(ctx context.Context, e *Env) error {
 		case <-time.After(time.Second):
 		}
 	}
-	e.note(fmt.Sprintf("mcpjungle is not answering on port %d after %ds; see: journalctl -u mcpjungle", MCPJunglePort, mcpWaitTries))
+	e.note(fmt.Sprintf("mcpjungle is not answering on port %d after %ds; see: journalctl -u %s", MCPPort(e), mcpWaitTries, mcpInstance(e)))
 	return nil
 }
 
@@ -352,7 +405,7 @@ func wire(e *Env) bool {
 	return e.Answers != nil && e.Answers.WireAgents != nil && *e.Answers.WireAgents
 }
 
-func agentURL() string { return fmt.Sprintf("http://localhost:%d/mcp", MCPJunglePort) }
+func agentURL(e *Env) string { return fmt.Sprintf("http://localhost:%d/mcp", MCPPort(e)) }
 
 func (mcpWireStep) Plan(e *Env) []Action {
 	if !wire(e) {
@@ -370,26 +423,54 @@ func has(ctx context.Context, e *Env, tool string) bool {
 
 const codexSection = "[mcp_servers.mcpjungle]"
 
-// todo lists the agents not wired yet.
+// todo lists the agents not wired to the user's gateway yet: not at all
+// ("claude"), or to another port ("claude!", Claude Code only, which
+// needs a remove first; Codex and Gemini are rewritten in place).
 func (mcpWireStep) todo(ctx context.Context, e *Env) []string {
 	var out []string
+	url := agentURL(e)
 	if has(ctx, e, "claude") {
-		if _, err := e.Exec.Run(ctx, Cmd{Name: "claude", Args: []string{"mcp", "get", "mcpjungle"}, AsUser: true}); err != nil {
+		got, err := e.Exec.Run(ctx, Cmd{Name: "claude", Args: []string{"mcp", "get", "mcpjungle"}, AsUser: true})
+		switch {
+		case err != nil:
 			out = append(out, "claude")
+		case !strings.Contains(string(got), url):
+			out = append(out, "claude!")
 		}
 	}
 	if has(ctx, e, "codex") {
 		b, _ := os.ReadFile(e.Path("~/.codex/config.toml"))
-		if !hasLine(b, codexSection) {
+		if !bytes.Equal(codexWired(b, url), b) {
 			out = append(out, "codex")
 		}
 	}
 	if has(ctx, e, "gemini") {
-		if _, err := e.Exec.Run(ctx, Cmd{Name: "jq", Args: []string{"-e", ".mcpServers.mcpjungle", e.Path("~/.gemini/settings.json")}}); err != nil {
+		if _, err := e.Exec.Run(ctx, Cmd{Name: "jq", Args: []string{"-e", "--arg", "u", url, ".mcpServers.mcpjungle.httpUrl == $u", e.Path("~/.gemini/settings.json")}}); err != nil {
 			out = append(out, "gemini")
 		}
 	}
 	return out
+}
+
+// codexWired returns Codex's config with the mcpjungle section pointing
+// at url: its url line replaced, or the section appended.
+func codexWired(b []byte, url string) []byte {
+	want := fmt.Sprintf("url = %q", url)
+	lines := strings.Split(string(b), "\n")
+	for i, l := range lines {
+		if l != codexSection {
+			continue
+		}
+		for j := i + 1; j < len(lines) && !strings.HasPrefix(lines[j], "["); j++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[j]), "url") {
+				lines[j] = want
+				return []byte(strings.Join(lines, "\n"))
+			}
+		}
+		lines = slices.Insert(lines, i+1, want)
+		return []byte(strings.Join(lines, "\n"))
+	}
+	return append(append([]byte{}, b...), fmt.Sprintf("\n%s\n%s\n", codexSection, want)...)
 }
 
 func hasLine(b []byte, line string) bool {
@@ -412,8 +493,13 @@ func (w mcpWireStep) Apply(ctx context.Context, e *Env) error {
 	for _, agent := range w.todo(ctx, e) {
 		var err error
 		switch agent {
+		case "claude!":
+			if _, err = e.run(ctx, Cmd{Name: "claude", Args: []string{"mcp", "remove", "mcpjungle", "--scope", "user"}, AsUser: true}); err != nil {
+				break
+			}
+			fallthrough
 		case "claude":
-			_, err = e.run(ctx, Cmd{Name: "claude", Args: []string{"mcp", "add", "--transport", "http", "mcpjungle", agentURL(), "--scope", "user"}, AsUser: true})
+			_, err = e.run(ctx, Cmd{Name: "claude", Args: []string{"mcp", "add", "--transport", "http", "mcpjungle", agentURL(e), "--scope", "user"}, AsUser: true})
 		case "codex":
 			err = w.codex(e)
 		case "gemini":
@@ -447,8 +533,7 @@ func (w mcpWireStep) codex(e *Env) error {
 	if fi, err := os.Stat(p); err == nil {
 		mode = fi.Mode().Perm()
 	}
-	b = append(b, fmt.Sprintf("\n%s\nurl = %q\n", codexSection, agentURL())...)
-	if err := writeFile(p, b, mode); err != nil {
+	if err := writeFile(p, codexWired(b, agentURL(e)), mode); err != nil {
 		return err
 	}
 	return e.chown(p, e.UID, e.GID)
@@ -467,7 +552,7 @@ func (w mcpWireStep) gemini(ctx context.Context, e *Env) error {
 		b = []byte("{}")
 	}
 	// jq keeps the user's key order and formatting choices.
-	out, err := e.Exec.Run(ctx, Cmd{Name: "jq", Args: []string{"--arg", "u", agentURL(), ".mcpServers.mcpjungle = {httpUrl: $u}"}, Stdin: b})
+	out, err := e.Exec.Run(ctx, Cmd{Name: "jq", Args: []string{"--arg", "u", agentURL(e), ".mcpServers.mcpjungle = {httpUrl: $u}"}, Stdin: b})
 	if err != nil {
 		return fmt.Errorf("jq: %w: %s", err, out)
 	}
@@ -496,7 +581,7 @@ func (mcpSyncStep) Plan(e *Env) []Action {
 func (mcpSyncStep) Check(context.Context, *Env) (bool, error) { return true, nil }
 
 func (mcpSyncStep) Apply(ctx context.Context, e *Env) error {
-	args := append([]string{"MCP_CATALOG=" + mcpCatalog, "MCPJUNGLE_REGISTRY=" + mcpURL(), mcpSync}, servers(e)...)
+	args := append([]string{"MCP_CATALOG=" + mcpCatalog, "MCPJUNGLE_REGISTRY=" + mcpURL(e), mcpSync}, servers(e)...)
 	if _, err := e.run(ctx, Cmd{Name: "env", Args: args, AsUser: true}); err != nil {
 		return fmt.Errorf("some MCP servers did not register (see the log); fill in ~/.mcp/<name>/env, then run mcp-sync: %w", err)
 	}

@@ -29,7 +29,7 @@
 - [x] 3.2 Layered `--profile`, named layers that replace, `user` / `--user` (create the account), review lists dropped items
 - [x] 3.3 `export --lock` and installing from `[lock]` (mise exact, apt best effort with a warning)
 - [x] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section
-- [ ] 3.5 Per-user state (system.json, users/<u>.json, split from answers.json); `mcpjungle@<user>` with port allocation
+- [x] 3.5 Per-user state (system.json, ~/.config/devbox/answers.json, split from answers.json); `mcpjungle@<user>` with port allocation
 - [ ] 3.6 `mcp-<user>` service user owning the MCP env files; sudo-mediated edits; opt-in `sudopw`
 - [ ] 3.7 Require `key_fingerprint` on `apt_repo` and `sha256` or `unverified` on downloads; "Installed without a pinned checksum" list
 - [ ] 3.8 Items: proxy, corpca, dotfiles, agentsafe, OpenCode and Goose wiring, gateway listen options, kubelogin, ufw dev ports, autoupdate-tools, docker-group editor note

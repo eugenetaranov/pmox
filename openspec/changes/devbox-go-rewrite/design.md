@@ -92,10 +92,16 @@ Existing devbox-* specs describe behaviour, not bash, and they are the acceptanc
 
   The `.orig` rule stays as it is, but the README points to the local files as the supported way to keep your own lines.
 - **Per-user state.**
-  - System items (apt, units, sysctl) stay global in `/var/lib/devbox-setup/system.json`.
-  - User items and settings go in `/var/lib/devbox-setup/users/<user>.json`.
-  - Phase 1's single `answers.json` is split on first run.
-  - MCPJungle becomes a template unit, `mcpjungle@<user>`, with a port allocated from 8080 upwards and recorded in that user's answers. Agent wiring uses that port.
+  - An item is a system item (machine-wide: the System tab, except `registries`, plus `k3s` and `ollama`; `scope` in the catalog overrides the tab) or a user item (everything else).
+  - System items' picks, the timezone, the list of users set up and each user's MCPJungle port go in root-only `/var/lib/devbox-setup/system.json`.
+  - User items' picks and the user's settings (mise extras, git, MCP servers and listen, agent wiring, GitHub mode, npm, registries) go in the user's own `~/.config/devbox/answers.json`, so they live and go with the account. Layers and hand picks are split the same way.
+  - The home file is the user's, so devbox-setup treats it as untrusted input:
+    - A user file can only pick user items; a system item in it is ignored with a warning.
+    - It is read and written without following symlinks at any step below the home (`openat` with `O_NOFOLLOW`), must be a regular file owned by the user (or root) and at most 1 MiB, and is written 0600 and owned by the user.
+    - The port and the user list are never taken from it.
+  - Phase 1's single `answers.json` is split on first run (kept as `answers.json.old`). Until the cut-over, devbox-setup also writes the combined answers of the user it ran for to `answers.json`, which the bash installer (the legacy steps and the fallback) reads.
+  - `--yes` without `--user` or a profile re-applies for every user in `system.json`; with `--user` (or a profile), only that user. Each user's run is the system picks plus that user's picks, so per-user parts of system items (the docker group) reach each user.
+  - MCPJungle becomes a template unit, `mcpjungle@<user>`, reading `/etc/mcpjungle/<user>.env` (host, port, data directory), with a port allocated from 8080 upwards and recorded in `system.json`. Agent wiring uses that port, and is corrected when the port changes. The old single `mcpjungle.service` is stopped and removed when its user's instance is set up.
 - **The `mcp` service user.**
   - The gateway and its docker containers run as a system user `mcp-<user>`, which owns `~<user>/.mcp/*/env`: 0600, readable only by that service user.
   - devbox-setup and `mcp-sync` edit the files through sudo.

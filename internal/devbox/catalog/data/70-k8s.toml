@@ -101,6 +101,7 @@ tools = ["k3d@latest"]
 [[item]]
 id = "k3s"
 tab = "k8s"
+scope = "system"
 label = "k3s cluster on this VM (systemd)"
 source = "curl get.k3s.io · kubeconfig → ~/.kube/config if absent"
 

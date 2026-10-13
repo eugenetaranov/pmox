@@ -90,6 +90,7 @@ unverified = "omp's own installer, which fetches its latest release"
 [[item]]
 id = "ollama"
 tab = "ai"
+scope = "system"
 label = "Ollama (local models; large, CPU-only without GPU passthrough)"
 source = "curl ollama.com/install.sh · listens on 127.0.0.1:11434"
 

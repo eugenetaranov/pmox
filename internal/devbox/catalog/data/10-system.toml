@@ -355,6 +355,7 @@ action = "restart"
 [[item]]
 id = "registries"
 tab = "system"
+scope = "user"
 label = "Container registry logins (ghcr.io, …)"
 needs = ["docker"]
 after = ["github"]

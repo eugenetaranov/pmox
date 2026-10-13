@@ -14,6 +14,18 @@ import (
 	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 )
 
+func TestMain(m *testing.M) {
+	// Homes (and the users' answers files) under a temp dir, not the real one.
+	dir, err := os.MkdirTemp("", "devbox-homes")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("DEVBOX_SETUP_HOMES", dir)
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func TestDryRunPlan(t *testing.T) {
 	state := t.TempDir()
 	me, _ := user.Current()
@@ -147,10 +159,18 @@ func TestProfileLayersAndUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
+	t.Setenv("SUDO_USER", me.Username)
+	if err := cli([]string{"--state", state, "--profile", f, "--yes", "--dry-run"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	// Layers are per user: a new user has nothing for the profile to drop.
 	if err := cli([]string{"--state", state, "--profile", f, "--user", "devboxnewuser", "--yes", "--dry-run"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
+	if strings.Count(got, "Dropped by the profile") != 1 {
+		t.Errorf("want one drop list (for %s):\n%s", me.Username, got)
+	}
 	for _, want := range []string{"Dropped by the profile (still installed, no longer re-applied):\n  - Terraform (terraform)\n", "Would create user devboxnewuser", "For user: devboxnewuser\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
@@ -209,5 +229,33 @@ func TestProfileLockPlan(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestTargets(t *testing.T) {
+	root := t.TempDir()
+	st := &answers.Store{State: root + "/state", IsSystem: func(string) bool { return false },
+		Account: func(n string) (answers.Account, error) {
+			return answers.Account{Home: root + "/" + n, UID: os.Getuid(), GID: os.Getgid()}, os.MkdirAll(root+"/"+n, 0o755)
+		}}
+	for _, u := range []string{"bob", "ada"} {
+		if err := st.Save(&answers.Answers{User: u, Picks: []string{"zsh"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("SUDO_USER", "ubuntu")
+	o := &options{}
+	if got, err := o.targets(st, nil, false, &bytes.Buffer{}); err != nil || strings.Join(got, " ") != "ada bob" {
+		t.Errorf("--yes: %v, %v", got, err)
+	}
+	if got, _ := o.targets(st, []*profile.Profile{{User: "cy"}, {}}, false, &bytes.Buffer{}); strings.Join(got, " ") != "cy" {
+		t.Errorf("profile user: %v", got)
+	}
+	if got, _ := o.targets(st, []*profile.Profile{{}}, false, &bytes.Buffer{}); strings.Join(got, " ") != "ubuntu" {
+		t.Errorf("profile without a user: %v", got)
+	}
+	o.user = "dee"
+	if got, _ := o.targets(st, []*profile.Profile{{User: "cy"}}, false, &bytes.Buffer{}); strings.Join(got, " ") != "dee" {
+		t.Errorf("--user: %v", got)
 	}
 }

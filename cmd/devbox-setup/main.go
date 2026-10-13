@@ -122,16 +122,10 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	}
-	a, notes, err := answers.Read(o.state)
-	if err != nil {
-		return err
-	}
-	for _, n := range notes {
-		fmt.Fprintln(stderr, "devbox-setup: "+n)
-	}
+	st := o.store(cat)
 	if fs.NArg() > 0 {
 		if fs.Arg(0) == "export" {
-			return o.export(stdout, stderr, cat, a, fs.Args()[1:])
+			return o.export(stdout, stderr, cat, st, fs.Args()[1:])
 		}
 		return fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
@@ -141,7 +135,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	var dropped []string
+	var profs []*profile.Profile
 	for _, src := range o.profiles {
 		p, b, err := loadProfile(ctx, src)
 		if err != nil {
@@ -156,33 +150,123 @@ func cli(args []string, stdout, stderr io.Writer) error {
 			}
 			o.lock.Add(p.Lock)
 		}
+		profs = append(profs, p)
+	}
+	if interactive && (!term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd()))) {
+		return errors.New("needs a terminal (or --yes to re-apply saved choices)")
+	}
+	users, err := o.targets(st, profs, interactive, stderr)
+	if err != nil {
+		return err
+	}
+	var failed []string
+	for _, u := range users {
+		if len(users) > 1 {
+			fmt.Fprintf(stdout, "\n== %s\n", u)
+		}
+		err := o.runUser(ctx, cat, st, u, profs, interactive, stdout, stderr)
+		if len(users) == 1 {
+			return err
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "devbox-setup: %s: %v\n", u, err)
+			failed = append(failed, u)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("failed for %s", strings.Join(failed, " "))
+	}
+	return nil
+}
+
+// store is the saved answers: system.json in the state directory and
+// each user's file in their home.
+func (o *options) store(cat *catalog.Catalog) *answers.Store {
+	st := &answers.Store{State: o.state, Chown: os.Geteuid() == 0,
+		IsSystem: func(id string) bool { it := cat.Item(id); return it != nil && it.System() }}
+	// Tests keep homes under a directory of their own.
+	if dir := os.Getenv("DEVBOX_SETUP_HOMES"); dir != "" {
+		st.Account = func(name string) (answers.Account, error) {
+			if _, err := answers.LookupAccount(name); err != nil {
+				return answers.Account{}, err
+			}
+			home := filepath.Join(dir, name)
+			return answers.Account{Home: home, UID: os.Getuid(), GID: os.Getgid()}, os.MkdirAll(home, 0o755)
+		}
+	}
+	return st
+}
+
+// targets are the users this run sets up: --user, else the profiles'
+// user, else (profiles) the sudo user, else (interactive) the one asked
+// for, else (--yes, --verify) every user set up.
+func (o *options) targets(st *answers.Store, profs []*profile.Profile, interactive bool, stderr io.Writer) ([]string, error) {
+	if o.user != "" {
+		return []string{o.user}, nil
+	}
+	for i := len(profs) - 1; i >= 0; i-- {
+		if profs[i].User != "" {
+			return []string{profs[i].User}, nil
+		}
+	}
+	saved, notes, err := st.Users()
+	for _, n := range notes {
+		fmt.Fprintln(stderr, "devbox-setup: "+n)
+	}
+	if err != nil {
+		return nil, err
+	}
+	sudoUser := os.Getenv("SUDO_USER")
+	switch {
+	case len(profs) > 0 && sudoUser != "":
+		return []string{sudoUser}, nil
+	case interactive:
+		def := sudoUser
+		if def == "" && len(saved) > 0 {
+			def = saved[0]
+		}
+		u, err := askUser(def)
+		if errors.Is(err, ui.ErrQuit) {
+			fmt.Fprintln(stderr, "Cancelled.")
+			return nil, nil
+		}
+		return []string{u}, err
+	case len(profs) > 0:
+		return nil, errors.New("no user to set up: give --user, or run devbox-setup with sudo from that user's login")
+	case len(saved) == 0:
+		return nil, errors.New("no saved choices yet; run devbox-setup without --yes first")
+	}
+	return saved, nil
+}
+
+// runUser applies the profiles to user's answers, asks (interactive) or
+// re-applies them, saves them, and installs (or plans, or verifies).
+func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers.Store, user string, profs []*profile.Profile, interactive bool, stdout, stderr io.Writer) error {
+	a, notes, err := st.Load(user)
+	if err != nil {
+		return err
+	}
+	for _, n := range notes {
+		fmt.Fprintln(stderr, "devbox-setup: "+n)
+	}
+	var dropped []string
+	for _, p := range profs {
 		d, warn := p.Apply(a, cat)
 		for _, w := range warn {
 			fmt.Fprintln(stderr, "devbox-setup: "+w)
 		}
 		dropped = answers.Merge(dropped, d)
 	}
+	a.User = user // a profile's user lost to --user
 	// A later profile (or the same one, unnamed) may have kept it.
 	dropped = slices.DeleteFunc(dropped, func(id string) bool { return slices.Contains(a.Picks, id) })
-	changed := len(o.profiles) > 0 || (o.user != "" && o.user != a.User)
-	if o.user != "" {
-		a.User = o.user
-	}
-	if a.User == "" && len(o.profiles) > 0 {
-		a.User = os.Getenv("SUDO_USER")
-		if a.User == "" && !interactive {
-			return errors.New("no user to set up: give --user, or run devbox-setup with sudo from that user's login")
-		}
-	}
+	changed := len(profs) > 0
 	var items []*catalog.Item
 	extra := a.MiseExtra
 	sec := creds.New()
 	if interactive {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return errors.New("needs a terminal (or --yes to re-apply saved choices)")
-		}
 		k := &asker{cat: cat, a: a, share: o.share(), out: stdout, installed: func(t string) bool { return userHas(a.User, t) },
-			profile: len(o.profiles) > 0, fixedUser: o.user != "", dropped: dropped}
+			profile: len(profs) > 0, dropped: dropped, port: func() int { p, _ := st.Port(user); return p }}
 		c, err := k.ask(ctx)
 		if errors.Is(err, ui.ErrQuit) {
 			fmt.Fprintln(stdout, "Cancelled.")
@@ -204,12 +288,23 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		}
 		listDropped(stdout, cat, dropped)
 	}
+	if a.MCPPort == 0 && slices.ContainsFunc(items, func(it *catalog.Item) bool { return it.ID == "mcpjungle" }) {
+		if a.MCPPort, err = st.Port(a.User); err != nil {
+			return err
+		}
+		changed = true
+	}
 	created, err := o.ensureUser(ctx, a.User, stdout)
 	if err != nil {
 		return err
 	}
-	if changed && !o.dryRun && !o.verify {
-		if err := answers.Write(o.state, a); err != nil {
+	if !o.dryRun && !o.verify {
+		save := st.Save
+		if !changed {
+			// Only answers.json, which the bash steps read for this user.
+			save = func(a *answers.Answers) error { return answers.Write(o.state, a) }
+		}
+		if err := save(a); err != nil {
 			return err
 		}
 	}
@@ -228,7 +323,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer logf.Close()
-	fmt.Fprintf(logf, "=== devbox-setup %s, %s\n", version, time.Now().Format(time.RFC3339))
+	fmt.Fprintf(logf, "=== devbox-setup %s, %s, user %s\n", version, time.Now().Format(time.RFC3339), a.User)
 	env, err := o.env(a, sec, logf)
 	if err != nil {
 		return err
@@ -437,7 +532,7 @@ func (o *options) ensureUser(ctx context.Context, name string, w io.Writer) (cre
 // export writes the saved answers as a profile, to file or stdout. With
 // --lock it adds the installed versions of the plan's mise tools and apt
 // packages.
-func (o *options) export(stdout, stderr io.Writer, cat *catalog.Catalog, a *answers.Answers, args []string) error {
+func (o *options) export(stdout, stderr io.Writer, cat *catalog.Catalog, st *answers.Store, args []string) error {
 	fs := flag.NewFlagSet("devbox-setup export", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	lock := fs.Bool("lock", false, "add a [lock] table with the installed mise and apt versions")
@@ -448,6 +543,28 @@ func (o *options) export(stdout, stderr io.Writer, cat *catalog.Catalog, a *answ
 		return fmt.Errorf("export: unexpected argument %q", fs.Arg(1))
 	}
 	file := fs.Arg(0)
+	user := o.user
+	if user == "" {
+		saved, _, err := st.Users()
+		if err != nil {
+			return err
+		}
+		switch {
+		case slices.Contains(saved, os.Getenv("SUDO_USER")):
+			user = os.Getenv("SUDO_USER")
+		case len(saved) == 1:
+			user = saved[0]
+		case len(saved) > 1:
+			return fmt.Errorf("export: several users are set up (%s); pick one with --user", strings.Join(saved, " "))
+		}
+	}
+	a, notes, err := st.Load(user)
+	if err != nil {
+		return err
+	}
+	for _, n := range notes {
+		fmt.Fprintln(stderr, "devbox-setup: "+n)
+	}
 	if len(a.Picks) == 0 {
 		return errors.New("no saved choices to export yet")
 	}

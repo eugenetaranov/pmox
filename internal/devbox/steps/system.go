@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
@@ -205,8 +208,20 @@ func (u ufwStep) rules(ctx context.Context, e *Env) []string {
 	if u.picked(e, "mosh") || root(ctx, e, "mosh-server") {
 		rules = append(rules, "allow 60000:61000/udp")
 	}
+	// Every user's gateway that listens on all interfaces, this run's too.
+	ports := map[int]bool{}
 	if (u.picked(e, "mcpjungle") || root(ctx, e, "mcpjungle")) && listen(e) == "0.0.0.0" {
-		rules = append(rules, fmt.Sprintf("allow %d/tcp", MCPJunglePort))
+		ports[MCPPort(e)] = true
+	}
+	envs, _ := filepath.Glob(e.Path(filepath.Join(mcpEnvDir, "*.env")))
+	for _, f := range envs {
+		b, _ := os.ReadFile(f)
+		if p, err := strconv.Atoi(EnvGet(b, "MCP_PORT")); err == nil && EnvGet(b, "MCP_HOST") == "0.0.0.0" {
+			ports[p] = true
+		}
+	}
+	for _, p := range slices.Sorted(maps.Keys(ports)) {
+		rules = append(rules, fmt.Sprintf("allow %d/tcp", p))
 	}
 	return rules
 }

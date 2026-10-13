@@ -49,6 +49,8 @@ type Answers struct {
 	// layer also lists: no layer drops them. A pick in no layer is a hand
 	// pick too, so this stays short.
 	Hand []string `json:"hand,omitempty"`
+	// MCPPort is the user's MCPJungle port (kept in system.json).
+	MCPPort int `json:"-"`
 }
 
 // Git is the git identity.

@@ -213,3 +213,15 @@ func TestCredKeysMatchBash(t *testing.T) {
 		t.Errorf("%d cred keys, bash has %d rows", n, len(bash))
 	}
 }
+
+func TestScope(t *testing.T) {
+	c, err := Load(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"ufw": true, "docker": true, "k3s": true, "ollama": true, "registries": false, "zsh": false, "mcpjungle": false, "go": false} {
+		if got := c.Item(id).System(); got != want {
+			t.Errorf("%s: System() = %v, want %v", id, got, want)
+		}
+	}
+}

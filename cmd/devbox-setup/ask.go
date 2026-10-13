@@ -39,8 +39,8 @@ type asker struct {
 	// instead of opening the picker. dropped are the picks they dropped.
 	profile bool
 	dropped []string
-	// fixedUser: --user chose the user, so don't ask.
-	fixedUser bool
+	// port is the MCPJungle port the user would get.
+	port func() int
 }
 
 // ask runs every prompt, then the review; it loops on "Start over".
@@ -73,11 +73,6 @@ func (k *asker) ask(ctx context.Context) (*choices, error) {
 
 func (k *asker) once(ctx context.Context) (*choices, error) {
 	fmt.Fprintln(k.out, "devbox-setup — pick what to install: nothing is preselected. Run it again any time to add more.")
-	if !k.fixedUser {
-		if err := k.askUser(); err != nil {
-			return nil, err
-		}
-	}
 
 	// 1. Pick: one tabbed checklist over every category, plus mise's registry.
 	var tabs []ui.Tab
@@ -137,11 +132,6 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 // only what a profile can't hold: secrets, and settings it left unset.
 func (k *asker) fromProfile(ctx context.Context) (*choices, error) {
 	a := k.a
-	if a.User == "" {
-		if err := k.askUser(); err != nil {
-			return nil, err
-		}
-	}
 	c := &choices{secrets: creds.New(), miseExtra: a.MiseExtra, mcpServers: a.MCPServers}
 	var err error
 	if c.items, err = plan.Resolve(k.cat, a.Picks, len(a.MiseExtra) > 0); err != nil {
@@ -172,29 +162,24 @@ func planHas(items []*catalog.Item) func(string) bool {
 }
 
 // askUser asks which user to set up, offering to create a missing one.
-func (k *asker) askUser() error {
-	def := k.a.User
-	if def == "" {
-		def = os.Getenv("SUDO_USER")
-	}
+func askUser(def string) (string, error) {
 	u, err := ui.Input("Set up for which user?", "", def)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if _, err := user.Lookup(u); err != nil {
 		if !profile.ValidUser(u) {
-			return fmt.Errorf("user %q does not exist", u)
+			return "", fmt.Errorf("user %q does not exist", u)
 		}
 		yes, err := ui.Confirm("User "+u+" does not exist. Create it?", "Like the VM's first user: passwordless sudo and the same groups.", false)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if !yes {
-			return fmt.Errorf("user %q does not exist", u)
+			return "", fmt.Errorf("user %q does not exist", u)
 		}
 	}
-	k.a.User = u
-	return nil
+	return u, nil
 }
 
 // askSecrets asks for the credentials and secrets of the plan's items.
@@ -576,7 +561,11 @@ func (k *asker) review(c *choices, options ...string) string {
 		fmt.Fprintf(k.out, "  ✓ %-40s mise use -g %s\n", "Extra mise tools", strings.Join(c.miseExtra, " "))
 	}
 	if len(c.mcpServers) > 0 {
-		fmt.Fprintf(k.out, "  MCPJungle: http://%s:8080/mcp · servers: %s\n", k.a.MCPListen, strings.Join(k.a.MCPServers, " "))
+		port := k.a.MCPPort
+		if port == 0 && k.port != nil {
+			port = k.port()
+		}
+		fmt.Fprintf(k.out, "  MCPJungle: http://%s:%d/mcp · servers: %s\n", k.a.MCPListen, port, strings.Join(k.a.MCPServers, " "))
 	}
 	if k.a.Git.Name+k.a.Git.Email != "" {
 		fmt.Fprintf(k.out, "  Git: %s <%s>\n", k.a.Git.Name, k.a.Git.Email)

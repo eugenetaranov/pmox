@@ -604,11 +604,21 @@ deleting it (default yes); `--forget` runs it without asking and
 `--no-forget` skips it. With `--yes` and neither flag, delete skips it and
 says so.
 
-Run it again any time to add more. Choices accumulate in
-`/var/lib/devbox-setup/answers.json` (no secrets), and `sudo devbox-setup --yes`
-re-applies all of them without asking. The file is only read as data, never
-run; an `answers` file from an older version is converted once and kept as
-`answers.old`.
+Run it again any time to add more. Choices accumulate, never with
+secrets, and are only read as data, never run:
+
+- machine-wide items (the System tab, k3s, Ollama), the timezone, the users
+  set up and their MCPJungle ports in root-only
+  `/var/lib/devbox-setup/system.json`;
+- each user's own items and settings in their `~/.config/devbox/answers.json`.
+  devbox-setup reads that file as the user's input: it won't follow a symlink
+  there, and a machine-wide item listed in it is ignored with a warning.
+
+`sudo devbox-setup --yes` re-applies everything for every user set up;
+`--yes --user ada` only ada's. Several users can share a VM: each gets their
+own MCPJungle gateway (`mcpjungle@<user>`, on port 8080, 8081, …), wired into
+their own agents. A single `answers.json` from an older version is split into
+these once (kept as `answers.json.old`).
 
 devbox-setup is embedded in pmox. Once a new VM answers SSH, pmox copies it
 over (before any `--post-create`/`--tack` hook, so a hook can run

@@ -46,10 +46,22 @@ type Item struct {
 	// Source says how the item is installed, as the picker shows it
 	// (e.g. "mise use -g terraform"). Optional: Describe derives one.
 	Source string `toml:"source"`
-	Steps  []Step `toml:"step"`
+	// Scope is "system" (machine-wide: its pick is kept in system.json)
+	// or "user" (kept in the user's own answers). Default: system for the
+	// System tab, else user.
+	Scope string `toml:"scope"`
+	Steps []Step `toml:"step"`
 
 	// From is the file the item came from (for error messages).
 	From string `toml:"-"`
+}
+
+// System reports whether the item is machine-wide (see Scope).
+func (it *Item) System() bool {
+	if it.Scope != "" {
+		return it.Scope == "system"
+	}
+	return it.Tab == "system"
 }
 
 // Hidden reports whether the picker leaves the item out.
@@ -207,6 +219,8 @@ func (c *Catalog) validate() error {
 			fail(it, "no label")
 		case len(it.Steps) == 0:
 			fail(it, "no steps")
+		case it.Scope != "" && it.Scope != "system" && it.Scope != "user":
+			fail(it, "scope %q: want system or user", it.Scope)
 		}
 		for _, n := range it.Needs {
 			if c.byID[n] == nil {
