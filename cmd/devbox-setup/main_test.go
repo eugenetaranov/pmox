@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/devbox/answers"
+	"github.com/eugenetaranov/pmox/internal/devbox/profile"
 	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 )
 
@@ -103,10 +104,13 @@ func TestExportAndProfile(t *testing.T) {
 	if err := cli([]string{"--state", src, "export", "a.toml", "b.toml"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Error("export with two files: want an error")
 	}
-	// Nothing is installed here, so the lock is empty and left out.
+	// What's locked depends on what this machine has; it must parse back.
 	var locked bytes.Buffer
-	if err := cli([]string{"--state", src, "export", "--lock"}, &locked, &bytes.Buffer{}); err != nil || strings.Contains(locked.String(), "[lock") || !strings.Contains(locked.String(), "terraform") {
+	if err := cli([]string{"--state", src, "export", "--lock"}, &locked, &bytes.Buffer{}); err != nil || !strings.Contains(locked.String(), "terraform") {
 		t.Errorf("export --lock: %v\n%s", err, locked.String())
+	}
+	if _, err := profile.Parse("locked", locked.Bytes()); err != nil {
+		t.Errorf("export --lock doesn't parse: %v\n%s", err, locked.String())
 	}
 	me2 := t.TempDir() + "/me.toml"
 	if err := os.WriteFile(me2, []byte("[system]\ntz = \"Europe/Berlin\"\n"), 0o644); err != nil {
