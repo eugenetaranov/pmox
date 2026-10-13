@@ -83,6 +83,9 @@ type Env struct {
 	Secrets *creds.Secrets
 	// Lock pins mise and apt versions (a profile's [lock]); nil: latest.
 	Lock *answers.Lock
+
+	// tsAddr caches the Tailscale address (listenHost).
+	tsAddr string
 	// Note shows text after the run (a step that has to leave something
 	// for the user to do).
 	Note func(text string)

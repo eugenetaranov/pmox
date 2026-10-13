@@ -294,3 +294,59 @@ func TestMCPUserStep(t *testing.T) {
 		t.Error("Check = false with the user, its group, ~/.mcp and the ACL")
 	}
 }
+
+func TestMCPWireOpenCodeGoose(t *testing.T) {
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		if c.Name == "sh" && (strings.HasSuffix(c.Args[1], " opencode") || strings.HasSuffix(c.Args[1], " goose")) {
+			return nil, nil
+		}
+		return nil, errors.New("no")
+	}}
+	e := mcpEnv(t, x)
+	put(t, e.Path(gooseConfig), "# my goose\nGOOSE_PROVIDER: anthropic\nextensions:\n  developer:\n    enabled: true\n    type: builtin\n")
+	st := step(t, catalog.Step{Type: "go:mcp_wire"})
+	if check(t, e, st) {
+		t.Fatal("Check = true before wiring")
+	}
+	apply(t, e, st)
+	oc := read(t, e.Path(openCodeConfig))
+	if !strings.Contains(oc, `"$schema"`) || !strings.Contains(oc, `"url": "http://localhost:8080/mcp"`) || !strings.Contains(oc, `"type": "remote"`) {
+		t.Errorf("opencode.json:\n%s", oc)
+	}
+	g := read(t, e.Path(gooseConfig))
+	for _, want := range []string{"# my goose\n", "GOOSE_PROVIDER: anthropic\n", "  developer:\n", "  mcpjungle:\n", "    uri: http://localhost:8080/mcp\n", "    type: streamable_http\n"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("config.yaml lacks %q:\n%s", want, g)
+		}
+	}
+	if !check(t, e, st) {
+		t.Error("Check = false after wiring")
+	}
+}
+
+func TestMCPListenTailscale(t *testing.T) {
+	up := false
+	x := &fakeExec{reply: func(c Cmd) ([]byte, error) {
+		if c.Name == "tailscale" {
+			if !up {
+				return nil, errors.New("not running")
+			}
+			return []byte("100.64.1.2\n"), nil
+		}
+		return nil, nil
+	}}
+	e := mcpEnv(t, x)
+	e.Answers.MCPListen = "tailscale"
+	st := step(t, catalog.Step{Type: "go:mcpjungle_unit"})
+	if err := st.Apply(context.Background(), e); err == nil || !strings.Contains(err.Error(), "tailscale up") {
+		t.Fatalf("tailscale down: err = %v", err)
+	}
+	up = true
+	apply(t, e, st)
+	if got := read(t, e.Path("/etc/mcpjungle/ada.env")); !strings.HasPrefix(got, "MCP_HOST=100.64.1.2\n") {
+		t.Errorf("env = %q", got)
+	}
+	if agentURL(e) != "http://100.64.1.2:8080/mcp" || mcpURL(e) != "http://100.64.1.2:8080" {
+		t.Errorf("urls %s %s", agentURL(e), mcpURL(e))
+	}
+}

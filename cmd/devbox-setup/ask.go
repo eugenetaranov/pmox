@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/eugenetaranov/pmox/internal/devbox/answers"
@@ -445,19 +446,21 @@ func (k *asker) askDevPorts() error {
 }
 
 func (k *asker) askMCP(ctx context.Context, c *choices, has func(string) bool) error {
-	one, all := "this machine only", "all interfaces (no auth — trusted networks only)"
-	sel := one
-	if k.a.MCPListen == "0.0.0.0" {
-		sel = all
+	one, ts, all := "this machine only", "the Tailscale address only (your tailnet)", "all interfaces (no auth — trusted networks only)"
+	opts := []string{one}
+	if out, err := exec.Command("tailscale", "ip", "-4").Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		opts = append(opts, ts)
 	}
-	l, err := ui.Choose("MCPJungle gateway listens on", []string{one, all}, sel)
+	opts = append(opts, all)
+	sel := map[string]string{"0.0.0.0": all, "tailscale": ts}[k.a.MCPListen]
+	if !slices.Contains(opts, sel) {
+		sel = one
+	}
+	l, err := ui.Choose("MCPJungle gateway listens on", opts, sel)
 	if err != nil {
 		return err
 	}
-	k.a.MCPListen = "127.0.0.1"
-	if l == all {
-		k.a.MCPListen = "0.0.0.0"
-	}
+	k.a.MCPListen = map[string]string{one: "127.0.0.1", ts: "tailscale", all: "0.0.0.0"}[l]
 
 	dirs := mcp.Dirs(k.share)
 	var entries []*ui.Entry
@@ -481,10 +484,11 @@ func (k *asker) askMCP(ctx context.Context, c *choices, has func(string) bool) e
 	// Servers set up before stay enabled (drop one by editing ~/.mcp/servers).
 	k.a.MCPServers = answers.Merge(k.a.MCPServers, servers)
 
-	if has("claude") || has("codex") || has("gemini") || k.installed("claude") || k.installed("codex") || k.installed("gemini") {
+	agents := []string{"claude", "codex", "gemini", "opencode", "goose"}
+	if slices.ContainsFunc(agents, func(a string) bool { return has(a) || k.installed(a) }) {
 		def := k.a.WireAgents == nil || *k.a.WireAgents
 		yes, err := ui.Confirm("Add the MCPJungle gateway to "+k.a.User+"'s coding agents?",
-			"Claude Code, Codex and Gemini CLI (those installed) can then use every MCP server registered in MCPJungle.", def)
+			"Claude Code, Codex, Gemini CLI, OpenCode and Goose (those installed) can then use every MCP server registered in MCPJungle.", def)
 		if err != nil {
 			return err
 		}
@@ -712,7 +716,11 @@ func (k *asker) review(c *choices, options ...string) string {
 		if port == 0 && k.port != nil {
 			port = k.port()
 		}
-		fmt.Fprintf(k.out, "  MCPJungle: http://%s:%d/mcp · servers: %s\n", k.a.MCPListen, port, strings.Join(k.a.MCPServers, " "))
+		host := k.a.MCPListen
+		if host == "tailscale" {
+			host = "<tailscale address>"
+		}
+		fmt.Fprintf(k.out, "  MCPJungle: http://%s:%d/mcp · servers: %s\n", host, port, strings.Join(k.a.MCPServers, " "))
 	}
 	if k.a.Git.Name+k.a.Git.Email != "" {
 		fmt.Fprintf(k.out, "  Git: %s <%s>\n", k.a.Git.Name, k.a.Git.Email)

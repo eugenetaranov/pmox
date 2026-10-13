@@ -82,8 +82,8 @@ func Parse(name string, b []byte) (*Profile, error) {
 		}
 		return nil, fmt.Errorf("%s: unknown key %s", name, strings.Join(keys, ", "))
 	}
-	if p.MCP != nil && p.MCP.Listen != "" && p.MCP.Listen != "127.0.0.1" && p.MCP.Listen != "0.0.0.0" {
-		return nil, fmt.Errorf("%s: mcp.listen %q: want 127.0.0.1 or 0.0.0.0", name, p.MCP.Listen)
+	if p.MCP != nil && p.MCP.Listen != "" && p.MCP.Listen != "127.0.0.1" && p.MCP.Listen != "0.0.0.0" && p.MCP.Listen != "tailscale" {
+		return nil, fmt.Errorf("%s: mcp.listen %q: want 127.0.0.1, tailscale or 0.0.0.0", name, p.MCP.Listen)
 	}
 	if p.System != nil {
 		if p.System.Proxy != "" {

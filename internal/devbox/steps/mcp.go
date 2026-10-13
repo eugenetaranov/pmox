@@ -152,7 +152,18 @@ func MCPPort(e *Env) int {
 	return answers.FirstMCPPort
 }
 
-func mcpURL(e *Env) string { return fmt.Sprintf("http://127.0.0.1:%d", MCPPort(e)) }
+// clientHost is where this machine reaches the gateway: its Tailscale
+// address when it listens only there, else loopback.
+func clientHost(e *Env, loopback string) string {
+	if h, _ := listenHost(e); h != "127.0.0.1" && h != "0.0.0.0" && h != "" {
+		return h
+	}
+	return loopback
+}
+
+func mcpURL(e *Env) string {
+	return fmt.Sprintf("http://%s:%d", clientHost(e, "127.0.0.1"), MCPPort(e))
+}
 
 // mcpInstance is the user's gateway unit.
 func mcpInstance(e *Env) string { return "mcpjungle@" + e.User }
@@ -239,11 +250,38 @@ func (mcpUnitStep) Plan(e *Env) []Action {
 	return []Action{{"unit", fmt.Sprintf("enable-now %s on port %d (%s)", mcpInstance(e), MCPPort(e), mcpUnit)}}
 }
 
+// listen is the gateway's listen choice: 127.0.0.1, 0.0.0.0 or tailscale.
 func listen(e *Env) string {
-	if e.Answers != nil && e.Answers.MCPListen == "0.0.0.0" {
-		return "0.0.0.0"
+	if e.Answers != nil && (e.Answers.MCPListen == "0.0.0.0" || e.Answers.MCPListen == "tailscale") {
+		return e.Answers.MCPListen
 	}
 	return "127.0.0.1"
+}
+
+// resolveListen finds the VM's Tailscale IPv4 address when the gateway
+// listens there (Tailscale must be up); the MCP steps call it first.
+func resolveListen(ctx context.Context, e *Env) error {
+	if listen(e) != "tailscale" || e.tsAddr != "" {
+		return nil
+	}
+	out, err := e.Exec.Run(ctx, Cmd{Name: "tailscale", Args: []string{"ip", "-4"}})
+	addr, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if err != nil || addr == "" {
+		return errors.New("the gateway listens on the Tailscale address, but Tailscale isn't up: run 'sudo tailscale up', then devbox-setup again")
+	}
+	e.tsAddr = addr
+	return nil
+}
+
+// listenHost is the address the gateway binds (resolveListen first).
+func listenHost(e *Env) (string, error) {
+	if listen(e) != "tailscale" {
+		return listen(e), nil
+	}
+	if e.tsAddr == "" {
+		return "", errors.New("the Tailscale address isn't known yet")
+	}
+	return e.tsAddr, nil
 }
 
 // mcpTemplate is the gateway's template unit: one instance per user, each
@@ -271,8 +309,9 @@ WantedBy=multi-user.target
 `
 
 func (mcpUnitStep) envFile(e *Env) wantFile {
+	host, _ := listenHost(e)
 	return wantFile{filepath.Join(mcpEnvDir, e.User+".env"),
-		[]byte(fmt.Sprintf("MCP_HOST=%s\nMCP_PORT=%d\nMCP_DIR=%s\n", listen(e), MCPPort(e), filepath.Join(e.Home, ".mcp"))), 0o644}
+		[]byte(fmt.Sprintf("MCP_HOST=%s\nMCP_PORT=%d\nMCP_DIR=%s\n", host, MCPPort(e), filepath.Join(e.Home, ".mcp"))), 0o644}
 }
 
 // oldUnit reports whether Phase 1's single gateway runs as this user.
@@ -282,6 +321,9 @@ func oldUnit(e *Env) bool {
 }
 
 func (u mcpUnitStep) Check(ctx context.Context, e *Env) (bool, error) {
+	if resolveListen(ctx, e) != nil {
+		return false, nil
+	}
 	env := u.envFile(e)
 	if !same(e.Path(mcpUnit), wantFile{b: []byte(mcpTemplate), mode: 0o644}) || !same(e.Path(env.to), env) || oldUnit(e) {
 		return false, nil
@@ -290,6 +332,9 @@ func (u mcpUnitStep) Check(ctx context.Context, e *Env) (bool, error) {
 }
 
 func (u mcpUnitStep) Apply(ctx context.Context, e *Env) error {
+	if err := resolveListen(ctx, e); err != nil {
+		return err
+	}
 	var cmds [][]string
 	if oldUnit(e) {
 		// Phase 1's gateway: same user, same database; the instance replaces it.
@@ -356,10 +401,14 @@ var mcpWaitTries = 60
 func (mcpWaitStep) Plan(e *Env) []Action { return []Action{{"wait", mcpURL(e)}} }
 
 func (mcpWaitStep) Check(ctx context.Context, e *Env) (bool, error) {
+	_ = resolveListen(ctx, e)
 	return mcpUp(ctx, mcpURL(e)), nil
 }
 
 func (mcpWaitStep) Apply(ctx context.Context, e *Env) error {
+	if err := resolveListen(ctx, e); err != nil {
+		return err
+	}
 	for i := 0; i < mcpWaitTries; i++ {
 		if mcpUp(ctx, mcpURL(e)) {
 			return nil
@@ -500,13 +549,15 @@ func wire(e *Env) bool {
 	return e.Answers != nil && e.Answers.WireAgents != nil && *e.Answers.WireAgents
 }
 
-func agentURL(e *Env) string { return fmt.Sprintf("http://localhost:%d/mcp", MCPPort(e)) }
+func agentURL(e *Env) string {
+	return fmt.Sprintf("http://%s:%d/mcp", clientHost(e, "localhost"), MCPPort(e))
+}
 
 func (mcpWireStep) Plan(e *Env) []Action {
 	if !wire(e) {
 		return nil
 	}
-	return []Action{{"run", "add the mcpjungle MCP server to Claude Code, Codex and Gemini CLI (those installed)"}}
+	return []Action{{"run", "add the mcpjungle MCP server to Claude Code, Codex, Gemini CLI, OpenCode and Goose (those installed)"}}
 }
 
 // has reports whether the user can run tool (mise tools are only on
@@ -522,6 +573,7 @@ const codexSection = "[mcp_servers.mcpjungle]"
 // ("claude"), or to another port ("claude!", Claude Code only, which
 // needs a remove first; Codex and Gemini are rewritten in place).
 func (mcpWireStep) todo(ctx context.Context, e *Env) []string {
+	_ = resolveListen(ctx, e)
 	var out []string
 	url := agentURL(e)
 	if has(ctx, e, "claude") {
@@ -542,6 +594,18 @@ func (mcpWireStep) todo(ctx context.Context, e *Env) []string {
 	if has(ctx, e, "gemini") {
 		if _, err := e.Exec.Run(ctx, Cmd{Name: "jq", Args: []string{"-e", "--arg", "u", url, ".mcpServers.mcpjungle.httpUrl == $u", e.Path("~/.gemini/settings.json")}}); err != nil {
 			out = append(out, "gemini")
+		}
+	}
+	if has(ctx, e, "opencode") {
+		b, _ := readOrEmpty(e, openCodeConfig)
+		if _, changed, err := openCodeWired(b, url); err != nil || changed {
+			out = append(out, "opencode")
+		}
+	}
+	if has(ctx, e, "goose") {
+		b, _ := readOrEmpty(e, gooseConfig)
+		if _, changed, err := gooseWired(b, url); err != nil || changed {
+			out = append(out, "goose")
 		}
 	}
 	return out
@@ -599,6 +663,17 @@ func (w mcpWireStep) Apply(ctx context.Context, e *Env) error {
 			err = w.codex(e)
 		case "gemini":
 			err = w.gemini(ctx, e)
+		case "opencode", "goose":
+			p, wired := openCodeConfig, openCodeWired
+			if agent == "goose" {
+				p, wired = gooseConfig, gooseWired
+			}
+			var cur, b []byte
+			if cur, err = readOrEmpty(e, p); err == nil {
+				if b, _, err = wired(cur, agentURL(e)); err == nil {
+					err = writeAgentConfig(e, p, b)
+				}
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", agent, err)
@@ -676,6 +751,9 @@ func (mcpSyncStep) Plan(e *Env) []Action {
 func (mcpSyncStep) Check(context.Context, *Env) (bool, error) { return true, nil }
 
 func (mcpSyncStep) Apply(ctx context.Context, e *Env) error {
+	if err := resolveListen(ctx, e); err != nil {
+		return err
+	}
 	args := append([]string{"MCP_DIR=" + filepath.Join(e.Home, ".mcp"), "MCP_CATALOG=" + mcpCatalog, "MCPJUNGLE_REGISTRY=" + mcpURL(e), mcpSync}, servers(e)...)
 	c := Cmd{Name: "env", Args: args, As: MCPUser(e)}
 	if !mcpAsService(e) {

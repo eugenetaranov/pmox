@@ -533,8 +533,10 @@ clears the search; Esc on an empty search quits.
    only to non-default branches; merged into your settings, not replacing
    them), agent API keys (Anthropic, OpenAI, Gemini),
    and the MCPJungle gateway with MCP servers (GitHub, Linear, Postgres,
-   Playwright, Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex
-   and Gemini CLI.
+   Playwright, Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex,
+   Gemini CLI, OpenCode and Goose. The gateway listens on this machine only,
+   on the VM's Tailscale address only (when Tailscale is up), or on every
+   interface (no auth: trusted networks only).
 9. **Accounts and keys:** git identity, git defaults (rebase on pull, push
    sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
    GitHub login, commit signing with SSH, GitLab CLI, and your dotfiles repo:
