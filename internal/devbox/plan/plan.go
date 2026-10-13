@@ -79,6 +79,13 @@ func Resolve(c *catalog.Catalog, picks []string, extraMise bool) ([]*catalog.Ite
 		}
 	}
 	for _, it := range c.Items {
+		if want[it.ID] && !it.Last {
+			place(it)
+		}
+	}
+	// Then the items that go last (dotfiles: what they write wins), even
+	// after catalog.d's.
+	for _, it := range c.Items {
 		if want[it.ID] {
 			place(it)
 		}

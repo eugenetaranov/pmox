@@ -75,7 +75,7 @@ func TestMatchesBashCatalog(t *testing.T) {
 
 // goOnly are items added after the port: the bash installer, the fallback
 // until the cut-over, doesn't offer them.
-var goOnly = map[string]bool{"sudopw": true, "autoupdate-tools": true, "proxy": true, "corpca": true}
+var goOnly = map[string]bool{"sudopw": true, "autoupdate-tools": true, "proxy": true, "corpca": true, "dotfiles": true}
 
 const teamTab = `
 [[item]]

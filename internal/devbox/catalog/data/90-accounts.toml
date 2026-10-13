@@ -115,3 +115,19 @@ source = "sets a password if there is none · removes NOPASSWD from your /etc/su
 
 [[item.step]]
 type = "go:sudopw"
+
+# Your own dotfiles, applied last so they win: cloned (or pulled) on every
+# run, then the repo's install script, or stow.
+[[item]]
+id = "dotfiles"
+tab = "accounts"
+label = "Your dotfiles repo (~/.dotfiles: its install script, or stow)"
+last = true
+source = "git clone/pull · install.sh, bootstrap.sh or setup.sh, else stow each directory · runs last"
+
+[[item.step]]
+type = "apt"
+packages = ["git", "stow"]
+
+[[item.step]]
+type = "go:dotfiles"

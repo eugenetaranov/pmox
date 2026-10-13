@@ -533,7 +533,11 @@ clears the search; Esc on an empty search quits.
    and Gemini CLI.
 9. **Accounts and keys:** git identity, git defaults (rebase on pull, push
    sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
-   GitHub login, commit signing with SSH, GitLab CLI.
+   GitHub login, commit signing with SSH, GitLab CLI, and your dotfiles repo:
+   cloned to `~/.dotfiles` (pulled on later runs), then its `install.sh`,
+   `bootstrap.sh` or `setup.sh`, or else `stow` for each top-level
+   directory. It runs after everything else, so your files win (`[dotfiles]
+   repo = "…"` in a personal profile).
 
 Downloads are pinned: vendor apt keys are checked against their
 fingerprints and release binaries against their sha256 before they're

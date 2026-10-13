@@ -52,6 +52,8 @@ type Answers struct {
 	GitHub     GitHub   `json:"github"`
 	NPM        NPM      `json:"npm"`
 	Registries []string `json:"registries"`
+	// Dotfiles is the user's dotfiles repo (cloned to ~/.dotfiles).
+	Dotfiles string `json:"dotfiles,omitempty"`
 	// Layers are the picks each named profile set, by its name. Applying
 	// a profile with that name again replaces its layer (SetLayer).
 	Layers map[string][]string `json:"layers,omitempty"`
@@ -368,6 +370,16 @@ func CheckCA(c CA) error {
 		}
 	case !filepath.IsAbs(c.Source):
 		return errors.New("want an absolute path on the VM or an https URL")
+	}
+	return nil
+}
+
+var repoRe = regexp.MustCompile(`^(https://[^\s'"\\$` + "`" + `;]+|ssh://[^\s'"\\$` + "`" + `;]+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/~-]+)$`)
+
+// CheckRepo checks a git repo URL: https://, ssh:// or user@host:path.
+func CheckRepo(u string) error {
+	if !repoRe.MatchString(u) || strings.HasPrefix(u, "-") {
+		return errors.New("want an https://, ssh:// or git@host:path repo URL")
 	}
 	return nil
 }

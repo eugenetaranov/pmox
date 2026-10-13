@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 )
 
@@ -216,5 +217,42 @@ func TestWithLineBeforeMark(t *testing.T) {
 	}
 	if got := WithLine(b, "source local", ""); string(got) != string(b) {
 		t.Errorf("a line already there moved: %q", got)
+	}
+}
+
+func TestDotfiles(t *testing.T) {
+	x := &fakeExec{}
+	e := testEnv(t, x)
+	var notes []string
+	e.Note = func(s string) { notes = append(notes, s) }
+	st := step(t, catalog.Step{Type: "go:dotfiles"})
+	e.Answers = &answers.Answers{}
+	apply(t, e, st)
+	if len(notes) != 1 || len(x.ran) != 0 {
+		t.Fatalf("no repo: notes %q, ran %q", notes, x.commands())
+	}
+	e.Answers.Dotfiles = "https://github.com/ada/dotfiles"
+	// The clone (the fake doesn't make one): then stow, no install script.
+	x.reply = func(c Cmd) ([]byte, error) {
+		if c.Name == "git" && c.Args[0] == "clone" {
+			put(t, e.Path("/home/ada/.dotfiles/.git/HEAD"), "ref")
+			put(t, e.Path("/home/ada/.dotfiles/zsh/.zshrc.local"), "")
+			put(t, e.Path("/home/ada/.dotfiles/git/.gitconfig"), "")
+			put(t, e.Path("/home/ada/.dotfiles/README.md"), "")
+		}
+		return nil, nil
+	}
+	apply(t, e, st)
+	want := []string{"(as user) git clone -- https://github.com/ada/dotfiles /home/ada/.dotfiles", "(as user) stow -d /home/ada/.dotfiles -t /home/ada --restow git zsh"}
+	if got := x.commands(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("ran\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// Next run: pull, and the install script wins over stow.
+	x.ran = nil
+	put(t, e.Path("/home/ada/.dotfiles/bootstrap.sh"), "#!/bin/sh\n")
+	apply(t, e, st)
+	got := x.commands()
+	if len(got) != 2 || got[0] != "(as user) git -C /home/ada/.dotfiles pull --ff-only" || !strings.HasSuffix(got[1], " _ /home/ada/.dotfiles bootstrap.sh") {
+		t.Errorf("ran %q", got)
 	}
 }

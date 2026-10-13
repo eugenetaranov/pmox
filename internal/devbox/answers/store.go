@@ -59,6 +59,7 @@ type userFile struct {
 	GitHub     GitHub              `json:"github"`
 	NPM        NPM                 `json:"npm"`
 	Registries []string            `json:"registries"`
+	Dotfiles   string              `json:"dotfiles,omitempty"`
 	Layers     map[string][]string `json:"layers,omitempty"`
 	Hand       []string            `json:"hand,omitempty"`
 }
@@ -215,7 +216,7 @@ func (s *Store) Load(name string) (*Answers, []string, error) {
 				name, strings.Join(refused, " ")))
 		}
 		a.MiseExtra, a.MCPListen, a.MCPServers, a.WireAgents = uf.MiseExtra, uf.MCPListen, uf.MCPServers, uf.WireAgents
-		a.Git, a.GitHub, a.NPM, a.Registries = uf.Git, uf.GitHub, uf.NPM, uf.Registries
+		a.Git, a.GitHub, a.NPM, a.Registries, a.Dotfiles = uf.Git, uf.GitHub, uf.NPM, uf.Registries, uf.Dotfiles
 	}
 	if len(a.Layers) == 0 {
 		a.Layers = nil
@@ -252,7 +253,7 @@ func (s *Store) Save(a *Answers) error {
 		return Merge(nil, system), Merge(nil, own)
 	}
 	uf := &userFile{Version: Version, MiseExtra: a.MiseExtra, MCPListen: a.MCPListen, MCPServers: a.MCPServers,
-		WireAgents: a.WireAgents, Git: a.Git, GitHub: a.GitHub, NPM: a.NPM, Registries: a.Registries}
+		WireAgents: a.WireAgents, Git: a.Git, GitHub: a.GitHub, NPM: a.NPM, Registries: a.Registries, Dotfiles: a.Dotfiles}
 	sys.Version, sys.TZ, sys.DevPorts, sys.Proxy, sys.CA = Version, a.TZ, a.DevPorts, a.Proxy, a.CA
 	sys.Picks, uf.Picks = split(a.Picks)
 	sys.Hand, uf.Hand = split(a.Hand)

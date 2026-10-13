@@ -50,6 +50,8 @@ type Item struct {
 	// or "user" (kept in the user's own answers). Default: system for the
 	// System tab, else user.
 	Scope string `toml:"scope"`
+	// Last puts the item after every other item in the plan (dotfiles).
+	Last  bool   `toml:"last"`
 	Steps []Step `toml:"step"`
 
 	// From is the file the item came from (for error messages).

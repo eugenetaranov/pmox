@@ -28,6 +28,8 @@ type Profile struct {
 	Git       *Git     `toml:"git"`
 	System    *System  `toml:"system"`
 	MCP       *MCP     `toml:"mcp"`
+	// Dotfiles is the dotfiles item's repo (a personal profile's).
+	Dotfiles *Dotfiles `toml:"dotfiles,omitempty"`
 	// Lock pins versions (export --lock).
 	Lock *answers.Lock `toml:"lock,omitempty"`
 }
@@ -48,6 +50,11 @@ type System struct {
 	NoProxy  string `toml:"no_proxy,omitempty"`
 	CABundle string `toml:"ca_bundle,omitempty"`
 	CASHA256 string `toml:"ca_sha256,omitempty"`
+}
+
+// Dotfiles is a dotfiles repo.
+type Dotfiles struct {
+	Repo string `toml:"repo"`
 }
 
 // MCP holds the MCPJungle settings.
@@ -94,6 +101,11 @@ func Parse(name string, b []byte) (*Profile, error) {
 			if !answers.ValidPort(port) {
 				return nil, fmt.Errorf("%s: system.dev_ports: %q: want a port, a range (8000-8010), or either with /udp", name, port)
 			}
+		}
+	}
+	if p.Dotfiles != nil && p.Dotfiles.Repo != "" {
+		if err := answers.CheckRepo(p.Dotfiles.Repo); err != nil {
+			return nil, fmt.Errorf("%s: dotfiles.repo: %w", name, err)
 		}
 	}
 	if p.Lock != nil {
@@ -143,6 +155,9 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (dropped, warnin
 	if p.User != "" {
 		a.User = p.User
 	}
+	if p.Dotfiles != nil && p.Dotfiles.Repo != "" {
+		a.Dotfiles = p.Dotfiles.Repo
+	}
 	a.MiseExtra = answers.Merge(a.MiseExtra, p.MiseExtra)
 	if p.Git != nil {
 		if p.Git.Name != "" {
@@ -189,6 +204,9 @@ func Export(a *answers.Answers, lock *answers.Lock) []byte {
 	}
 	if a.TZ != "" || len(a.DevPorts) > 0 || a.Proxy.URL != "" || a.CA.Source != "" {
 		p.System = &System{TZ: a.TZ, DevPorts: a.DevPorts, Proxy: a.Proxy.URL, NoProxy: a.Proxy.NoProxy, CABundle: a.CA.Source, CASHA256: a.CA.SHA256}
+	}
+	if a.Dotfiles != "" {
+		p.Dotfiles = &Dotfiles{Repo: a.Dotfiles}
 	}
 	if len(a.MCPServers) > 0 || a.MCPListen != "" || a.WireAgents != nil {
 		p.MCP = &MCP{Servers: a.MCPServers, Listen: a.MCPListen, WireAgents: a.WireAgents}

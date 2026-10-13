@@ -140,6 +140,11 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 			return nil, err
 		}
 	}
+	if has("dotfiles") {
+		if err := k.askDotfiles(); err != nil {
+			return nil, err
+		}
+	}
 	return c, k.askSecrets(c, has)
 }
 
@@ -394,6 +399,24 @@ func (k *asker) askCA() error {
 			continue
 		}
 		k.a.CA = cur
+		return nil
+	}
+}
+
+// askDotfiles asks for the dotfiles repo.
+func (k *asker) askDotfiles() error {
+	cur := k.a.Dotfiles
+	for {
+		v, err := ui.Input("Dotfiles repo (e.g. https://github.com/you/dotfiles or git@github.com:you/dotfiles)", "A private repo over SSH needs a key the VM can use (or pmox shell -A).", cur)
+		if err != nil {
+			return err
+		}
+		if err := answers.CheckRepo(v); err != nil {
+			fmt.Fprintln(k.out, err)
+			cur = v
+			continue
+		}
+		k.a.Dotfiles = v
 		return nil
 	}
 }

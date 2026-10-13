@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 )
@@ -137,5 +138,21 @@ func TestAfterOrdersWithoutPulling(t *testing.T) {
 	items, _ = Resolve(c, []string{"registries"}, false)
 	if strings.Contains(" "+strings.Join(IDs(items), " ")+" ", " github ") {
 		t.Errorf("registries pulled in github: %v", IDs(items))
+	}
+}
+
+// dotfiles goes after everything, catalog.d's items included.
+func TestDotfilesLast(t *testing.T) {
+	local := fstest.MapFS{"team.toml": {Data: []byte("[[item]]\nid = \"teamtools\"\ntab = \"dev\"\nlabel = \"Team\"\n[[item.step]]\ntype = \"apt\"\npackages = [\"jq\"]\n")}}
+	c, err := catalog.Load(local, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := Resolve(c, []string{"dotfiles", "teamtools", "zsh", "gitid"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := IDs(items); ids[len(ids)-1] != "dotfiles" {
+		t.Errorf("order = %v", ids)
 	}
 }

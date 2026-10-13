@@ -205,3 +205,12 @@ func TestProxyAndCAChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckRepo(t *testing.T) {
+	for u, ok := range map[string]bool{"https://github.com/ada/dotfiles": true, "git@github.com:ada/dotfiles.git": true, "ssh://git@host/x": true,
+		"--upload-pack=x": false, "https://x/y;rm": false, "file:///etc": false, "/tmp/x": false, "": false} {
+		if err := CheckRepo(u); (err == nil) != ok {
+			t.Errorf("%q: err = %v", u, err)
+		}
+	}
+}
