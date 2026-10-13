@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -501,3 +502,28 @@ func TestResolveTargetArg_ZeroArgs_NoVMsErrors(t *testing.T) {
 
 // Guard: make sure unused helpers are not orphaned at build time.
 var _ = fmt.Sprintf
+
+// Several exec words reach the remote command exactly as given, through
+// the remote shell; one word stays a shell command line.
+func TestRemoteCommand(t *testing.T) {
+	if got := remoteCommand([]string{"ls ~ | wc -l"}); got != "ls ~ | wc -l" {
+		t.Errorf("one arg = %q", got)
+	}
+	args := []string{"sed", "-i", `s/^127\.0\.1\.1 .*/127.0.1.1 text2cad/`, "/etc/hosts", "it's", "$HOME", "a b", ""}
+	cmd := remoteCommand(append([]string{"printf", `%s\n`}, args...))
+	for _, sh := range []string{"sh", "zsh", "bash"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			continue
+		}
+		out, err := exec.Command(sh, "-c", cmd).Output()
+		if err != nil {
+			t.Fatalf("%s -c %s: %v", sh, cmd, err)
+		}
+		if got, want := string(out), strings.Join(args, "\n")+"\n"; got != want {
+			t.Errorf("%s got %q\nwant %q", sh, got, want)
+		}
+	}
+	if got := remoteCommand([]string{"uname", "-a"}); got != "uname -a" {
+		t.Errorf("plain words quoted needlessly: %q", got)
+	}
+}

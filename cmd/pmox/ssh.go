@@ -123,6 +123,13 @@ func newExecCmd() *cobra.Command {
 output and exit code. The -- separator is required between the VM
 argument and the remote command.
 
+Several words after -- are the command and its exact arguments: each is
+passed through as given, quotes and all, so
+  pmox exec web1 -- sudo sed -i 's/^a.*/b/' /etc/hosts
+works as typed. One quoted argument is a shell command line instead, for
+pipes, globs and ~:
+  pmox exec web1 -- 'ls ~ | wc -l'
+
 The VM argument is optional: when omitted, pmox auto-selects the
 only pmox VM when one exists, or shows an interactive picker when
 there are several. On a terminal, the remote command is also
@@ -218,7 +225,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 
 	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), nil)...)
-	sshArgs := buildSSHArgs(sshPath, target, opts, remoteArgs)
+	sshArgs := buildSSHArgs(sshPath, target, opts, []string{remoteCommand(remoteArgs)})
 	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 
@@ -395,6 +402,29 @@ func resolveIdentityKey(flagValue, configPubkey string) (string, error) {
 
 func derivePrivateKeyPath(pubkeyPath string) string {
 	return strings.TrimSuffix(pubkeyPath, ".pub")
+}
+
+// remoteCommand is what exec hands ssh, which joins its arguments into a
+// line the remote shell parses again. One argument is that line, as with
+// ssh (pipes, globs, ~ work); several are a command and its exact
+// arguments, each quoted so the remote shell passes it through as given.
+func remoteCommand(args []string) string {
+	if len(args) == 1 {
+		return args[0]
+	}
+	q := make([]string, len(args))
+	for i, a := range args {
+		q[i] = posixQuote(a)
+	}
+	return strings.Join(q, " ")
+}
+
+// posixQuote quotes s for a POSIX shell (and zsh), unless it needs none.
+func posixQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:,@%+") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func buildSSHArgs(sshPath string, target *sshTarget, hostKeyOpts, extraArgs []string) []string {
