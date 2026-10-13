@@ -24,16 +24,30 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/tui"
 	"github.com/eugenetaranov/pmox/internal/tui/target"
+	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
-// defaultMountExcludes leave out what is rebuilt per machine. .git is
-// synced, so git works on the VM (as a mirror: local wins).
+// defaultMountExcludes leave out what each machine keeps for itself:
+// environments, caches and build state rebuilt per machine, and per-machine
+// tool settings (.claude, .python-version). An excluded path is also never
+// deleted on the VM, so the VM's own copies stay. .git is synced, so git
+// works on the VM (as a mirror: local wins).
 var defaultMountExcludes = []string{
 	".venv",
 	".terraform",
 	".terraform.*",
 	"node_modules",
 	"__pycache__",
+	".mypy_cache",
+	".pytest_cache",
+	".ruff_cache",
+	".tox",
+	".direnv",
+	".next",
+	".turbo",
+	".claude",
+	".python-version",
 	".DS_Store",
 	"*.swp",
 	"*.swo",
@@ -107,8 +121,11 @@ output) sync too; --gitignore leaves them out.
 The sync is one way, from this machine to the VM.
 
 Built-in default excludes (replaced by --exclude or config mount_excludes):
-  .venv  .terraform  .terraform.*  node_modules
-  __pycache__  .DS_Store  *.swp  *.swo  *~
+  .venv  .terraform  .terraform.*  node_modules  __pycache__  .mypy_cache
+  .pytest_cache  .ruff_cache  .tox  .direnv  .next  .turbo  .claude
+  .python-version  .DS_Store  *.swp  *.swo  *~
+Excluded paths are also left alone on the VM (never deleted there), so
+the VM keeps its own .claude/ and .python-version.
 
 .git is synced, so git status, log and diff work on the VM. The VM copy
 is a mirror of yours: commit and switch branches locally, since the next
@@ -160,8 +177,10 @@ func newMountGroupCmd() *cobra.Command {
 
 Subcommands: 'pmox mount create' (same as above), 'pmox mount list'
 (running background mounts), 'pmox mount delete' (stop them; also
-'pmox umount'). A local directory literally named create, list, ls,
-delete or rm must be given as ./<name>.`
+'pmox umount'), 'pmox mount restart' (start them again, with changed
+options; also 'pmox remount'), 'pmox mount autostart on|off' (bring them
+back at login). A local directory literally named create, list, ls,
+delete, rm, restart or autostart must be given as ./<name>.`
 	// Bare 'pmox mount' behaves like every other noun: the verb palette
 	// on a terminal, help + exit 2 otherwise. With arguments it is
 	// 'mount create'.
@@ -180,6 +199,8 @@ delete or rm must be given as ./<name>.`
 		withShort(rename(newMountCmd(), "create"), "Start syncing a local directory to a VM"),
 		newMountListCmd(),
 		rename(newUmountCmd(), "delete", "rm"),
+		rename(newRemountCmd(), "restart"),
+		newMountAutostartCmd(),
 	)
 	return g
 }
@@ -225,7 +246,7 @@ func newMountListCmd() *cobra.Command {
 			for _, r := range rows {
 				state := "running"
 				if !r.Running {
-					state = "stale (run 'pmox mount delete' to clear)"
+					state = "stale ('pmox remount --stale' restarts it; 'pmox mount delete' clears it)"
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", r.VM, r.RemotePath, r.LocalPath, r.PID, state)
 			}
@@ -377,7 +398,29 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 	}
 	fmt.Fprintf(stderr, "%s initial sync complete\n", timestamp())
 
-	return watchAndSync(cmd, rsyncPath, rsyncArgs, localPath, f.debounce, stderr)
+	// When syncs keep failing, the VM may have a new address (DHCP after
+	// a sleep or a network change): ask Proxmox again.
+	extra := extraArgsAfterDash(cmd)
+	refresh := func() ([]string, error) {
+		r, err := vm.Resolve(ctx, client, ref)
+		if err != nil {
+			return nil, err
+		}
+		ifaces, err := client.AgentNetwork(ctx, r.Node, r.VMID)
+		if err != nil {
+			return nil, fmt.Errorf("guest agent: %w", err)
+		}
+		ip := vmwait.PickIPv4(ifaces)
+		if ip == "" {
+			return nil, errors.New("no IPv4 address from the guest agent")
+		}
+		if ip != sshT.IP {
+			fmt.Fprintf(stderr, "%s %s is now at %s (was %s)\n", timestamp(), sshT.Name, ip, sshT.IP)
+			sshT.IP = ip
+		}
+		return buildMountRsyncArgs(rsyncPath, sshT, localPath, remotePath, f.gitignore && !f.noGitignore, f.noDelete, excludes, guestHostKeyOpts(), extra), nil
+	}
+	return watchAndSync(cmd, rsyncPath, rsyncArgs, localPath, f.debounce, stderr, refresh)
 }
 
 // mountSourcePath is localPath made absolute. It refuses your home
@@ -467,7 +510,17 @@ func buildMountRsyncArgs(rsyncPath string, target *sshTarget, localPath, remoteP
 	return args
 }
 
-func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, localPath string, debounce time.Duration, stderr io.Writer) error {
+// Retry after a failed sync: from retryMin, doubling up to retryMax.
+var (
+	mountRetryMin = 5 * time.Second
+	mountRetryMax = 2 * time.Minute
+)
+
+// watchAndSync syncs on every change (debounced). A failed sync (the
+// laptop asleep or off the network, the VM away) is retried with backoff
+// until one succeeds, without waiting for a change; from the second
+// failure on, refresh (if any) finds the VM's address again.
+func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, localPath string, debounce time.Duration, stderr io.Writer, refresh func() ([]string, error)) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
@@ -486,6 +539,35 @@ func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, loca
 		<-timer.C
 	}
 	pending := false
+	retry := time.NewTimer(0)
+	if !retry.Stop() {
+		<-retry.C
+	}
+	failures := 0
+	backoff := mountRetryMin
+	// sync runs rsync and arms the retry when it fails.
+	sync := func(okMsg string) {
+		if failures >= 2 && refresh != nil {
+			if args, err := refresh(); err != nil {
+				fmt.Fprintf(stderr, "%s can't reach the VM yet: %v\n", timestamp(), err)
+			} else {
+				rsyncArgs = args
+			}
+		}
+		if err := mountRsyncRunFn(rsyncPath, rsyncArgs, stderr); err != nil {
+			failures++
+			fmt.Fprintf(stderr, "%s sync error: %v; retrying in %s\n", timestamp(), err, backoff)
+			retry.Reset(backoff)
+			backoff = min(backoff*2, mountRetryMax)
+			return
+		}
+		if failures > 0 {
+			fmt.Fprintf(stderr, "%s back in sync after %d failed attempt(s)\n", timestamp(), failures)
+		}
+		failures, backoff = 0, mountRetryMin
+		retry.Stop()
+		fmt.Fprintf(stderr, "%s %s\n", timestamp(), okMsg)
+	}
 
 	for {
 		select {
@@ -524,22 +606,17 @@ func watchAndSync(cmd *cobra.Command, rsyncPath string, rsyncArgs []string, loca
 			}
 			if isOverflow(err) {
 				fmt.Fprintf(stderr, "%s watcher overflow, running full sync...\n", timestamp())
-				if syncErr := mountRsyncRunFn(rsyncPath, rsyncArgs, stderr); syncErr != nil {
-					fmt.Fprintf(stderr, "%s sync error: %v\n", timestamp(), syncErr)
-				} else {
-					fmt.Fprintf(stderr, "%s full sync complete\n", timestamp())
-				}
+				sync("full sync complete")
 			} else {
 				fmt.Fprintf(stderr, "%s watcher error: %v\n", timestamp(), err)
 			}
 
 		case <-timer.C:
 			pending = false
-			if syncErr := mountRsyncRunFn(rsyncPath, rsyncArgs, stderr); syncErr != nil {
-				fmt.Fprintf(stderr, "%s sync error: %v\n", timestamp(), syncErr)
-			} else {
-				fmt.Fprintf(stderr, "%s synced\n", timestamp())
-			}
+			sync("synced")
+
+		case <-retry.C:
+			sync("synced")
 		}
 	}
 }
@@ -642,13 +719,15 @@ func runMountDaemon(cmd *cobra.Command, localPath, vmName, remotePath, serverURL
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	childArgs := mountChildArgs(exe, f, serverURL, localPath, vmName, remotePath, sshInsecure, extraArgsAfterDash(cmd))
+	opts := mountOptions(f, serverURL, sshInsecure, extraArgsAfterDash(cmd))
+	childArgs := mountChildArgs(exe, f, serverURL, localPath, vmName, remotePath, sshInsecure, opts.Extra)
 	logPath := mount.LogPath(stateDir, vmName, localPath, remotePath)
 	rec, err := mountStartDaemonFn(stateDir, exe, childArgs, mount.Record{
 		VMName:     vmName,
 		LocalPath:  localPath,
 		RemotePath: remotePath,
 		LogPath:    logPath,
+		Options:    opts,
 	})
 	if err != nil {
 		return err

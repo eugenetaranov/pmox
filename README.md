@@ -1020,11 +1020,20 @@ rerun; pmox will re-pin on the next connection. pmox never touches
 
 ### `pmox mount` stops silently in the background
 
-Background mounts write a PID file and log file under
-`~/.config/pmox/mount/`. `pmox mount list` shows the running ones,
-`pmox umount` offers them to stop, and `pmox umount --all <vm>` stops
-every mount for a VM; inspect the log file to find out why a mount
-exited.
+Background mounts write a record and a log file under
+`~/.local/state/pmox/mounts/`. `pmox mount list` shows them, `pmox umount`
+offers them to stop, and `pmox umount --all <vm>` stops every mount for a
+VM; inspect the log file to find out why a mount exited.
+
+A running mount rides out sleep and network changes: a failed sync is
+retried (5 s, doubling to 2 min) until the VM is reachable again, and
+from the second failure on it asks Proxmox for the VM's current address.
+A mount whose process ended (a reboot, or the VM or Proxmox unreachable
+when it started) shows as `stale`: `pmox remount --stale` starts it again
+with its options, and `pmox mount autostart on` does that for you at login
+and every five minutes (a launchd agent on macOS, a systemd user timer on
+Linux). `pmox remount <vm>:<path> --exclude=…` restarts a mount with
+changed options.
 
 ### Hook exited non-zero but `pmox launch` exited 0
 

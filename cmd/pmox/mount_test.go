@@ -486,7 +486,8 @@ func TestDebounceDefault(t *testing.T) {
 func TestDefaultMountExcludes(t *testing.T) {
 	expected := []string{
 		".venv", ".terraform", ".terraform.*",
-		"node_modules", "__pycache__", ".DS_Store",
+		"node_modules", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+		".tox", ".direnv", ".next", ".turbo", ".claude", ".python-version", ".DS_Store",
 		"*.swp", "*.swo", "*~",
 	}
 	assert.Equal(t, expected, defaultMountExcludes)

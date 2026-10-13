@@ -203,6 +203,7 @@ func registerCommands(root *cobra.Command) {
 		shortcut(newSyncCmd(), groupCommon, "vm sync"),
 		shortcut(newApplyCmd(), groupCommon, "vm apply"),
 		shortcut(newUmountCmd(), groupCommon, "mount delete"),
+		shortcut(newRemountCmd(), groupCommon, "mount restart"),
 	)
 
 	for _, g := range []*cobra.Command{
