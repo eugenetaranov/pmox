@@ -13,18 +13,19 @@
 - [x] 1.11 `pmox launch --devbox-profile`, `devbox_profile` config
 - [x] 1.12 `task devbox:e2e`: throwaway VM, profile with every item, `--verify`, re-run no-op, delete
 
-## 2. Port items, tab by tab (each: checklist from spec + bash, unit tests, e2e, delete the bash function)
+## 2. Port items, tab by tab (each: checklist from spec + bash, unit tests, e2e; the bash functions stay until 4.1, as bash is the fallback on other architectures)
 
-- [ ] 2.1 Shell & CLI (zsh, zshcfg, p10k, vimcfg, shellcfg, fzftab, tmuxcfg, cli)
-- [ ] 2.2 Dev tools and Languages (docs, profiling, mise-only items)
-- [ ] 2.3 Cloud, IaC, Kubernetes (krew, helmfile, k3s)
-- [ ] 2.4 AI (claude, omp, ollama, ecc, agentcfg, mcpjungle + mcp-sync + agent wiring)
-- [ ] 2.5 System (docker, tailscale, monitoring, devlimits, zram, journald, autoupdates, needrestart, sshharden, ufw, fail2ban)
-- [ ] 2.6 Accounts (gitcfg, sshkey, github)
+- [x] 2.1 Shell & CLI (zsh, zshcfg, p10k, vimcfg, shellcfg, fzftab, tmuxcfg, cli, docs)
+- [x] 2.2 Dev tools and Languages (profiling, mise-only items)
+- [x] 2.3 Cloud, IaC, Kubernetes (krew, helmfile, k3s)
+- [x] 2.4 AI (claude, omp, ollama, ecc, agentcfg, mcpjungle + mcp-sync + agent wiring); agentkeys moves with the cred step (3.1)
+- [x] 2.5 System (debug, docker, tailscale, monitoring, devlimits, zram, journald, tzlocale, autoupdates, needrestart, sshharden, ufw, fail2ban); registries moves with the cred step (3.1)
+- [x] 2.6 Accounts (gitid, gitcfg, sshkey)
+- [ ] 2.7 GitHub login and commit signing (github, gitsign): interactive gh flows, key uploads; needs a live GitHub account to test
 
 ## 3. Developer-review additions (each lands in the slice of its tab; listed here to track)
 
-- [ ] 3.1 `cred` step type porting `CRED_ROWS`; reject secret keys in profiles
+- [ ] 3.1 `cred` step type porting `CRED_ROWS` (agentkeys, npmrc, registries, agekey); reject secret keys in profiles
 - [ ] 3.2 Layered `--profile`, named layers that replace, `user` / `--user` (create the account), review lists dropped items
 - [ ] 3.3 `export --lock` and installing from `[lock]` (mise exact, apt best effort with a warning)
 - [ ] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section

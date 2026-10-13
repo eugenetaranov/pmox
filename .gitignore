@@ -39,3 +39,4 @@ __pycache__/
 
 # The Go devbox-setup builds embedded into pmox (task devbox:build).
 internal/bootstrap/gobin/*.gz
+/devbox-setup

@@ -143,7 +143,7 @@ CATALOG_ROWS=(
 
   "claude|ai|Claude Code|fn|||apt claude-code (Anthropic repo)"
   "codex|ai|OpenAI Codex CLI|mise|codex@latest||"
-  "gemini|ai|Gemini CLI|mise|gemini@latest|node|"
+  "gemini|ai|Gemini CLI|mise|gemini@latest|node essentials|"
   "opencode|ai|OpenCode|mise|opencode@latest||"
   "aider|ai|Aider|mise|uv@latest pipx:aider-chat[uvx_args=--python=3.12]||"
   "goose|ai|Goose|mise|aqua:block/goose@latest||"

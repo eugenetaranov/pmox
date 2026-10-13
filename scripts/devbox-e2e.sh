@@ -1,7 +1,9 @@
 #!/bin/sh
 # End-to-end check of the Go devbox-setup on a throwaway VM: launch it with
-# a profile (every catalog item, or ITEMS="cli tmux …"), verify, re-run,
-# delete. Needs a configured pmox server. KEEP=1 keeps the VM.
+# a profile (every catalog item, or ITEMS="cli tmux …"; MCP="github …"
+# picks MCP servers and wires agents; TZ_SET=Europe/Berlin sets the
+# timezone), verify, re-run, delete. Needs a
+# configured pmox server. KEEP=1 keeps the VM.
 set -eu
 PMOX=${PMOX:-bin/pmox}
 NAME=${NAME:-devbox-e2e-$(date +%s)}
@@ -18,6 +20,13 @@ trap cleanup EXIT
   sep=
   for id in $ITEMS; do printf '%s"%s"' "$sep" "$id"; sep=', '; done
   printf ']\n'
+  if [ -n "${TZ_SET:-}" ]; then printf '[system]\ntz = "%s"\n' "$TZ_SET"; fi
+  if [ -n "${MCP:-}" ]; then
+    printf '[mcp]\nwire_agents = true\nservers = ['
+    sep=
+    for n in $MCP; do printf '%s"%s"' "$sep" "$n"; sep=', '; done
+    printf ']\n'
+  fi
 } > "$profile"
 echo "== $NAME: $(echo $ITEMS | wc -w | tr -d ' ') items"
 

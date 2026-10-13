@@ -100,7 +100,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, version)
 		return nil
 	}
-	cat, err := catalog.Load(localCatalog(), nil)
+	cat, err := catalog.Load(localCatalog(), confFS(o.share()))
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 			return errors.New("needs a terminal (or --yes to re-apply saved choices)")
 		}
-		k := &asker{cat: cat, a: a, share: filepath.Dir(o.legacy), out: stdout, installed: func(t string) bool { return userHas(a.User, t) }}
+		k := &asker{cat: cat, a: a, share: o.share(), out: stdout, installed: func(t string) bool { return userHas(a.User, t) }}
 		c, err := k.ask(ctx)
 		if errors.Is(err, ui.ErrQuit) {
 			fmt.Fprintln(stdout, "Cancelled.")
@@ -174,7 +174,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		a.MiseExtra = answers.Merge(a.MiseExtra, c.miseExtra)
 		items, extra, sec = c.items, c.miseExtra, c.secrets
 		if o.dryRun {
-			env, err := newEnv(a.User, nil)
+			env, err := o.env(a, sec, nil)
 			if err != nil {
 				return err
 			}
@@ -192,7 +192,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	if o.dryRun || o.verify {
-		env, err := newEnv(a.User, nil)
+		env, err := o.env(a, sec, nil)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 	}
 	defer logf.Close()
 	fmt.Fprintf(logf, "=== devbox-setup %s, %s\n", version, time.Now().Format(time.RFC3339))
-	env, err := newEnv(a.User, logf)
+	env, err := o.env(a, sec, logf)
 	if err != nil {
 		return err
 	}
@@ -232,8 +232,16 @@ func cli(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	notesFile := filepath.Join(o.state, ".notes")
+	if bash == nil {
+		_ = os.Remove(notesFile) // bash's --begin does this when it runs
+	}
 	r := &run.Runner{Env: env, Progress: run.Plain{W: stdout}, TailLines: 25}
 	res := r.Run(ctx, items, extra)
+	if err := primeZshCompletions(ctx, env, r.Progress); err != nil {
+		res.Failed = append(res.Failed, "zshcomp")
+		res.Errors["zshcomp"] = err.Error()
+	}
 	// While bash runs steps, its notes (with "Secrets to fill in") are the
 	// fuller ~/devbox-setup.txt.
 	if bash != nil {
@@ -242,8 +250,15 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		} else {
 			_, _ = stdout.Write(out)
 		}
-	} else if err := writeSummary(env, items, extra); err != nil {
-		fmt.Fprintf(stderr, "devbox-setup: %s/devbox-setup.txt: %v\n", env.Home, err)
+	} else {
+		if b, err := os.ReadFile(notesFile); err == nil && len(b) > 0 {
+			for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+				fmt.Fprintf(stdout, "! %s\n", l)
+			}
+		}
+		if err := writeSummary(env, items, extra); err != nil {
+			fmt.Fprintf(stderr, "devbox-setup: %s/devbox-setup.txt: %v\n", env.Home, err)
+		}
 	}
 	fmt.Fprintf(stdout, "How each tool was installed and how to update it: %s/devbox-setup.txt\nLog: %s\n", env.Home, o.log)
 	if !res.OK() {
@@ -252,6 +267,26 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		}
 		return fmt.Errorf("failed: %s — fix and re-run devbox-setup", strings.Join(res.Failed, " "))
 	}
+	return nil
+}
+
+// primeZshCompletions fills the zsh completion cache once every tool of
+// the run is installed, so the first login doesn't pay for it.
+func primeZshCompletions(ctx context.Context, env *steps.Env, p run.Progress) error {
+	if _, err := os.Stat(env.Path("~/.config/devbox/completions.zsh")); err != nil {
+		return nil
+	}
+	if _, err := exec.LookPath("zsh"); err != nil {
+		return nil
+	}
+	const title = "zsh completions for installed tools"
+	p.Start(title)
+	_, err := env.RunLogged(ctx, steps.Cmd{Name: "zsh", Args: []string{"-c", "source ~/.config/devbox/completions.zsh && devbox_comp_refresh"}, AsUser: true})
+	if err != nil {
+		p.Done("fail", title)
+		return err
+	}
+	p.Done("ok", title)
 	return nil
 }
 
@@ -273,6 +308,43 @@ func verify(ctx context.Context, w io.Writer, env *steps.Env, items []*catalog.I
 	}
 	if missing > 0 {
 		return fmt.Errorf("%d item(s) missing", missing)
+	}
+	return nil
+}
+
+// env is the steps' Env for the run: the user's, with the saved answers
+// and this run's secrets. Notes go to the state's .notes (shown at the
+// end of the run) and the log.
+func (o *options) env(a *answers.Answers, sec *creds.Secrets, log io.Writer) (*steps.Env, error) {
+	env, err := newEnv(a.User, o.share(), log)
+	if err != nil {
+		return nil, err
+	}
+	env.Share, env.State, env.Answers, env.Secrets = o.share(), o.state, a, sec
+	env.Note = func(text string) {
+		if log != nil {
+			fmt.Fprintf(log, "NOTE: %s\n", text)
+		}
+		f, err := os.OpenFile(filepath.Join(o.state, ".notes"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		fmt.Fprintln(f, text)
+	}
+	return env, nil
+}
+
+// share is the directory devbox-setup's files are installed in (next to
+// the bash script).
+func (o *options) share() string { return filepath.Dir(o.legacy) }
+
+// confFS is share's conf directory, which file steps read, when it's
+// there (it isn't on a developer's machine).
+func confFS(share string) fs.FS {
+	dir := filepath.Join(share, "conf")
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return os.DirFS(dir)
 	}
 	return nil
 }

@@ -62,7 +62,14 @@ label = "Rust (rustup) + rust-analyzer + cargo-binstall"
 source = "mise use -g rust@stable cargo-binstall"
 
 [[item.step]]
-type = "legacy"
+type = "mise"
+tools = ["rust@stable", "cargo-binstall@latest"]
+
+[[item.step]]
+type = "run"
+cmd = "mise exec rust -- rustup component add rust-analyzer"
+as_user = true
+check = "mise exec rust -- rustup component list --installed | grep -q '^rust-analyzer'"
 
 [[item]]
 id = "ruby"

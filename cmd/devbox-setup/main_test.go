@@ -22,7 +22,7 @@ func TestDryRunPlan(t *testing.T) {
 		t.Fatalf("run: %v\n%s", err, errb.String())
 	}
 	got := out.String()
-	for _, want := range []string{"For user: " + me.Username, "zsh (login shell)\n  legacy", "mise   terraform@latest", "Extra mise tools\n  mise   starship"} {
+	for _, want := range []string{"For user: " + me.Username, "zsh (login shell)\n  apt    zsh git\n  shell  ", "  clone  https://github.com/romkatv/powerlevel10k.git", "mise   terraform@latest", "Extra mise tools\n  mise   starship"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
 		}
@@ -46,7 +46,9 @@ func TestImportBoundary(t *testing.T) {
 		t.Skipf("go list: %v", err)
 	}
 	const pmox = "github.com/eugenetaranov/pmox/"
-	allowed := []string{pmox + "internal/devbox", pmox + "cmd/devbox-setup", pmox + "internal/tui", pmox + "internal/bootstrap"}
+	// Not internal/bootstrap: it embeds the Go builds, so each build of
+	// devbox-setup would carry the previous ones.
+	allowed := []string{pmox + "internal/devbox", pmox + "cmd/devbox-setup", pmox + "internal/tui"}
 	for _, p := range strings.Fields(string(out)) {
 		if !strings.HasPrefix(p, pmox) {
 			continue

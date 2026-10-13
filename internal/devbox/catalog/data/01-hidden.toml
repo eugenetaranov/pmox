@@ -17,4 +17,36 @@ label = "mise"
 source = "apt mise (mise.jdx.dev repo)"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["curl", "ca-certificates", "git"]
+
+[[item.step]]
+type = "apt_repo"
+name = "mise"
+key_url = "https://mise.jdx.dev/gpg-key.pub"
+key_fingerprint = "24853EC9F655CE80B48E6C3A8B81C9D17413A06D"
+source = """
+Types: deb
+URIs: https://mise.jdx.dev/deb
+Suites: stable
+Components: main
+Architectures: {{arch}}
+Signed-By: {{keyring}}
+"""
+
+[[item.step]]
+type = "apt"
+packages = ["mise"]
+
+# mise's shims on every shell's PATH, non-interactive ones too: for bash,
+# before Ubuntu's "not interactive: return" guard.
+[[item.step]]
+type = "line"
+to = "~/.zshenv"
+line = 'export PATH="$HOME/.local/share/mise/shims:$PATH"'
+
+[[item.step]]
+type = "line"
+to = "~/.bashrc"
+line = 'export PATH="$HOME/.local/share/mise/shims:$PATH"'
+top = true

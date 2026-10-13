@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -22,17 +23,24 @@ import (
 
 type aptStep struct{ s catalog.Step }
 
-func (a aptStep) Plan(*Env) []Action { return []Action{{"apt", strings.Join(a.s.Packages, " ")}} }
+func (a aptStep) Plan(e *Env) []Action { return []Action{{"apt", strings.Join(a.Packages(e), " ")}} }
 
 func (a aptStep) Check(ctx context.Context, e *Env) (bool, error) {
-	missing, err := MissingPackages(ctx, e, a.s.Packages)
+	missing, err := MissingPackages(ctx, e, a.Packages(e))
 	return len(missing) == 0, err
 }
 
-func (a aptStep) Apply(ctx context.Context, e *Env) error { return AptInstall(ctx, e, a.s.Packages) }
+func (a aptStep) Apply(ctx context.Context, e *Env) error { return AptInstall(ctx, e, a.Packages(e)) }
 
-// Packages returns the apt step's packages (the runner batches them).
-func (a aptStep) Packages() []string { return a.s.Packages }
+// Packages returns the apt step's packages, with {{kernel}} filled in
+// (the runner batches them).
+func (a aptStep) Packages(e *Env) []string {
+	out := make([]string, len(a.s.Packages))
+	for i, p := range a.s.Packages {
+		out[i] = strings.ReplaceAll(p, "{{kernel}}", e.Kernel)
+	}
+	return out
+}
 
 // MissingPackages returns the packages that aren't installed.
 func MissingPackages(ctx context.Context, e *Env, pkgs []string) ([]string, error) {
@@ -331,6 +339,97 @@ func writeFile(p string, b []byte, mode fs.FileMode) error {
 	return os.Rename(tmp.Name(), p)
 }
 
+// --- line --------------------------------------------------------------------
+
+type lineStep struct{ s catalog.Step }
+
+func (l lineStep) Plan(*Env) []Action { return []Action{{"line", l.s.To + ": " + l.s.Line}} }
+
+// want is the file with the line in it, or nil when the file is missing
+// and IfExists says to leave it.
+func (l lineStep) want(cur []byte, missing bool) []byte {
+	if missing && l.s.IfExists {
+		return nil
+	}
+	if l.s.Top {
+		return withLineFirst(cur, l.s.Line)
+	}
+	return WithLine(cur, l.s.Line, l.s.Match)
+}
+
+func (l lineStep) Check(_ context.Context, e *Env) (bool, error) {
+	cur, err := os.ReadFile(e.Path(l.s.To))
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
+		return false, err
+	}
+	want := l.want(cur, missing)
+	return want == nil || (!missing && bytes.Equal(cur, want)), nil
+}
+
+func (l lineStep) Apply(_ context.Context, e *Env) error {
+	p := e.Path(l.s.To)
+	cur, err := os.ReadFile(p)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
+		return err
+	}
+	want := l.want(cur, missing)
+	if want == nil {
+		return nil
+	}
+	mode := fs.FileMode(0o644)
+	if fi, err := os.Stat(p); err == nil {
+		mode = fi.Mode().Perm()
+	} else if err := mkdirFor(e, p, l.s); err != nil {
+		return err
+	}
+	if err := writeFile(p, want, mode); err != nil {
+		return err
+	}
+	uid, gid, _ := e.owner(l.s)
+	return e.chown(p, uid, gid)
+}
+
+// WithLine returns b with line in it: in place of every line matching the
+// regexp match (when there is one and it matches), else appended after a
+// blank line (none in an empty file), unless b already has it.
+func WithLine(b []byte, line, match string) []byte {
+	lines := strings.Split(string(b), "\n")
+	if match != "" {
+		re := regexp.MustCompile(match)
+		hit := false
+		for i, x := range lines {
+			if re.MatchString(x) {
+				lines[i], hit = line, true
+			}
+		}
+		if hit {
+			return []byte(strings.Join(lines, "\n"))
+		}
+	}
+	for _, x := range lines {
+		if x == line {
+			return b
+		}
+	}
+	if len(b) == 0 {
+		return []byte(line + "\n")
+	}
+	return append(append([]byte{}, b...), "\n"+line+"\n"...)
+}
+
+// withLineFirst returns b with line as its first line, unless b already
+// has it.
+func withLineFirst(b []byte, line string) []byte {
+	for _, x := range strings.Split(string(b), "\n") {
+		if x == line {
+			return b
+		}
+	}
+	return append([]byte(line+"\n"), b...)
+}
+
 // --- link --------------------------------------------------------------------
 
 type linkStep struct{ s catalog.Step }
@@ -439,6 +538,69 @@ func (s sysctlStep) Apply(ctx context.Context, e *Env) error {
 	return err
 }
 
+// --- git_config --------------------------------------------------------------
+
+type gitConfigStep struct{ s catalog.Step }
+
+// values are the settings to make, in a stable order, without the ones
+// whose answer is empty.
+func (g gitConfigStep) values(e *Env) [][2]string {
+	name, email := "", ""
+	if e.Answers != nil {
+		name, email = e.Answers.Git.Name, e.Answers.Git.Email
+	}
+	r := strings.NewReplacer("{{git_name}}", name, "{{git_email}}", email)
+	keys := make([]string, 0, len(g.s.Values))
+	for k := range g.s.Values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out [][2]string
+	for _, k := range keys {
+		if v := r.Replace(g.s.Values[k]); v != "" {
+			out = append(out, [2]string{k, v})
+		}
+	}
+	return out
+}
+
+func (g gitConfigStep) Plan(e *Env) []Action {
+	var out []Action
+	for _, kv := range g.values(e) {
+		out = append(out, Action{"git", kv[0] + "=" + kv[1]})
+	}
+	return out
+}
+
+func (g gitConfigStep) applies(ctx context.Context, e *Env) bool {
+	return g.s.IfTool == "" || root(ctx, e, g.s.IfTool)
+}
+
+func (g gitConfigStep) Check(ctx context.Context, e *Env) (bool, error) {
+	if !g.applies(ctx, e) {
+		return true, nil
+	}
+	for _, kv := range g.values(e) {
+		out, err := e.Exec.Run(ctx, Cmd{Name: "git", Args: []string{"config", "--global", "--get", kv[0]}, AsUser: true})
+		if err != nil || strings.TrimSuffix(string(out), "\n") != kv[1] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (g gitConfigStep) Apply(ctx context.Context, e *Env) error {
+	if !g.applies(ctx, e) {
+		return nil
+	}
+	for _, kv := range g.values(e) {
+		if _, err := e.run(ctx, Cmd{Name: "git", Args: []string{"config", "--global", kv[0], kv[1]}, AsUser: true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // --- user_shell --------------------------------------------------------------
 
 type userShellStep struct{ s catalog.Step }
@@ -467,18 +629,51 @@ type runStep struct{ s catalog.Step }
 
 var homeRef = regexp.MustCompile(`^~(/|$)`)
 
-func (r runStep) Plan(*Env) []Action { return []Action{{"run", r.s.Cmd}} }
+// fill puts the user, their group and home, and the dpkg architecture into
+// a run step's command.
+func fill(e *Env, cmd string) string {
+	return strings.NewReplacer("{{user}}", e.User, "{{group}}", e.Group, "{{home}}", e.Home, "{{arch}}", e.Arch).Replace(cmd)
+}
+
+func (r runStep) Plan(e *Env) []Action { return []Action{{"run", fill(e, r.s.Cmd)}} }
+
+// Follows: an on_change step runs only after a change.
+func (r runStep) Follows() bool { return r.s.OnChange }
 
 func (r runStep) Check(ctx context.Context, e *Env) (bool, error) {
-	if r.s.Creates != "" {
+	switch {
+	case r.s.Creates != "":
 		_, err := os.Stat(e.Path(homeRef.ReplaceAllString(r.s.Creates, "~/")))
 		return err == nil, nil
+	case r.s.Check == "":
+		return true, nil // on_change
 	}
-	_, err := e.Exec.Run(ctx, Cmd{Name: "sh", Args: []string{"-c", r.s.Check}, AsUser: r.s.AsUser})
+	_, err := e.Exec.Run(ctx, Cmd{Name: "sh", Args: []string{"-c", fill(e, r.s.Check)}, AsUser: r.s.AsUser})
 	return err == nil, nil
 }
 
+// --- note --------------------------------------------------------------------
+
+type noteStep struct{ s catalog.Step }
+
+func (n noteStep) Plan(e *Env) []Action { return []Action{{"note", fill(e, n.s.Text)}} }
+
+// Always: a note is checked on every run and changes nothing.
+func (noteStep) Always() bool { return true }
+
+func (noteStep) Check(context.Context, *Env) (bool, error) { return true, nil }
+
+func (n noteStep) Apply(ctx context.Context, e *Env) error {
+	if n.s.When != "" {
+		if _, err := e.Exec.Run(ctx, Cmd{Name: "sh", Args: []string{"-c", fill(e, n.s.When)}}); err != nil {
+			return nil
+		}
+	}
+	e.note(fill(e, n.s.Text))
+	return nil
+}
+
 func (r runStep) Apply(ctx context.Context, e *Env) error {
-	_, err := e.run(ctx, Cmd{Name: "sh", Args: []string{"-c", r.s.Cmd}, AsUser: r.s.AsUser})
+	_, err := e.run(ctx, Cmd{Name: "sh", Args: []string{"-c", fill(e, r.s.Cmd)}, AsUser: r.s.AsUser})
 	return err
 }

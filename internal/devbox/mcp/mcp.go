@@ -21,6 +21,8 @@ type Spec struct {
 	// #KEY= ones. Defaults has a value the skeleton sets.
 	Keys, Optional []string
 	Defaults       map[string]string
+	// Skeleton is the env file a new server starts with.
+	Skeleton string
 }
 
 // Dirs are where the specs are, first match wins: the installed catalog,
@@ -70,7 +72,7 @@ skeleton 2>/dev/null || true`
 	if len(f) < 5 {
 		return nil, fmt.Errorf("%s: unreadable", path)
 	}
-	s := &Spec{Name: name, Description: f[0], Image: f[1], URL: f[2], Required: strings.Fields(f[3]), Defaults: map[string]string{}}
+	s := &Spec{Name: name, Description: f[0], Image: f[1], URL: f[2], Required: strings.Fields(f[3]), Defaults: map[string]string{}, Skeleton: f[4]}
 	for _, line := range strings.Split(f[4], "\n") {
 		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok || k == "" {

@@ -9,7 +9,8 @@ needs = ["essentials"]
 source = "git config --global user.name/email"
 
 [[item.step]]
-type = "legacy"
+type = "git_config"
+values = { "user.name" = "{{git_name}}", "user.email" = "{{git_email}}", "init.defaultBranch" = "main" }
 
 [[item]]
 id = "gitcfg"
@@ -19,7 +20,48 @@ needs = ["essentials"]
 source = "git config --global · aliases st co br sw lg amend · ~/.config/git/ignore"
 
 [[item.step]]
-type = "legacy"
+type = "git_config"
+
+[item.step.values]
+"pull.rebase" = "true"
+"rebase.autoStash" = "true"
+"rebase.autoSquash" = "true"
+"rebase.updateRefs" = "true"
+"push.autoSetupRemote" = "true"
+"push.default" = "current"
+"fetch.prune" = "true"
+"rerere.enabled" = "true"
+"merge.conflictStyle" = "zdiff3"
+"diff.algorithm" = "histogram"
+"diff.colorMoved" = "default"
+"branch.sort" = "-committerdate"
+"column.ui" = "auto"
+"commit.verbose" = "true"
+"init.defaultBranch" = "main"
+"core.excludesFile" = "~/.config/git/ignore"
+"alias.st" = "status -sb"
+"alias.co" = "checkout"
+"alias.br" = "branch"
+"alias.sw" = "switch"
+"alias.lg" = "log --graph --oneline --decorate --all"
+"alias.amend" = "commit --amend --no-edit"
+
+# delta's diffs, when it is installed (CLI upgrades).
+[[item.step]]
+type = "git_config"
+if_tool = "delta"
+
+[item.step.values]
+"core.pager" = "delta"
+"interactive.diffFilter" = "delta --color-only"
+"delta.navigate" = "true"
+"delta.line-numbers" = "true"
+
+[[item.step]]
+type = "file"
+src = "gitignore_global"
+to = "~/.config/git/ignore"
+if_absent = true
 
 [[item]]
 id = "sshkey"
@@ -28,7 +70,10 @@ label = "SSH key (ed25519)"
 source = "ssh-keygen → ~/.ssh/id_ed25519 (kept if present)"
 
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keygen -q -t ed25519 -N "" -C "{{user}}@$(hostname)" -f ~/.ssh/id_ed25519'
+as_user = true
+creates = "~/.ssh/id_ed25519"
 
 [[item]]
 id = "github"

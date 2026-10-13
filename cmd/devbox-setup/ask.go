@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eugenetaranov/pmox/internal/bootstrap"
 	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 	"github.com/eugenetaranov/pmox/internal/devbox/creds"
@@ -76,7 +75,7 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 		tabs = append(tabs, ui.Tab{ID: t.ID, Title: t.Title})
 	}
 	entries := ui.CatalogEntries(k.cat)
-	entries = ui.Dedupe(append(entries, ui.LoadMise(miseRegistry(ctx))...))
+	entries = ui.Dedupe(append(entries, ui.LoadMise(miseRegistry(ctx, k.share))...))
 	picked, ok, err := ui.NewPicker("devbox-setup — pick what to install", tabs, entries, true).Run()
 	if err != nil {
 		return nil, err
@@ -149,14 +148,15 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 }
 
 // miseRegistry is the live registry when mise is installed, else pmox's
-// snapshot.
-func miseRegistry(ctx context.Context) string {
+// snapshot in the share directory.
+func miseRegistry(ctx context.Context, share string) string {
 	if out, err := exec.CommandContext(ctx, "mise", "registry", "-J", "--hide-aliased").Output(); err == nil {
 		if tsv := ui.RegistryTSV(out); tsv != "" {
 			return tsv
 		}
 	}
-	return string(bootstrap.MiseRegistry())
+	b, _ := os.ReadFile(filepath.Join(share, "mise-registry.tsv"))
+	return string(b)
 }
 
 func (k *asker) askMiseExtra(ctx context.Context, prefill []string) ([]string, error) {

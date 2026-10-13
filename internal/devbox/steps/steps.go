@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
+	"github.com/eugenetaranov/pmox/internal/devbox/creds"
 )
 
 // Cmd is one command to run.
@@ -53,6 +55,7 @@ type Env struct {
 	Home        string // the user's home, without Root
 	Arch        string // dpkg architecture (amd64, arm64)
 	Codename    string // Ubuntu/Debian codename
+	Kernel      string // the running kernel's release (uname -r)
 	Exec        Execer
 	Files       fs.FS // the catalog's files (file/template src)
 	// Root prefixes every absolute path (tests); "" in production.
@@ -65,6 +68,31 @@ type Env struct {
 	Legacy func(ctx context.Context, id string) error
 	// Download fetches a URL (apt keys). Tests replace it.
 	Download func(ctx context.Context, url string) ([]byte, error)
+
+	// Share is the directory devbox-setup's files are installed in;
+	// State holds its answers and created.json.
+	Share, State string
+	// Answers are the run's saved choices; Secrets what was typed this run
+	// (never saved).
+	Answers *answers.Answers
+	Secrets *creds.Secrets
+	// Note shows text after the run (a step that has to leave something
+	// for the user to do).
+	Note func(text string)
+}
+
+func (e *Env) note(text string) {
+	if e.Note != nil {
+		e.Note(text)
+	}
+}
+
+// record notes something devbox-setup created, for `devbox-setup forget`.
+func (e *Env) record(kind, value string) error {
+	if e.State == "" {
+		return nil
+	}
+	return answers.AddCreated(e.State, answers.Created{Kind: kind, Value: value})
 }
 
 // Path resolves p: "~/x" is under the user's home; everything under Root.
@@ -114,7 +142,7 @@ func (e *Env) chown(p string, uid, gid int) error {
 
 // Action is one thing a step would do, for --dry-run.
 type Action struct {
-	Kind   string // apt, mise, repo, file, link, clone, unit, sysctl, shell, run, legacy
+	Kind   string // apt, mise, repo, file, line, link, clone, unit, sysctl, shell, run, legacy
 	Target string
 }
 
@@ -131,6 +159,16 @@ type Step interface {
 // Follower is a step that only runs when an earlier step of the same item
 // changed something (a restart, a daemon-reload).
 type Follower interface{ Follows() bool }
+
+// BeforeApt is a step the runner applies with the apt repositories, before
+// the batch installs packages (a config a package reads when it first
+// starts).
+type BeforeApt interface{ BeforeApt() bool }
+
+// Always is a step that runs on every run, after its item's other steps,
+// and is idempotent itself (registering MCP servers): it doesn't count as
+// a change, and a failure is a note, not a failed item.
+type Always interface{ Always() bool }
 
 // GoStep makes a registered Go step for an item.
 type GoStep func(s catalog.Step) Step
@@ -158,16 +196,22 @@ func New(id string, s catalog.Step) (Step, error) {
 		return fileStep{s, true}, nil
 	case "link":
 		return linkStep{s}, nil
+	case "line":
+		return lineStep{s}, nil
 	case "git_clone":
 		return gitCloneStep{s}, nil
 	case "systemctl":
 		return systemctlStep{s}, nil
 	case "sysctl":
 		return sysctlStep{s}, nil
+	case "git_config":
+		return gitConfigStep{s}, nil
 	case "user_shell":
 		return userShellStep{s}, nil
 	case "run":
 		return runStep{s}, nil
+	case "note":
+		return noteStep{s}, nil
 	case "legacy":
 		return LegacyStep{ID: id}, nil
 	}

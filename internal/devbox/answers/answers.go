@@ -188,14 +188,19 @@ func Write(state string, a *Answers) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(state, File+".tmp")
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+	return writeAtomic(filepath.Join(state, File), append(b, '\n'), 0o600)
+}
+
+// writeAtomic writes b to path through a temp file, with mode.
+func writeAtomic(path string, b []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, mode); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
+	if err := os.Chmod(tmp, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(state, File))
+	return os.Rename(tmp, path)
 }
 
 // Merge returns a's items followed by b's new ones (choices accumulate

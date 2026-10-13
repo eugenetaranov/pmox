@@ -164,10 +164,15 @@ func skipReason(it *catalog.Item, failed map[string]bool) string {
 
 // applyItem runs an item's steps; apt steps were batched (pkgDone).
 func (r *Runner) applyItem(ctx context.Context, x built, pkgDone map[string]bool, out *bytes.Buffer) (changed bool, err error) {
+	var always []steps.Step
 	err = r.withLog(out, func() error {
 		for _, st := range x.steps {
 			if batched(st) {
 				continue // apt repos and packages went in the batch
+			}
+			if a, ok := st.(steps.Always); ok && a.Always() {
+				always = append(always, st)
+				continue
 			}
 			if f, ok := st.(steps.Follower); ok && f.Follows() {
 				if !changed {
@@ -187,6 +192,11 @@ func (r *Runner) applyItem(ctx context.Context, x built, pkgDone map[string]bool
 			}
 			changed = true
 		}
+		for _, st := range always {
+			if err := st.Apply(ctx, r.Env); err != nil && r.Env.Note != nil {
+				r.Env.Note(fmt.Sprintf("%s: %v", label(x.item), err))
+			}
+		}
 		return nil
 	})
 	if pkgDone[x.item.ID+"\x00changed"] {
@@ -197,7 +207,7 @@ func (r *Runner) applyItem(ctx context.Context, x built, pkgDone map[string]bool
 
 func batched(st steps.Step) bool {
 	switch st.(type) {
-	case interface{ Packages() []string }, interface{ Repo() bool }:
+	case interface{ Packages(*steps.Env) []string }, interface{ Repo() bool }, steps.BeforeApt:
 		return true
 	}
 	return false
@@ -215,7 +225,8 @@ func (r *Runner) withLog(out *bytes.Buffer, f func() error) error {
 	return f()
 }
 
-// batchApt adds every repository in the plan, refreshes the lists once,
+// batchApt adds every repository in the plan (and applies the BeforeApt
+// steps), refreshes the lists once,
 // and installs every missing package in one transaction. When that fails,
 // each item's packages are retried alone so the failure lands on its item.
 // It returns "id\x00changed" for each item something was added for.
@@ -225,7 +236,8 @@ func (r *Runner) batchApt(ctx context.Context, b []built, failed map[string]bool
 	reposChanged := false
 	for _, x := range b {
 		for _, st := range x.steps {
-			if _, ok := st.(interface{ Repo() bool }); !ok {
+			_, repo := st.(interface{ Repo() bool })
+			if _, pre := st.(steps.BeforeApt); !repo && !pre {
 				continue
 			}
 			done, _ := st.Check(ctx, r.Env)
@@ -237,7 +249,7 @@ func (r *Runner) batchApt(ctx context.Context, b []built, failed map[string]bool
 				fail(x.item.ID, err, out.Bytes())
 				break
 			}
-			reposChanged = true
+			reposChanged = reposChanged || repo
 			settled[x.item.ID+"\x00changed"] = true
 		}
 	}
@@ -251,8 +263,8 @@ func (r *Runner) batchApt(ctx context.Context, b []built, failed map[string]bool
 		}
 		var pkgs []string
 		for _, st := range x.steps {
-			if p, ok := st.(interface{ Packages() []string }); ok {
-				pkgs = append(pkgs, p.Packages()...)
+			if p, ok := st.(interface{ Packages(*steps.Env) []string }); ok {
+				pkgs = append(pkgs, p.Packages(r.Env)...)
 			}
 		}
 		if len(pkgs) == 0 {

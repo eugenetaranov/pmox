@@ -198,3 +198,69 @@ func TestSummaryGroups(t *testing.T) {
 		t.Errorf("cli belongs with apt, docker with vendor repos:\n%s", s)
 	}
 }
+
+type alwaysStep struct {
+	ran *int
+	err error
+}
+
+func (alwaysStep) Plan(*steps.Env) []steps.Action                 { return nil }
+func (alwaysStep) Check(context.Context, *steps.Env) (bool, error) { return true, nil }
+func (a alwaysStep) Apply(context.Context, *steps.Env) error       { *a.ran++; return a.err }
+func (alwaysStep) Always() bool                                    { return true }
+
+// An Always step runs on every run without counting as a change, and its
+// failure is a note, not a failed item.
+func TestAlwaysStep(t *testing.T) {
+	ran := 0
+	var err error
+	steps.RegisterGo("test_always", func(catalog.Step) steps.Step { return alwaysStep{&ran, err} })
+	r, _ := runner(t, &fakeExec{installed: map[string]bool{}})
+	var notes []string
+	r.Env.Note = func(s string) { notes = append(notes, s) }
+	it := item("sync", nil, catalog.Step{Type: "go:test_always"})
+	res := r.Run(context.Background(), []*catalog.Item{it}, nil)
+	if ran != 1 || strings.Join(res.Unchanged, " ") != "sync" {
+		t.Errorf("ran %d, unchanged %v", ran, res.Unchanged)
+	}
+	err = errors.New("gateway down")
+	res = r.Run(context.Background(), []*catalog.Item{it}, nil)
+	if !res.OK() || len(notes) != 1 || !strings.Contains(notes[0], "gateway down") {
+		t.Errorf("failed %v, notes %q", res.Failed, notes)
+	}
+	if st := Verify(context.Background(), r.Env, []*catalog.Item{it}); st[0].State != "ok" {
+		t.Errorf("verify = %+v", st[0])
+	}
+}
+
+type preStep struct{ x *fakeExec }
+
+func (preStep) Plan(*steps.Env) []steps.Action                 { return nil }
+func (preStep) Check(context.Context, *steps.Env) (bool, error) { return false, nil }
+func (p preStep) Apply(context.Context, *steps.Env) error {
+	p.x.ran = append(p.x.ran, "PRE")
+	return nil
+}
+func (preStep) BeforeApt() bool { return true }
+
+// A BeforeApt step (docker's daemon.json) lands before the batch installs
+// the packages that read it.
+func TestBeforeAptOrder(t *testing.T) {
+	x := &fakeExec{installed: map[string]bool{}}
+	steps.RegisterGo("test_pre", func(catalog.Step) steps.Step { return preStep{x} })
+	r, _ := runner(t, x)
+	it := item("docker", nil, catalog.Step{Type: "go:test_pre"}, catalog.Step{Type: "apt", Packages: []string{"docker-ce"}})
+	res := r.Run(context.Background(), []*catalog.Item{it}, nil)
+	if !res.OK() || strings.Join(res.Changed, " ") != "docker" {
+		t.Fatalf("failed %v changed %v", res.Errors, res.Changed)
+	}
+	pre, inst := indexOf(x.ran, "PRE"), -1
+	for i, c := range x.ran {
+		if strings.Contains(c, " install docker-ce") {
+			inst = i
+		}
+	}
+	if pre < 0 || inst < 0 || pre > inst {
+		t.Errorf("ran %q: want PRE before the install", x.ran)
+	}
+}

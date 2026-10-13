@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,8 +17,9 @@ import (
 	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 )
 
-// newEnv describes this machine and the target user for the steps.
-func newEnv(username string, log io.Writer) (*steps.Env, error) {
+// newEnv describes this machine and the target user for the steps; file
+// steps read from share's conf directory.
+func newEnv(username, share string, log io.Writer) (*steps.Env, error) {
 	u, err := user.Lookup(username)
 	if err != nil {
 		return nil, fmt.Errorf("user %q: %w", username, err)
@@ -30,8 +32,9 @@ func newEnv(username string, log io.Writer) (*steps.Env, error) {
 	}
 	return &steps.Env{
 		User: username, Group: group, UID: uid, GID: gid, Home: u.HomeDir,
-		Arch: debArch(), Codename: codename(),
+		Arch: debArch(), Codename: codename(), Kernel: kernel(),
 		Exec:     steps.OSExec{User: username},
+		Files:    os.DirFS(filepath.Join(share, "conf")),
 		Log:      log,
 		Chown:    os.Geteuid() == 0,
 		Download: download,
@@ -43,6 +46,11 @@ func debArch() string {
 		return strings.TrimSpace(string(out))
 	}
 	return "amd64"
+}
+
+func kernel() string {
+	out, _ := exec.Command("uname", "-r").Output()
+	return strings.TrimSpace(string(out))
 }
 
 func codename() string {

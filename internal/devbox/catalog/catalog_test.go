@@ -132,7 +132,7 @@ func TestValidation(t *testing.T) {
 	}{
 		"unknown need":  {item(`needs = ["nope"]`, `type = "apt"`+"\npackages = [\"x\"]"), `"bad": needs "nope"`},
 		"unknown step":  {item("", `type = "frobnicate"`), `unknown step type "frobnicate"`},
-		"run no-op":     {item("", `type = "run"`+"\ncmd = \"true\""), "needs creates or check"},
+		"run no-op":     {item("", `type = "run"`+"\ncmd = \"true\""), "needs creates, check or on_change"},
 		"unknown key":   {item(`colour = "red"`, `type = "apt"`+"\npackages = [\"x\"]"), "unknown key item.colour"},
 		"bad mode":      {item("", `type = "link"`+"\nsrc = \"/a\"\nto = \"/b\"\nmode = \"644\""), "mode \"644\""},
 		"unknown tab":   {fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"x\"\ntab = \"nope\"\nlabel = \"X\"\n[[item.step]]\ntype = \"legacy\"\n")}}, `unknown tab "nope"`},
@@ -154,5 +154,32 @@ func TestMissingFileSrc(t *testing.T) {
 	_, err := Load(local, fstest.MapFS{"tmux.conf": {Data: []byte("x")}})
 	if err == nil || !strings.Contains(err.Error(), `src "nope.conf" is not in devbox-setup's files`) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// Every file step's src is one of devbox-setup's files.
+func TestSourcesExist(t *testing.T) {
+	if _, err := Load(nil, os.DirFS("../../bootstrap/conf")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Pinned versions match the bash installer's while it exists.
+func TestPinsMatchBash(t *testing.T) {
+	b, err := os.ReadFile("../../bootstrap/devbox-setup")
+	if err != nil {
+		t.Skip("bash installer gone")
+	}
+	c := load(t, nil)
+	for id, name := range map[string]string{"ecc": "ECC_VERSION", "mcpjungle": "MCPJUNGLE_VERSION"} {
+		v := regexp.MustCompile(`(?m)^` + name + `=(\S+)`).FindStringSubmatch(string(b))[1]
+		n := 0
+		for _, s := range c.Item(id).Steps {
+			n += strings.Count(s.Cmd+s.Check, v)
+		}
+		// ecc's check names the version too, so a new pin reinstalls.
+		if want := map[string]int{"ecc": 2, "mcpjungle": 1}[id]; n != want {
+			t.Errorf("%s: %d step fields use %s=%s, want %d", id, n, name, v, want)
+		}
 	}
 }

@@ -77,10 +77,11 @@ tools = ["uv@latest", "pipx:pgcli", "usql@latest"]
 id = "profiling"
 tab = "dev"
 label = "Profiling (perf, valgrind, bpftrace)"
-source = "apt linux-tools-\\$(uname -r) valgrind bpftrace bpfcc-tools"
+source = "apt linux-tools-$(uname -r) valgrind bpftrace bpfcc-tools"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["linux-tools-common", "linux-tools-{{kernel}}", "valgrind", "bpftrace", "bpfcc-tools"]
 
 [[item]]
 id = "act"

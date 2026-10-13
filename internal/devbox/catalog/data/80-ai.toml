@@ -8,7 +8,25 @@ label = "Claude Code"
 source = "apt claude-code (Anthropic repo)"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["curl", "gnupg", "ca-certificates"]
+
+[[item.step]]
+type = "apt_repo"
+name = "claude-code"
+key_url = "https://downloads.claude.ai/keys/claude-code.asc"
+key_fingerprint = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+source = """
+Types: deb
+URIs: https://downloads.claude.ai/claude-code/apt/stable
+Suites: stable
+Components: main
+Signed-By: {{keyring}}
+"""
+
+[[item.step]]
+type = "apt"
+packages = ["claude-code"]
 
 [[item]]
 id = "codex"
@@ -23,7 +41,8 @@ tools = ["codex@latest"]
 id = "gemini"
 tab = "ai"
 label = "Gemini CLI"
-needs = ["node"]
+# node-pty builds from source: make and a compiler.
+needs = ["node", "essentials"]
 
 [[item.step]]
 type = "mise"
@@ -63,7 +82,10 @@ label = "omp (oh-my-pi coding agent)"
 source = "curl omp.sh/install → /usr/local/bin/omp"
 
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = "curl -fsSL https://omp.sh/install | PI_INSTALL_DIR=/usr/local/bin sh -s -- --binary"
+creates = "/usr/local/bin/omp"
+unverified = "omp's own installer, which fetches its latest release"
 
 [[item]]
 id = "ollama"
@@ -71,8 +93,17 @@ tab = "ai"
 label = "Ollama (local models; large, CPU-only without GPU passthrough)"
 source = "curl ollama.com/install.sh · listens on 127.0.0.1:11434"
 
+# The installer's unit listens on 127.0.0.1:11434; it stays that way.
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = "curl -fsSL https://ollama.com/install.sh | sh"
+check = "command -v ollama"
+unverified = "ollama's own installer, which fetches its latest release"
+
+[[item.step]]
+type = "note"
+text = "ollama: no GPU found, so models run on the CPU (slow for anything big)."
+when = "! lspci 2>/dev/null | grep -qiE 'nvidia|amd/ati'"
 
 [[item]]
 id = "openspec"
@@ -89,10 +120,13 @@ id = "ecc"
 tab = "ai"
 label = "ECC for Claude Code (~68 agents, rules, commands; no hooks)"
 needs = ["node", "claude"]
-source = "npx ecc-universal@$ECC_VERSION install --profile minimal · npx ecc-universal uninstall to remove"
+source = "npx ecc-universal@2.2.3 install --profile minimal · npx ecc-universal uninstall to remove"
 
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = "npx --yes ecc-universal@2.2.3 install --target claude --profile minimal"
+as_user = true
+check = "grep -q '\"repoVersion\": \"2.2.3\"' ~/.claude/ecc/install-state.json"
 
 [[item]]
 id = "agentcfg"
@@ -101,7 +135,16 @@ label = "Describe this VM to agents (CLAUDE.md, AGENTS.md)"
 source = "~/.claude/CLAUDE.md · ~/.codex/AGENTS.md · only if absent"
 
 [[item.step]]
-type = "legacy"
+type = "file"
+src = "agent-notes.md"
+to = "~/.claude/CLAUDE.md"
+if_absent = true
+
+[[item.step]]
+type = "file"
+src = "agent-notes.md"
+to = "~/.codex/AGENTS.md"
+if_absent = true
 
 [[item]]
 id = "agentkeys"
@@ -120,4 +163,52 @@ needs = ["docker"]
 source = "release binary · systemd mcpjungle · mcp-sync"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["curl", "jq", "tar"]
+
+[[item.step]]
+type = "run"
+cmd = """
+case {{arch}} in
+  amd64) r=x86_64 s=64e0ad1f4c24457e925f1c535648b2a8779946868b8813a5cdbc8f4ed85cec65 ;;
+  arm64) r=arm64 s=6312c574c998ab373bdb921d78aa4ff5a07c56709b5839a60487e656fe89e2e9 ;;
+  *) echo "mcpjungle has no release for {{arch}}" >&2; exit 1 ;;
+esac
+t=$(mktemp)
+curl -fsSL -o "$t" "https://github.com/mcpjungle/MCPJungle/releases/download/0.4.6/mcpjungle_Linux_$r.tar.gz" &&
+  echo "$s  $t" | sha256sum -c --quiet &&
+  tar -xzf "$t" -C /usr/local/bin mcpjungle && chmod 0755 /usr/local/bin/mcpjungle
+rc=$?; rm -f "$t"; exit $rc
+"""
+creates = "/usr/local/bin/mcpjungle"
+
+# The server catalog (/usr/local/share/mcp-catalog) and mcp-sync.
+[[item.step]]
+type = "go:mcp_files"
+
+[[item.step]]
+type = "run"
+cmd = "usermod -aG docker {{user}}"
+check = "id -nG {{user}} | tr ' ' '\\n' | grep -qx docker"
+
+[[item.step]]
+type = "run"
+cmd = "install -d -m 0700 -o {{user}} -g {{group}} {{home}}/.mcp"
+creates = "~/.mcp"
+
+[[item.step]]
+type = "go:mcpjungle_unit"
+
+[[item.step]]
+type = "go:mcp_wait"
+
+# Each picked server's ~/.mcp/<name>/env (0600): its skeleton, with the
+# keys typed this run.
+[[item.step]]
+type = "go:mcp_servers"
+
+[[item.step]]
+type = "go:mcp_wire"
+
+[[item.step]]
+type = "go:mcp_sync"

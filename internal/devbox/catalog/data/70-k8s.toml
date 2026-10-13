@@ -28,7 +28,28 @@ needs = ["k8s"]
 source = "krew release → ~/.krew · kubectl krew install neat tree view-secret"
 
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = 't=$(mktemp -d) && curl -fsSL https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_{{arch}}.tar.gz | tar -xzf - -C "$t" && "$t/krew-linux_{{arch}}" install krew; rc=$?; rm -rf "$t"; exit $rc'
+as_user = true
+creates = "~/.krew/bin/kubectl-krew"
+unverified = "krew's latest release; krew then checks each plugin's sha256 from its index"
+
+[[item.step]]
+type = "line"
+to = "~/.zshenv"
+line = 'export PATH="$HOME/.krew/bin:$PATH"'
+
+[[item.step]]
+type = "line"
+to = "~/.bashrc"
+line = 'export PATH="$HOME/.krew/bin:$PATH"'
+top = true
+
+[[item.step]]
+type = "run"
+cmd = 'PATH="$HOME/.krew/bin:$PATH" kubectl krew install neat tree view-secret'
+as_user = true
+check = 'l=$(PATH="$HOME/.krew/bin:$PATH" kubectl krew list) && for p in neat tree view-secret; do printf "%s\n" "$l" | grep -qx "$p" || exit 1; done'
 
 [[item]]
 id = "helmfile"
@@ -38,7 +59,14 @@ needs = ["k8s"]
 source = "mise use -g helmfile · helm plugin install helm-diff"
 
 [[item.step]]
-type = "legacy"
+type = "mise"
+tools = ["helmfile@latest"]
+
+[[item.step]]
+type = "run"
+cmd = "helm plugin install https://github.com/databus23/helm-diff"
+as_user = true
+check = "helm plugin list | grep -q '^diff'"
 
 [[item]]
 id = "gitops"
@@ -77,7 +105,22 @@ label = "k3s cluster on this VM (systemd)"
 source = "curl get.k3s.io · kubeconfig → ~/.kube/config if absent"
 
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = 'curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode=600" sh -'
+check = "command -v k3s"
+unverified = "get.k3s.io is k3s's own installer; it checks the k3s binary's sha256"
+
+# The cluster's kubeconfig for the user, unless they have one already
+# (then it stays at /etc/rancher/k3s/k3s.yaml).
+[[item.step]]
+type = "run"
+cmd = "install -d -m 0700 -o {{user}} -g {{group}} {{home}}/.kube && install -m 0600 -o {{user}} -g {{group}} /etc/rancher/k3s/k3s.yaml {{home}}/.kube/config"
+creates = "~/.kube/config"
+
+[[item.step]]
+type = "note"
+text = "k3s: ~/.kube/config already exists, so it was kept; the k3s kubeconfig is /etc/rancher/k3s/k3s.yaml."
+when = "! cmp -s /etc/rancher/k3s/k3s.yaml {{home}}/.kube/config"
 
 [[item]]
 id = "devloop"

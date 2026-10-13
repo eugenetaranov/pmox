@@ -14,7 +14,7 @@ import (
 type Step struct {
 	Type string `toml:"type"`
 
-	// apt
+	// apt; "{{kernel}}" in a name is the running kernel's release
 	Packages []string `toml:"packages"`
 	// mise (`mise use -g`, as the user)
 	Tools []string `toml:"tools"`
@@ -36,6 +36,16 @@ type Step struct {
 	IfAbsent bool              `toml:"if_absent"`
 	Vars     map[string]string `toml:"vars"`
 
+	// line: Line in the file To, once (appended after a blank line), or
+	// in place of the lines matching the regexp Match. IfExists leaves a
+	// missing file alone instead of creating it.
+	Line     string `toml:"line"`
+	Match    string `toml:"match"`
+	IfExists bool   `toml:"if_exists"`
+	// Top puts the line first instead (in .bashrc: before Ubuntu's
+	// "not interactive: return" guard).
+	Top bool `toml:"top"`
+
 	// git_clone
 	Repo string `toml:"repo"`
 	Ref  string `toml:"ref"`
@@ -47,11 +57,27 @@ type Step struct {
 	// user_shell
 	Shell string `toml:"shell"`
 
+	// git_config: the user's global git settings; with IfTool, only when
+	// that command is installed. "{{git_name}}" and "{{git_email}}" are the
+	// answers' identity; a setting whose value comes out empty is skipped.
+	Values map[string]string `toml:"values"`
+	IfTool string            `toml:"if_tool"`
+
 	// run: a shell one-liner; Creates or Check makes a re-run a no-op.
+	// {{user}}, {{group}}, {{home}} and {{arch}} in Cmd and Check are
+	// filled in.
 	Cmd     string `toml:"cmd"`
 	AsUser  bool   `toml:"as_user"`
 	Creates string `toml:"creates"`
 	Check   string `toml:"check"`
+	// OnChange runs it only after an earlier step of the item changed
+	// something (sysctl --system after a new sysctl file), instead.
+	OnChange bool `toml:"on_change"`
+
+	// note: Text is shown after the run when the shell condition When
+	// holds (always, without one).
+	Text string `toml:"text"`
+	When string `toml:"when"`
 
 	// Downloads (run steps that fetch, release binaries): a pin, or why not.
 	SHA256     string `toml:"sha256"`
@@ -123,6 +149,17 @@ func (s *Step) validate(files fs.FS) error {
 			return err
 		}
 		return need("to", s.To)
+	case s.Type == "line":
+		if err := need("line", s.Line); err != nil {
+			return err
+		}
+		if strings.Contains(s.Line, "\n") {
+			return errors.New("line: one line only")
+		}
+		if _, err := regexp.Compile(s.Match); err != nil {
+			return fmt.Errorf("match: %w", err)
+		}
+		return need("to", s.To)
 	case s.Type == "git_clone":
 		if err := need("repo", s.Repo); err != nil {
 			return err
@@ -141,15 +178,21 @@ func (s *Step) validate(files fs.FS) error {
 			return err
 		}
 		return need("to", s.To)
+	case s.Type == "git_config":
+		if len(s.Values) == 0 {
+			return errors.New("needs values")
+		}
 	case s.Type == "user_shell":
 		return need("shell", s.Shell)
 	case s.Type == "run":
 		if err := need("cmd", s.Cmd); err != nil {
 			return err
 		}
-		if s.Creates == "" && s.Check == "" {
-			return errors.New("needs creates or check, so a re-run is a no-op")
+		if s.Creates == "" && s.Check == "" && !s.OnChange {
+			return errors.New("needs creates, check or on_change, so a re-run is a no-op")
 		}
+	case s.Type == "note":
+		return need("text", s.Text)
 	case s.Type == "legacy":
 		// Runs the bundled bash installer for this item (until it's ported).
 	case strings.HasPrefix(s.Type, "go:"):

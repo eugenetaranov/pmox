@@ -57,6 +57,9 @@ func Verify(ctx context.Context, e *steps.Env, items []*catalog.Item) []Status {
 			if f, ok := s.(steps.Follower); ok && f.Follows() {
 				continue
 			}
+			if a, ok := s.(steps.Always); ok && a.Always() {
+				continue
+			}
 			done, err := s.Check(ctx, e)
 			if err != nil || !done {
 				st.State = "missing"

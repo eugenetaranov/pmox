@@ -1,0 +1,2 @@
+# Written by devbox-setup: metrics on localhost only.
+ARGS="--web.listen-address=127.0.0.1:9100"

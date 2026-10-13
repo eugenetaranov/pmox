@@ -15,11 +15,15 @@ devbox-setup SHALL refuse to start, naming the item, when the catalog has a dupl
 - **THEN** the catalog test fails naming the item and `nope`
 
 ### Requirement: Step types
-The catalog SHALL support these declarative step types: `apt`, `apt_repo`, `mise`, `file`, `template`, `git_clone`, `link`, `systemctl`, `sysctl`, `user_shell` and `run`. It SHALL also support `go:<name>` for steps written in Go. A `run` step SHALL declare `creates` or `check`, so that a re-run of a completed item does nothing.
+The catalog SHALL support these declarative step types: `apt`, `apt_repo`, `mise`, `file`, `template`, `line`, `git_clone`, `git_config`, `link`, `systemctl`, `sysctl`, `user_shell`, `run` and `note`. It SHALL also support `go:<name>` for steps written in Go. A `run` step SHALL declare `creates`, `check` or `on_change` (it runs only after an earlier step of its item changed something), so that a re-run of a completed item does nothing. A `note` step SHALL show its text after the run when its condition holds, and SHALL never count as a change.
 
 #### Scenario: Re-run is a no-op
 - **WHEN** `sudo devbox-setup --yes` runs twice with the same answers
 - **THEN** the second run changes no files and reports every item as already done
+
+#### Scenario: A line once
+- **WHEN** a `line` step adds the shell drop-in to `~/.bashrc` on two runs
+- **THEN** `~/.bashrc` has the line once
 
 #### Scenario: File backup
 - **WHEN** a `file` step with `keep_orig = true` writes `~/.tmux.conf` and the user already has one

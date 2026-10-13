@@ -1,5 +1,4 @@
 # devbox-setup catalog: the Shell & CLI tab.
-# `legacy` steps run the bundled bash installer until the item is ported.
 
 [[item]]
 id = "cli"
@@ -8,7 +7,19 @@ label = "CLI upgrades (ripgrep, fd, bat, eza, fzf, zoxide, delta, direnv)"
 source = "apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree (+ fd/bat links)"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["ripgrep", "fd-find", "bat", "eza", "zoxide", "fzf", "git-delta", "direnv", "tree"]
+
+# Ubuntu renames these two; link the usual names.
+[[item.step]]
+type = "link"
+src = "/usr/bin/fdfind"
+to = "/usr/local/bin/fd"
+
+[[item.step]]
+type = "link"
+src = "/usr/bin/batcat"
+to = "/usr/local/bin/bat"
 
 [[item]]
 id = "editors"
@@ -62,7 +73,19 @@ label = "zsh (login shell)"
 source = "apt zsh · chsh to zsh"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["zsh", "git"]
+
+[[item.step]]
+type = "user_shell"
+shell = "/usr/bin/zsh"
+
+# Without a .zshrc, zsh opens its new-user menu at first login.
+[[item.step]]
+type = "run"
+cmd = "touch ~/.zshrc"
+as_user = true
+creates = "~/.zshrc"
 
 [[item]]
 id = "zshcfg"
@@ -72,7 +95,34 @@ needs = ["zsh"]
 source = "git clone ~/.oh-my-zsh + plugins · ~/.zshrc (.zshrc.orig kept)"
 
 [[item.step]]
-type = "legacy"
+type = "git_clone"
+repo = "https://github.com/ohmyzsh/ohmyzsh.git"
+to = "~/.oh-my-zsh"
+
+[[item.step]]
+type = "git_clone"
+repo = "https://github.com/joshskidmore/zsh-fzf-history-search.git"
+to = "~/.oh-my-zsh/custom/plugins/zsh-fzf-history-search"
+
+[[item.step]]
+type = "git_clone"
+repo = "https://github.com/zsh-users/zsh-autosuggestions.git"
+to = "~/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+
+[[item.step]]
+type = "git_clone"
+repo = "https://github.com/zsh-users/zsh-syntax-highlighting.git"
+to = "~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+
+# ~/.zshrc from zshrc.tmpl (.zshrc.orig kept): plugins are chosen at shell
+# start from the installed tools; the theme follows the p10k clone.
+[[item.step]]
+type = "go:zshrc"
+
+[[item.step]]
+type = "file"
+src = "completions.zsh"
+to = "~/.config/devbox/completions.zsh"
 
 [[item]]
 id = "p10k"
@@ -82,7 +132,23 @@ needs = ["zshcfg"]
 source = "git clone powerlevel10k · ~/.p10k.zsh if absent · p10k configure to restyle"
 
 [[item.step]]
-type = "legacy"
+type = "git_clone"
+repo = "https://github.com/romkatv/powerlevel10k.git"
+to = "~/.oh-my-zsh/custom/themes/powerlevel10k"
+
+# A ready prompt (lean preset + devbox style); the user's own is kept.
+[[item.step]]
+type = "file"
+src = "p10k-devbox.zsh"
+to = "~/.p10k.zsh"
+if_absent = true
+
+[[item.step]]
+type = "line"
+to = "~/.zshrc"
+match = "^ZSH_THEME="
+line = 'ZSH_THEME="powerlevel10k/powerlevel10k"'
+if_exists = true
 
 [[item]]
 id = "vimcfg"
@@ -92,7 +158,27 @@ needs = ["editors"]
 source = "vim-plug · curated ~/.vimrc · .vimrc.orig kept"
 
 [[item.step]]
-type = "legacy"
+type = "apt"
+packages = ["curl", "git"]
+
+[[item.step]]
+type = "run"
+cmd = "curl -fsSL --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim -o ~/.vim/autoload/plug.vim"
+as_user = true
+creates = "~/.vim/autoload/plug.vim"
+unverified = "vim-plug installs from its master branch; it has no release files to pin"
+
+[[item.step]]
+type = "file"
+src = "vimrc"
+to = "~/.vimrc"
+keep_orig = true
+
+[[item.step]]
+type = "run"
+cmd = "vim -es -u ~/.vimrc +PlugInstall +qall </dev/null || true"
+as_user = true
+creates = "~/.vim/plugged"
 
 [[item]]
 id = "shellcfg"
@@ -101,7 +187,20 @@ label = "Shell niceties for zsh and bash: z, fzf keys, direnv, eza/bat aliases"
 source = "~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
 
 [[item.step]]
-type = "legacy"
+type = "file"
+src = "shell.sh"
+to = "~/.config/devbox/shell.sh"
+
+[[item.step]]
+type = "line"
+to = "~/.bashrc"
+line = '[ -r ~/.config/devbox/shell.sh ] && . ~/.config/devbox/shell.sh'
+
+[[item.step]]
+type = "line"
+to = "~/.zshrc"
+line = '[ -r ~/.config/devbox/shell.sh ] && . ~/.config/devbox/shell.sh'
+if_exists = true
 
 [[item]]
 id = "fzftab"
@@ -111,7 +210,9 @@ needs = ["zshcfg", "cli"]
 source = "git clone Aloxaf/fzf-tab → ~/.oh-my-zsh/custom/plugins"
 
 [[item.step]]
-type = "legacy"
+type = "git_clone"
+repo = "https://github.com/Aloxaf/fzf-tab.git"
+to = "~/.oh-my-zsh/custom/plugins/fzf-tab"
 
 [[item]]
 id = "tmuxcfg"
@@ -121,7 +222,10 @@ needs = ["tmux"]
 source = "~/.tmux.conf · .tmux.conf.orig kept"
 
 [[item.step]]
-type = "legacy"
+type = "file"
+src = "tmux.conf"
+to = "~/.tmux.conf"
+keep_orig = true
 
 [[item]]
 id = "docs"
@@ -129,5 +233,18 @@ tab = "shell"
 label = "Man pages, completion, tldr"
 source = "apt man-db manpages-dev bash-completion command-not-found plocate tealdeer · unminimize if needed"
 
+# Minimal cloud images strip man pages and docs; unminimize restores them.
 [[item.step]]
-type = "legacy"
+type = "run"
+cmd = "{ DEBIAN_FRONTEND=noninteractive apt-get install -y -q unminimize || true; } && { ! command -v unminimize >/dev/null || yes | unminimize; }"
+check = "test ! -e /etc/dpkg/dpkg.cfg.d/excludes"
+
+[[item.step]]
+type = "apt"
+packages = ["man-db", "manpages-dev", "bash-completion", "command-not-found", "plocate", "tealdeer"]
+
+[[item.step]]
+type = "run"
+cmd = "tldr --update || true"
+as_user = true
+creates = "~/.cache/tealdeer"
