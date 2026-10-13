@@ -1,0 +1,65 @@
+# devbox-setup catalog: the Cloud tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "aws"
+tab = "cloud"
+label = "AWS CLI"
+
+[[item.step]]
+type = "mise"
+tools = ["aws-cli@latest"]
+
+[[item]]
+id = "gcloud"
+tab = "cloud"
+label = "Google Cloud CLI (large)"
+
+[[item.step]]
+type = "mise"
+tools = ["gcloud@latest"]
+
+[[item]]
+id = "azure"
+tab = "cloud"
+label = "Azure CLI (large)"
+
+[[item.step]]
+type = "mise"
+tools = ["uv@latest", "pipx:azure-cli"]
+
+[[item]]
+id = "doctl"
+tab = "cloud"
+label = "DigitalOcean doctl"
+
+[[item.step]]
+type = "mise"
+tools = ["doctl@latest"]
+
+[[item]]
+id = "hcloud"
+tab = "cloud"
+label = "Hetzner Cloud CLI"
+
+[[item.step]]
+type = "mise"
+tools = ["hcloud@latest"]
+
+[[item]]
+id = "cloudflared"
+tab = "cloud"
+label = "cloudflared (Cloudflare tunnels)"
+
+[[item.step]]
+type = "mise"
+tools = ["cloudflared@latest"]
+
+[[item]]
+id = "backup"
+tab = "cloud"
+label = "restic + rclone (backups, cloud storage)"
+
+[[item.step]]
+type = "mise"
+tools = ["restic@latest", "rclone@latest"]

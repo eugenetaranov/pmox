@@ -20,10 +20,27 @@ tasks:
       - task --list
 
   build:
-    desc: Build the binary
+    desc: Build the binary (with the Go devbox-setup embedded)
+    deps: [devbox:build]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/pmox
+
+  devbox:e2e:
+    desc: "End-to-end check of the Go devbox-setup on a throwaway VM (ITEMS=\"cli tmux\" for a subset, KEEP=1 to keep the VM)"
+    deps: [build]
+    cmds:
+      - PMOX={{.BUILD_DIR}}/{{.BINARY}} ./scripts/devbox-e2e.sh
+
+  devbox:build:
+    desc: Build the Go devbox-setup for linux amd64 and arm64 into internal/bootstrap/gobin (embedded into pmox)
+    cmds:
+      - |
+        for a in amd64 arm64; do
+          CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" \
+            -o internal/bootstrap/gobin/devbox-setup-linux-$a ./cmd/devbox-setup
+          gzip -9f internal/bootstrap/gobin/devbox-setup-linux-$a
+        done
 
   test:
     desc: Run unit tests

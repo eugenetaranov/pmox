@@ -1,0 +1,103 @@
+# devbox-setup catalog: the Dev tools tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "lazygit"
+tab = "dev"
+label = "lazygit (git TUI)"
+
+[[item.step]]
+type = "mise"
+tools = ["lazygit@latest"]
+
+[[item]]
+id = "runners"
+tab = "dev"
+label = "just + watchexec + hyperfine"
+
+[[item.step]]
+type = "mise"
+tools = ["just@latest", "watchexec@latest", "hyperfine@latest"]
+
+[[item]]
+id = "task"
+tab = "dev"
+label = "Task (Makefile alternative)"
+
+[[item.step]]
+type = "mise"
+tools = ["task@latest"]
+
+[[item]]
+id = "yq"
+tab = "dev"
+label = "yq (YAML processor)"
+
+[[item.step]]
+type = "mise"
+tools = ["yq@latest"]
+
+[[item]]
+id = "http"
+tab = "dev"
+label = "HTTP clients (xh, hurl)"
+
+[[item.step]]
+type = "mise"
+tools = ["xh@latest", "hurl@latest"]
+
+[[item]]
+id = "lint"
+tab = "dev"
+label = "Linters + hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit)"
+
+[[item.step]]
+type = "mise"
+tools = ["shellcheck@latest", "shfmt@latest", "actionlint@latest", "gitleaks@latest", "uv@latest", "pipx:pre-commit"]
+
+[[item]]
+id = "dbclients"
+tab = "dev"
+label = "DB clients (psql, mariadb, sqlite3, redis-cli)"
+
+[[item.step]]
+type = "apt"
+packages = ["postgresql-client", "mariadb-client", "sqlite3", "redis-tools"]
+
+[[item]]
+id = "pgcli"
+tab = "dev"
+label = "pgcli + usql (friendlier DB shells)"
+
+[[item.step]]
+type = "mise"
+tools = ["uv@latest", "pipx:pgcli", "usql@latest"]
+
+[[item]]
+id = "profiling"
+tab = "dev"
+label = "Profiling (perf, valgrind, bpftrace)"
+source = "apt linux-tools-\\$(uname -r) valgrind bpftrace bpfcc-tools"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "act"
+tab = "dev"
+label = "act (run GitHub Actions locally)"
+needs = ["docker"]
+
+[[item.step]]
+type = "mise"
+tools = ["act@latest"]
+
+[[item]]
+id = "npmrc"
+tab = "dev"
+label = "Private npm registry (scope + token)"
+needs = ["node"]
+source = "~/.npmrc (a devbox-setup block, 0600)"
+
+[[item.step]]
+type = "legacy"

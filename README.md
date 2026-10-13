@@ -598,6 +598,14 @@ downloaded for it at boot. A failed copy only warns. With `--no-wait-ssh`
 nothing is copied. `pmox devbox push web1` installs it, or refreshes it to
 your pmox version, on an existing VM; saved choices are kept.
 
+**Profiles.** `sudo devbox-setup export > team.toml` writes the choices on
+a VM as a profile: a TOML file of picks and plain settings (git identity,
+timezone, MCP servers), never secrets. `sudo devbox-setup --profile team.toml
+--yes` applies one (`--profile` repeats, later files win, so a team file and
+a personal one combine), and `pmox launch web1 --devbox-profile team.toml`
+(or `devbox_profile:` under a server) applies it as soon as the VM is up,
+before any hook. A failed profile only warns, unless `--strict-hooks`.
+
 pmox also adds a line to the VM's cloud-init that turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security
 updates on these VMs are then up to you (`sudo apt upgrade`), or tick

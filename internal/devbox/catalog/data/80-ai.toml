@@ -1,0 +1,123 @@
+# devbox-setup catalog: the AI tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "claude"
+tab = "ai"
+label = "Claude Code"
+source = "apt claude-code (Anthropic repo)"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "codex"
+tab = "ai"
+label = "OpenAI Codex CLI"
+
+[[item.step]]
+type = "mise"
+tools = ["codex@latest"]
+
+[[item]]
+id = "gemini"
+tab = "ai"
+label = "Gemini CLI"
+needs = ["node"]
+
+[[item.step]]
+type = "mise"
+tools = ["gemini@latest"]
+
+[[item]]
+id = "opencode"
+tab = "ai"
+label = "OpenCode"
+
+[[item.step]]
+type = "mise"
+tools = ["opencode@latest"]
+
+[[item]]
+id = "aider"
+tab = "ai"
+label = "Aider"
+
+[[item.step]]
+type = "mise"
+tools = ["uv@latest", "pipx:aider-chat[uvx_args=--python=3.12]"]
+
+[[item]]
+id = "goose"
+tab = "ai"
+label = "Goose"
+
+[[item.step]]
+type = "mise"
+tools = ["aqua:block/goose@latest"]
+
+[[item]]
+id = "omp"
+tab = "ai"
+label = "omp (oh-my-pi coding agent)"
+source = "curl omp.sh/install → /usr/local/bin/omp"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "ollama"
+tab = "ai"
+label = "Ollama (local models; large, CPU-only without GPU passthrough)"
+source = "curl ollama.com/install.sh · listens on 127.0.0.1:11434"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "openspec"
+tab = "ai"
+label = "OpenSpec (spec-driven development CLI)"
+needs = ["node"]
+
+[[item.step]]
+type = "mise"
+tools = ["npm:@fission-ai/openspec@latest"]
+
+[[item]]
+id = "ecc"
+tab = "ai"
+label = "ECC for Claude Code (~68 agents, rules, commands; no hooks)"
+needs = ["node", "claude"]
+source = "npx ecc-universal@$ECC_VERSION install --profile minimal · npx ecc-universal uninstall to remove"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "agentcfg"
+tab = "ai"
+label = "Describe this VM to agents (CLAUDE.md, AGENTS.md)"
+source = "~/.claude/CLAUDE.md · ~/.codex/AGENTS.md · only if absent"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "agentkeys"
+tab = "ai"
+label = "Agent API keys (Anthropic, OpenAI, Gemini)"
+source = "~/.config/devbox/agent.env (0600) · read by interactive shells"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "mcpjungle"
+tab = "ai"
+label = "MCPJungle + MCP servers (Docker)"
+needs = ["docker"]
+source = "release binary · systemd mcpjungle · mcp-sync"
+
+[[item.step]]
+type = "legacy"

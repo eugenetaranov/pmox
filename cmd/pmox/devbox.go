@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -12,7 +14,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eugenetaranov/pmox/internal/bootstrap"
+	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/devbox/profile"
 	"github.com/eugenetaranov/pmox/internal/launch"
+	"github.com/eugenetaranov/pmox/internal/sshkey"
 )
 
 // devboxPushTimeout bounds one copy of devbox-setup's files (~200 KB).
@@ -83,6 +88,63 @@ func applyDevboxPush(opts *launch.Options) {
 	opts.PushDevboxFn = func(ctx context.Context, ip string) error {
 		return devboxPushFn(ctx, &sshTarget{IP: ip, User: user, Key: key, Name: name})
 	}
+}
+
+// devboxProfileRemote is where a launch's profile lands on the VM and the
+// command that applies it (stdin: the profile).
+const (
+	devboxProfileRemote  = "/var/lib/devbox-setup/launch-profile.toml"
+	devboxProfileCommand = "sudo -n sh -c 'umask 077 && mkdir -p /var/lib/devbox-setup && cat > " + devboxProfileRemote +
+		" && devbox-setup --profile " + devboxProfileRemote + " --yes'"
+	devboxProfileTimeout = 45 * time.Minute
+)
+
+// applyDevboxProfileOpt wires --devbox-profile (or the server's
+// devbox_profile) into launch: the file is checked now, before anything
+// is created, and applied over SSH once devbox-setup is installed.
+func applyDevboxProfileOpt(opts *launch.Options, flagPath string, srv *config.Server) error {
+	path := flagPath
+	if path == "" && srv != nil {
+		path = srv.DevboxProfile
+	}
+	if path == "" {
+		return nil
+	}
+	if !opts.DevboxSetup {
+		return fmt.Errorf("--devbox-profile needs devbox-setup, which is off for this server (devbox_setup: false)")
+	}
+	if !bootstrap.HasGoBuilds() {
+		return fmt.Errorf("--devbox-profile needs the Go devbox-setup, which this pmox build doesn't include (build with 'task build')")
+	}
+	b, err := os.ReadFile(sshkey.ExpandHome(path))
+	if err != nil {
+		return fmt.Errorf("devbox profile: %w", err)
+	}
+	if _, err := profile.Parse(path, b); err != nil {
+		return fmt.Errorf("devbox profile: %w", err)
+	}
+	name, user, key := opts.Name, opts.User, opts.SSHKeyPath
+	opts.DevboxProfileFn = func(ctx context.Context, ip string, stdout, stderr io.Writer) error {
+		return devboxProfileFn(ctx, &sshTarget{IP: ip, User: user, Key: key, Name: name}, b, stdout, stderr)
+	}
+	return nil
+}
+
+// devboxProfileFn sends the profile to the target and applies it,
+// streaming the output. A seam for tests.
+var devboxProfileFn = func(ctx context.Context, target *sshTarget, prof []byte, stdout, stderr io.Writer) error {
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return errors.New("ssh binary not found on PATH")
+	}
+	ctx, cancel := context.WithTimeout(ctx, devboxProfileTimeout)
+	defer cancel()
+	args := devboxPushArgs(target, guestHostKeyOpts())
+	args[len(args)-1] = devboxProfileCommand
+	c := exec.CommandContext(ctx, sshPath, args...)
+	c.Stdin = bytes.NewReader(prof)
+	c.Stdout, c.Stderr = stdout, stderr
+	return c.Run()
 }
 
 // devboxPushFn streams bootstrap.Tarball to the target and installs it

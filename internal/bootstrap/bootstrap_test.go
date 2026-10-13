@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"gopkg.in/yaml.v3"
 
@@ -187,6 +188,8 @@ func TestPickerPy(t *testing.T) {
 }
 
 func TestTarball(t *testing.T) {
+	// The layout without the Go builds (TestFilesWithGoBuilds covers them).
+	withBins(t, fstest.MapFS{})
 	tgz, err := Tarball()
 	if err != nil {
 		t.Fatal(err)
@@ -257,4 +260,29 @@ func TestAssetsOnlySynced(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// A plain run, with none of the Go devbox-setup's --begin/--only/--finish,
+// must not take that path (it exits 0 without doing anything).
+func TestPlainRunIsNotLegacyMode(t *testing.T) {
+	b, _ := files.ReadFile("devbox-setup")
+	script := string(b)
+	i := strings.Index(script, "\nload_answers\n")
+	if i < 0 {
+		t.Fatal("no main")
+	}
+	main := script[i:]
+	j := strings.Index(main, `"$ONLY"`)
+	if j < 0 {
+		t.Fatal("no --only branch in main")
+	}
+	cond := main[strings.LastIndex(main[:j], "\nif "):]
+	cond = cond[:strings.Index(cond, "; then")]
+	out, err := exec.Command("bash", "-c", "ONLY= BEGIN=0 FINISH=0; if"+strings.TrimPrefix(cond, "\nif")+"; then echo legacy; else echo plain; fi").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "plain" {
+		t.Errorf("a plain run takes the legacy branch (%s)", strings.TrimSpace(cond))
+	}
 }

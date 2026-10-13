@@ -1,0 +1,37 @@
+# The picker's tabs, in order (Review comes last on its own).
+
+[[tab]]
+id = "system"
+title = "System"
+
+[[tab]]
+id = "shell"
+title = "Shell & CLI"
+
+[[tab]]
+id = "dev"
+title = "Dev tools"
+
+[[tab]]
+id = "lang"
+title = "Languages"
+
+[[tab]]
+id = "cloud"
+title = "Cloud"
+
+[[tab]]
+id = "iac"
+title = "IaC"
+
+[[tab]]
+id = "k8s"
+title = "Kubernetes"
+
+[[tab]]
+id = "ai"
+title = "AI"
+
+[[tab]]
+id = "accounts"
+title = "Accounts"

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: No size limit from user-data
-pmox SHALL install devbox-setup as the static binary for the VM's architecture (from `uname -m`) at `/usr/local/bin/devbox-setup`, with the mise registry snapshot embedded in it. The user-data size SHALL NOT depend on devbox-setup.
+pmox SHALL install devbox-setup as the static binary for the VM's architecture (from `uname -m`) at `/usr/local/bin/devbox-setup`, with the mise registry snapshot embedded in it. pmox ships both builds in one copy, and the VM installs the one for its architecture. Until every item is ported, the bash devbox-setup is copied too, to `/usr/local/share/devbox-setup/devbox-setup.sh`; the Go binary runs it for unported items and hands it the picker. The user-data size SHALL NOT depend on devbox-setup.
 
 #### Scenario: arm64 VM
 - **WHEN** devbox-setup is pushed to a VM whose `uname -m` is `aarch64`
@@ -9,7 +9,7 @@ pmox SHALL install devbox-setup as the static binary for the VM's architecture (
 
 #### Scenario: Unsupported architecture
 - **WHEN** the VM's architecture is neither x86_64 nor aarch64
-- **THEN** nothing is copied, and a warning names the architecture
+- **THEN** the bash devbox-setup is installed instead, and a warning names the architecture
 
 ## ADDED Requirements
 

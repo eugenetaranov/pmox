@@ -1,0 +1,176 @@
+# devbox-setup catalog: the System tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "etckeeper"
+tab = "system"
+label = "etckeeper (/etc history in git; install it first)"
+
+[[item.step]]
+type = "apt"
+packages = ["etckeeper"]
+
+[[item]]
+id = "essentials"
+tab = "system"
+label = "Essentials (recommended)"
+
+[[item.step]]
+type = "apt"
+packages = ["git", "curl", "wget", "ca-certificates", "unzip", "zip", "build-essential", "jq", "gh"]
+
+[[item]]
+id = "debug"
+tab = "system"
+label = "Admin and debug tools (network, disk, process)"
+source = "apt install bind9-dnsutils mtr-tiny traceroute tcpdump iperf3 ethtool nmap iftop lsof strace ltrace sysstat iotop-c ncdu duf pv lnav netcat-openbsd socat rsync btop"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "docker"
+tab = "system"
+label = "Docker Engine + Compose"
+source = "apt docker-ce (download.docker.com repo) · log rotation, 10.200/16 networks · docker group = root"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "podman"
+tab = "system"
+label = "Podman (rootless) + skopeo + buildah"
+
+[[item.step]]
+type = "apt"
+packages = ["podman", "uidmap", "slirp4netns", "passt", "skopeo", "buildah"]
+
+[[item]]
+id = "ctools"
+tab = "system"
+label = "Container tools (lazydocker, dive, hadolint, crane, cosign)"
+needs = ["docker"]
+
+[[item.step]]
+type = "mise"
+tools = ["lazydocker@latest", "dive@latest", "hadolint@latest", "crane@latest", "cosign@latest"]
+
+[[item]]
+id = "tailscale"
+tab = "system"
+label = "Tailscale"
+source = "curl tailscale.com/install.sh · then tailscale up"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "netfs"
+tab = "system"
+label = "NFS + SMB clients"
+
+[[item.step]]
+type = "apt"
+packages = ["nfs-common", "cifs-utils", "autofs"]
+
+[[item]]
+id = "monitoring"
+tab = "system"
+label = "node_exporter (localhost:9100) + glances"
+needs = ["mise"]
+source = "apt prometheus-node-exporter · mise pipx:glances"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "devlimits"
+tab = "system"
+label = "Dev limits: inotify watches, open files, map count"
+source = "/etc/sysctl.d, limits.d, system.conf.d: 60-devbox.conf"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "zram"
+tab = "system"
+label = "Compressed swap in RAM (zram)"
+source = "apt systemd-zram-generator · zram0 = half of RAM, max 8 GB"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "journald"
+tab = "system"
+label = "Cap the journal at 200 MB"
+source = "/etc/systemd/journald.conf.d/60-devbox.conf"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "tzlocale"
+tab = "system"
+label = "Timezone + en_US.UTF-8 locale"
+source = "timedatectl set-timezone · locale-gen · apt locales-all"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "autoupdates"
+tab = "system"
+label = "Automatic security updates (no auto-reboot)"
+source = "unattended-upgrades · undoes pmox's boot-time switch-off"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "needrestart"
+tab = "system"
+label = "needrestart: restart services quietly after apt"
+source = "/etc/needrestart/conf.d/devbox.conf · no kernel pop-ups"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "sshharden"
+tab = "system"
+label = "SSH: keys only, no root login (advanced)"
+source = "/etc/ssh/sshd_config.d/10-devbox.conf · refuses if you have no authorized key"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "ufw"
+tab = "system"
+label = "Firewall: only SSH, Tailscale, mosh in (advanced)"
+source = "ufw · note: Docker's published ports bypass it"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "fail2ban"
+tab = "system"
+label = "fail2ban: ban SSH brute force (internet-facing VMs)"
+source = "apt fail2ban · sshd jail · Tailscale IPs never banned"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "registries"
+tab = "system"
+label = "Container registry logins (ghcr.io, …)"
+needs = ["docker"]
+source = "docker login per registry · ~/.docker/config.json"
+
+[[item.step]]
+type = "legacy"

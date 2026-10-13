@@ -1,0 +1,420 @@
+// Command devbox-setup picks what to install on this machine, then
+// installs it. It is the Go version of internal/bootstrap/devbox-setup,
+// built for linux and copied to VMs by pmox.
+//
+//	sudo devbox-setup             choose tools, languages, AI and settings
+//	sudo devbox-setup --yes       re-apply everything chosen so far, no questions
+//	devbox-setup --dry-run        ask, then show what would happen
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
+	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
+	"github.com/eugenetaranov/pmox/internal/devbox/creds"
+	"github.com/eugenetaranov/pmox/internal/devbox/plan"
+	"github.com/eugenetaranov/pmox/internal/devbox/profile"
+	"github.com/eugenetaranov/pmox/internal/devbox/run"
+	"github.com/eugenetaranov/pmox/internal/devbox/steps"
+	"github.com/eugenetaranov/pmox/internal/devbox/ui"
+	"golang.org/x/term"
+)
+
+// version is set by the build (-X main.version=...).
+var version = "dev"
+
+const (
+	defaultState = "/var/lib/devbox-setup"
+	defaultLog   = "/var/log/devbox-setup.log"
+	// defaultLegacy is the bash installer the legacy steps run (until
+	// every item is ported).
+	defaultLegacy = "/usr/local/share/devbox-setup/devbox-setup.sh"
+)
+
+func main() {
+	if bashHandles(os.Args[1:]) {
+		script := envOr("DEVBOX_SETUP_LEGACY", defaultLegacy)
+		err := handoff(script, os.Args[1:])
+		fmt.Fprintf(os.Stderr, "devbox-setup: %v\n", err)
+		os.Exit(1)
+	}
+	if os.Geteuid() != 0 && needsRoot(os.Args[1:]) {
+		err := asRoot(os.Args[1:])
+		fmt.Fprintf(os.Stderr, "devbox-setup: %v\n", err)
+		os.Exit(1)
+	}
+	if err := cli(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "devbox-setup: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+type options struct {
+	yes, dryRun, verify, showVersion, list bool
+	state, log, legacy                     string
+	profiles                               list
+}
+
+// list is a repeatable string flag.
+type list []string
+
+func (l *list) String() string     { return strings.Join(*l, ",") }
+func (l *list) Set(v string) error { *l = append(*l, v); return nil }
+
+func cli(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("devbox-setup", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var o options
+	fs.BoolVar(&o.yes, "yes", false, "re-apply everything chosen so far, no questions")
+	fs.BoolVar(&o.yes, "y", false, "short for --yes")
+	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would happen; change nothing")
+	fs.BoolVar(&o.dryRun, "n", false, "short for --dry-run")
+	fs.BoolVar(&o.verify, "verify", false, "check that the saved items are installed; change nothing")
+	fs.BoolVar(&o.showVersion, "version", false, "print the version")
+	fs.BoolVar(&o.list, "list", false, "list the catalog's items (id, tab, label)")
+	fs.StringVar(&o.state, "state", envOr("DEVBOX_SETUP_STATE", defaultState), "state directory")
+	fs.StringVar(&o.log, "log", envOr("DEVBOX_SETUP_LOG", defaultLog), "log file (every command and its output)")
+	fs.Var(&o.profiles, "profile", "apply a profile (file or https URL; repeatable, later ones win)")
+	o.legacy = envOr("DEVBOX_SETUP_LEGACY", defaultLegacy)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if o.showVersion {
+		fmt.Fprintln(stdout, version)
+		return nil
+	}
+	cat, err := catalog.Load(localCatalog(), nil)
+	if err != nil {
+		return err
+	}
+	if o.list {
+		for _, it := range cat.Items {
+			if !it.Hidden() {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\n", it.ID, it.Tab, it.Label)
+			}
+		}
+		return nil
+	}
+	a, notes, err := answers.Read(o.state)
+	if err != nil {
+		return err
+	}
+	for _, n := range notes {
+		fmt.Fprintln(stderr, "devbox-setup: "+n)
+	}
+	if fs.NArg() > 0 {
+		if fs.Arg(0) == "export" && fs.NArg() <= 2 {
+			return export(stdout, a, fs.Arg(1))
+		}
+		return fmt.Errorf("unknown argument %q", fs.Arg(0))
+	}
+	interactive := !o.yes && !o.verify
+	if interactive && len(o.profiles) > 0 {
+		return errors.New("--profile needs --yes (the picker doesn't load profiles yet)")
+	}
+	if len(o.profiles) > 0 {
+		ctx := context.Background()
+		for _, src := range o.profiles {
+			p, err := loadProfile(ctx, src)
+			if err != nil {
+				return err
+			}
+			for _, w := range p.Apply(a, cat) {
+				fmt.Fprintln(stderr, "devbox-setup: "+w)
+			}
+		}
+		if a.User == "" {
+			a.User = os.Getenv("SUDO_USER")
+		}
+		if a.User == "" {
+			return errors.New("no user to set up: run devbox-setup with sudo from that user's login")
+		}
+		if !o.dryRun && !o.verify {
+			if err := answers.Write(o.state, a); err != nil {
+				return err
+			}
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	var items []*catalog.Item
+	extra := a.MiseExtra
+	sec := creds.New()
+	if interactive {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return errors.New("needs a terminal (or --yes to re-apply saved choices)")
+		}
+		k := &asker{cat: cat, a: a, share: filepath.Dir(o.legacy), out: stdout, installed: func(t string) bool { return userHas(a.User, t) }}
+		c, err := k.ask(ctx)
+		if errors.Is(err, ui.ErrQuit) {
+			fmt.Fprintln(stdout, "Cancelled.")
+			return nil
+		}
+		if err != nil || c == nil {
+			return err
+		}
+		a.Picks = answers.Merge(a.Picks, c.picks)
+		a.MiseExtra = answers.Merge(a.MiseExtra, c.miseExtra)
+		items, extra, sec = c.items, c.miseExtra, c.secrets
+		if o.dryRun {
+			env, err := newEnv(a.User, nil)
+			if err != nil {
+				return err
+			}
+			return run.DryRun(stdout, env, items, extra)
+		}
+		if err := answers.Write(o.state, a); err != nil {
+			return err
+		}
+	} else {
+		if len(a.Picks) == 0 {
+			return errors.New("no saved choices yet; run devbox-setup without --yes first")
+		}
+		if items, err = plan.Resolve(cat, a.Picks, len(a.MiseExtra) > 0); err != nil {
+			return err
+		}
+	}
+	if o.dryRun || o.verify {
+		env, err := newEnv(a.User, nil)
+		if err != nil {
+			return err
+		}
+		if o.dryRun {
+			return run.DryRun(stdout, env, items, extra)
+		}
+		return verify(ctx, stdout, env, items)
+	}
+	logf, err := os.OpenFile(o.log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	fmt.Fprintf(logf, "=== devbox-setup %s, %s\n", version, time.Now().Format(time.RFC3339))
+	env, err := newEnv(a.User, logf)
+	if err != nil {
+		return err
+	}
+	bash := legacyRunner(env, o.legacy, o.state)
+	if bash != nil {
+		stdin := sec.Encode()
+		env.Legacy = func(ctx context.Context, id string) error {
+			// The GitHub steps may open the browser login: in an
+			// interactive run they get the terminal.
+			if interactive && (id == "github" || id == "gitsign") {
+				c := exec.CommandContext(ctx, "bash", o.legacy, "--only", id, "--secrets")
+				c.Env = append(os.Environ(), legacyCmd(o.legacy, o.state).Env...)
+				c.Stdin, c.Stdout, c.Stderr = bytes.NewReader(stdin), os.Stdout, os.Stderr
+				return c.Run()
+			}
+			cmd := legacyCmd(o.legacy, o.state, "--only", id, "--secrets")
+			cmd.Stdin = stdin
+			_, err := env.RunLogged(ctx, cmd)
+			return err
+		}
+		if err := bash(ctx, "--begin"); err != nil {
+			return err
+		}
+	}
+	r := &run.Runner{Env: env, Progress: run.Plain{W: stdout}, TailLines: 25}
+	res := r.Run(ctx, items, extra)
+	// While bash runs steps, its notes (with "Secrets to fill in") are the
+	// fuller ~/devbox-setup.txt.
+	if bash != nil {
+		if out, err := bashOut(ctx, env, o.legacy, o.state, "--finish"); err != nil {
+			fmt.Fprintf(stderr, "devbox-setup: notes: %v\n", err)
+		} else {
+			_, _ = stdout.Write(out)
+		}
+	} else if err := writeSummary(env, items, extra); err != nil {
+		fmt.Fprintf(stderr, "devbox-setup: %s/devbox-setup.txt: %v\n", env.Home, err)
+	}
+	fmt.Fprintf(stdout, "How each tool was installed and how to update it: %s/devbox-setup.txt\nLog: %s\n", env.Home, o.log)
+	if !res.OK() {
+		for _, id := range res.Failed {
+			fmt.Fprintf(stderr, "✗ %s: %s\n", id, res.Errors[id])
+		}
+		return fmt.Errorf("failed: %s — fix and re-run devbox-setup", strings.Join(res.Failed, " "))
+	}
+	return nil
+}
+
+func verify(ctx context.Context, w io.Writer, env *steps.Env, items []*catalog.Item) error {
+	missing := 0
+	for _, s := range run.Verify(ctx, env, items) {
+		if s.Item.Hidden() {
+			continue
+		}
+		switch s.State {
+		case "ok":
+			fmt.Fprintf(w, "ok         %s\n", s.Item.Label)
+		case "unchecked":
+			fmt.Fprintf(w, "unchecked  %s (not ported yet)\n", s.Item.Label)
+		default:
+			missing++
+			fmt.Fprintf(w, "missing    %s: %s\n", s.Item.Label, s.Detail)
+		}
+	}
+	if missing > 0 {
+		return fmt.Errorf("%d item(s) missing", missing)
+	}
+	return nil
+}
+
+// localCatalog is /etc/devbox-setup/catalog.d, if there is one.
+func localCatalog() fs.FS {
+	if fi, err := os.Stat(catalog.LocalDir); err == nil && fi.IsDir() {
+		return os.DirFS(catalog.LocalDir)
+	}
+	return nil
+}
+
+// loadProfile reads a profile from a file or an https URL.
+func loadProfile(ctx context.Context, src string) (*profile.Profile, error) {
+	var b []byte
+	var err error
+	switch {
+	case strings.HasPrefix(src, "https://"):
+		b, err = download(ctx, src)
+	case strings.Contains(src, "://"):
+		return nil, fmt.Errorf("%s: profiles load from a file or an https URL", src)
+	default:
+		b, err = os.ReadFile(src)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return profile.Parse(src, b)
+}
+
+// export writes the saved answers as a profile, to file or stdout.
+func export(stdout io.Writer, a *answers.Answers, file string) error {
+	if len(a.Picks) == 0 {
+		return errors.New("no saved choices to export yet")
+	}
+	b := profile.Export(a)
+	if file == "" {
+		_, err := stdout.Write(b)
+		return err
+	}
+	return os.WriteFile(file, b, 0o644)
+}
+
+// legacyRunner runs the bash installer with args (logged), or is nil when
+// it isn't installed.
+func legacyRunner(env *steps.Env, script, state string) func(ctx context.Context, args ...string) error {
+	if _, err := os.Stat(script); err != nil {
+		return nil
+	}
+	return func(ctx context.Context, args ...string) error {
+		_, err := env.RunLogged(ctx, legacyCmd(script, state, args...))
+		return err
+	}
+}
+
+func bashOut(ctx context.Context, env *steps.Env, script, state string, args ...string) ([]byte, error) {
+	return env.Exec.Run(ctx, legacyCmd(script, state, args...))
+}
+
+func legacyCmd(script, state string, args ...string) steps.Cmd {
+	return steps.Cmd{Name: "bash", Args: append([]string{script}, args...),
+		Env: []string{"DEVBOX_SETUP_STATE=" + state, "DEVBOX_SETUP_SHARE=" + filepath.Dir(script)}}
+}
+
+func writeSummary(env *steps.Env, items []*catalog.Item, extra []string) error {
+	p := filepath.Join(env.Home, "devbox-setup.txt")
+	f, err := os.Create(p)
+	if err != nil {
+		return err
+	}
+	run.Summary(f, items, extra, time.Now())
+	fmt.Fprintln(f, "Run 'sudo devbox-setup' again to add more.")
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if env.Chown {
+		return os.Chown(p, env.UID, env.GID)
+	}
+	return nil
+}
+
+// bashHandles says whether the bash devbox-setup runs this command line:
+// forget isn't ported yet, and its help describes both.
+func bashHandles(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "forget", "-h", "--help", "-help":
+			return true
+		}
+	}
+	return false
+}
+
+// userHas reports whether tool is on the user's PATH (mise shims included).
+func userHas(user, tool string) bool {
+	return exec.Command("runuser", "-u", user, "--", "sh", "-c", steps.UserShell, "_", "sh", "-c", "command -v "+tool).Run() == nil
+}
+
+// needsRoot: everything but --version and --list reads the root-only state.
+func needsRoot(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "--version", "-version", "--list", "-list":
+			return false
+		}
+	}
+	return true
+}
+
+// asRoot re-runs this command through sudo, keeping a forwarded SSH agent
+// (as the bash devbox-setup does).
+func asRoot(args []string) error {
+	sudo, err := exec.LookPath("sudo")
+	if err != nil {
+		return errors.New("needs root: run it with sudo")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	argv := []string{"sudo"}
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
+		argv = append(argv, "--preserve-env=SSH_AUTH_SOCK")
+	}
+	return syscall.Exec(sudo, append(append(argv, self), args...), os.Environ())
+}
+
+// handoff replaces this process with the bash devbox-setup.
+func handoff(script string, args []string) error {
+	if _, err := os.Stat(script); err != nil {
+		return fmt.Errorf("the picker isn't in this build and the bash devbox-setup (%s) is missing; use --yes", script)
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(bash, append([]string{"bash", script}, args...), os.Environ())
+}
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}

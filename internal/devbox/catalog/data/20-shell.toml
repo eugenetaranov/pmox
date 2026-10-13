@@ -1,0 +1,133 @@
+# devbox-setup catalog: the Shell & CLI tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "cli"
+tab = "shell"
+label = "CLI upgrades (ripgrep, fd, bat, eza, fzf, zoxide, delta, direnv)"
+source = "apt install ripgrep fd-find bat eza zoxide fzf git-delta direnv tree (+ fd/bat links)"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "editors"
+tab = "shell"
+label = "Vim"
+
+[[item.step]]
+type = "apt"
+packages = ["vim"]
+
+[[item]]
+id = "neovim"
+tab = "shell"
+label = "Neovim (latest)"
+
+[[item.step]]
+type = "mise"
+tools = ["neovim@latest"]
+
+[[item]]
+id = "tmux"
+tab = "shell"
+label = "tmux"
+
+[[item.step]]
+type = "apt"
+packages = ["tmux"]
+
+[[item]]
+id = "zellij"
+tab = "shell"
+label = "zellij (tmux alternative)"
+
+[[item.step]]
+type = "mise"
+tools = ["zellij@latest"]
+
+[[item]]
+id = "mosh"
+tab = "shell"
+label = "mosh (SSH that survives sleep and roaming)"
+
+[[item.step]]
+type = "apt"
+packages = ["mosh"]
+
+[[item]]
+id = "zsh"
+tab = "shell"
+label = "zsh (login shell)"
+source = "apt zsh · chsh to zsh"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "zshcfg"
+tab = "shell"
+label = "zsh config: oh-my-zsh + autosuggestions, syntax highlighting, history search, completions"
+needs = ["zsh"]
+source = "git clone ~/.oh-my-zsh + plugins · ~/.zshrc (.zshrc.orig kept)"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "p10k"
+tab = "shell"
+label = "Powerlevel10k zsh prompt (lean, one line, Nerd Font icons)"
+needs = ["zshcfg"]
+source = "git clone powerlevel10k · ~/.p10k.zsh if absent · p10k configure to restyle"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "vimcfg"
+tab = "shell"
+label = "Vim config + plugins (writes .vimrc)"
+needs = ["editors"]
+source = "vim-plug · curated ~/.vimrc · .vimrc.orig kept"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "shellcfg"
+tab = "shell"
+label = "Shell niceties for zsh and bash: z, fzf keys, direnv, eza/bat aliases"
+source = "~/.config/devbox/shell.sh, sourced from .zshrc and .bashrc"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "fzftab"
+tab = "shell"
+label = "zsh fuzzy Tab completion (fzf-tab)"
+needs = ["zshcfg", "cli"]
+source = "git clone Aloxaf/fzf-tab → ~/.oh-my-zsh/custom/plugins"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "tmuxcfg"
+tab = "shell"
+label = "tmux config (mouse, splits, 50k history)"
+needs = ["tmux"]
+source = "~/.tmux.conf · .tmux.conf.orig kept"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "docs"
+tab = "shell"
+label = "Man pages, completion, tldr"
+source = "apt man-db manpages-dev bash-completion command-not-found plocate tealdeer · unminimize if needed"
+
+[[item.step]]
+type = "legacy"

@@ -50,6 +50,7 @@ type launchFlags struct {
 	wait           time.Duration
 	noWaitSSH      bool
 	noClockSync    bool
+	devboxProfile  string
 	postCreate     string
 	tack           string
 	ansible        string
@@ -129,6 +130,7 @@ automatic rollback. If anything after clone fails, run
 // addClockSyncFlag registers --no-clock-sync on launch and clone.
 func addClockSyncFlag(cmd *cobra.Command, f *launchFlags) {
 	cmd.Flags().BoolVar(&f.noClockSync, "no-clock-sync", false, "don't add chrony following the Proxmox host's clock to the VM's cloud-init (config: clock_sync: false)")
+	cmd.Flags().StringVar(&f.devboxProfile, "devbox-profile", "", "apply this devbox-setup profile once the VM is up: sudo devbox-setup --profile <file> --yes (config: devbox_profile)")
 }
 
 // addHookFlags registers the post-create hook flags on a launch-style
@@ -279,6 +281,9 @@ func runLaunch(cmd *cobra.Command, name string, f *launchFlags) error {
 	}
 	applyHookOptions(&opts, hk, f, resolved.Server, resolved.URL, SSHInsecure())
 	applyDevboxPush(&opts)
+	if err := applyDevboxProfileOpt(&opts, f.devboxProfile, resolved.Server); err != nil {
+		return err
+	}
 	opts.Progress = newLaunchProgress(cmd.ErrOrStderr())
 
 	upload, closeUpload := newSnippetUploader(resolved)

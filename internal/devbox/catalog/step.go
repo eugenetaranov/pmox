@@ -1,0 +1,163 @@
+package catalog
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"regexp"
+	"strings"
+)
+
+// Step is one install action of an item. Type picks the kind; each kind
+// uses its own fields (see validate). Paths in To may start with "~/" (the
+// target user's home).
+type Step struct {
+	Type string `toml:"type"`
+
+	// apt
+	Packages []string `toml:"packages"`
+	// mise (`mise use -g`, as the user)
+	Tools []string `toml:"tools"`
+
+	// apt_repo: a signing key and a sources entry. Name names both files;
+	// Source is the deb822 body, with {{arch}}, {{codename}} and
+	// {{keyring}} filled in.
+	Name           string `toml:"name"`
+	KeyURL         string `toml:"key_url"`
+	KeyFingerprint string `toml:"key_fingerprint"`
+	Source         string `toml:"source"`
+
+	// file, template (Src in the catalog's files), link (Src is a path)
+	Src      string            `toml:"src"`
+	To       string            `toml:"to"`
+	Mode     string            `toml:"mode"`
+	Owner    string            `toml:"owner"` // "user" or "root" (default: user under ~/, else root)
+	KeepOrig bool              `toml:"keep_orig"`
+	IfAbsent bool              `toml:"if_absent"`
+	Vars     map[string]string `toml:"vars"`
+
+	// git_clone
+	Repo string `toml:"repo"`
+	Ref  string `toml:"ref"`
+
+	// systemctl
+	Unit   string `toml:"unit"`
+	Action string `toml:"action"` // enable-now (default), restart, daemon-reload
+
+	// user_shell
+	Shell string `toml:"shell"`
+
+	// run: a shell one-liner; Creates or Check makes a re-run a no-op.
+	Cmd     string `toml:"cmd"`
+	AsUser  bool   `toml:"as_user"`
+	Creates string `toml:"creates"`
+	Check   string `toml:"check"`
+
+	// Downloads (run steps that fetch, release binaries): a pin, or why not.
+	SHA256     string `toml:"sha256"`
+	Unverified string `toml:"unverified"`
+}
+
+var (
+	modeRe = regexp.MustCompile(`^0[0-7]{3}$`)
+	hexRe  = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	fprRe  = regexp.MustCompile(`^[0-9A-F]{40}$`)
+	// GoSteps are the registered `go:<name>` step names; the steps package
+	// fills it in (catalog doesn't import it).
+	GoSteps = map[string]bool{}
+)
+
+func (s *Step) validate(files fs.FS) error {
+	need := func(field, v string) error {
+		if v == "" {
+			return fmt.Errorf("needs %s", field)
+		}
+		return nil
+	}
+	src := func() error {
+		if s.Src == "" {
+			return errors.New("needs src")
+		}
+		if files == nil {
+			return nil
+		}
+		if _, err := fs.Stat(files, s.Src); err != nil {
+			return fmt.Errorf("src %q is not in devbox-setup's files", s.Src)
+		}
+		return nil
+	}
+	if s.Mode != "" && !modeRe.MatchString(s.Mode) {
+		return fmt.Errorf("mode %q: want an octal like 0644", s.Mode)
+	}
+	if s.Owner != "" && s.Owner != "user" && s.Owner != "root" {
+		return fmt.Errorf("owner %q: want user or root", s.Owner)
+	}
+	if s.SHA256 != "" && !hexRe.MatchString(s.SHA256) {
+		return errors.New("sha256: want 64 lowercase hex digits")
+	}
+	switch {
+	case s.Type == "apt":
+		if len(s.Packages) == 0 {
+			return errors.New("needs packages")
+		}
+	case s.Type == "mise":
+		if len(s.Tools) == 0 {
+			return errors.New("needs tools")
+		}
+	case s.Type == "apt_repo":
+		for f, v := range map[string]string{"name": s.Name, "key_url": s.KeyURL, "source": s.Source} {
+			if err := need(f, v); err != nil {
+				return err
+			}
+		}
+		if s.KeyFingerprint != "" && !fprRe.MatchString(s.KeyFingerprint) {
+			return errors.New("key_fingerprint: want 40 uppercase hex digits")
+		}
+	case s.Type == "file", s.Type == "template":
+		if err := src(); err != nil {
+			return err
+		}
+		return need("to", s.To)
+	case s.Type == "link":
+		if err := need("src", s.Src); err != nil {
+			return err
+		}
+		return need("to", s.To)
+	case s.Type == "git_clone":
+		if err := need("repo", s.Repo); err != nil {
+			return err
+		}
+		return need("to", s.To)
+	case s.Type == "systemctl":
+		switch s.Action {
+		case "", "enable-now", "restart":
+			return need("unit", s.Unit)
+		case "daemon-reload":
+		default:
+			return fmt.Errorf("action %q: want enable-now, restart or daemon-reload", s.Action)
+		}
+	case s.Type == "sysctl":
+		if err := src(); err != nil {
+			return err
+		}
+		return need("to", s.To)
+	case s.Type == "user_shell":
+		return need("shell", s.Shell)
+	case s.Type == "run":
+		if err := need("cmd", s.Cmd); err != nil {
+			return err
+		}
+		if s.Creates == "" && s.Check == "" {
+			return errors.New("needs creates or check, so a re-run is a no-op")
+		}
+	case s.Type == "legacy":
+		// Runs the bundled bash installer for this item (until it's ported).
+	case strings.HasPrefix(s.Type, "go:"):
+		if !GoSteps[strings.TrimPrefix(s.Type, "go:")] && len(GoSteps) > 0 {
+			return fmt.Errorf("no Go step %q", strings.TrimPrefix(s.Type, "go:"))
+		}
+	default:
+		return fmt.Errorf("unknown step type %q", s.Type)
+	}
+	return nil
+}

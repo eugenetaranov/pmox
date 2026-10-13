@@ -754,3 +754,56 @@ type hookFunc func()
 func (h hookFunc) Name() string { return "func" }
 
 func (h hookFunc) Run(context.Context, hook.Env, io.Writer, io.Writer) error { h(); return nil }
+
+// TestRun_DevboxProfile: the profile is applied after the push and before
+// the hook; a failure warns, and fails the launch with --strict-hooks.
+func TestRun_DevboxProfile(t *testing.T) {
+	setup := func(t *testing.T, pushErr, profErr error) (Options, *[]string, *bytes.Buffer) {
+		f := newLaunchFake(t)
+		var order []string
+		var stderr bytes.Buffer
+		opts, _ := baseOpts(t, f.client())
+		opts.NoWaitSSH = false
+		opts.WaitForSSHFn = fakeWaitSSH()
+		opts.DevboxSetup = true
+		opts.Stderr = &stderr
+		opts.PushDevboxFn = func(context.Context, string) error { order = append(order, "push"); return pushErr }
+		opts.DevboxProfileFn = func(_ context.Context, ip string, _, _ io.Writer) error {
+			order = append(order, "profile:"+ip)
+			return profErr
+		}
+		opts.Hook = hookFunc(func() { order = append(order, "hook") })
+		return opts, &order, &stderr
+	}
+
+	opts, order, _ := setup(t, nil, nil)
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := strings.Join(*order, ","); got != "push,profile:10.9.8.7,hook" {
+		t.Errorf("order = %s", got)
+	}
+
+	opts, _, stderr := setup(t, nil, errors.New("exit status 1"))
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("a failed profile should only warn: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "devbox profile failed") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+
+	opts, _, _ = setup(t, nil, errors.New("exit status 1"))
+	opts.StrictHooks = true
+	var he *HookError
+	if _, err := Run(context.Background(), opts); !errors.As(err, &he) || he.Hook != "devbox-profile" {
+		t.Errorf("strict: err = %v, want a devbox-profile HookError", err)
+	}
+
+	opts, order, stderr = setup(t, errors.New("ssh: refused"), nil)
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(strings.Join(*order, ","), "profile") || !strings.Contains(stderr.String(), "devbox-setup is not installed") {
+		t.Errorf("a failed push should skip the profile with a warning; order %v stderr %q", *order, stderr.String())
+	}
+}

@@ -182,7 +182,7 @@ CRED_ROWS=(
 SCREENS=("system|System" "shell|Shell & CLI" "dev|Dev tools" "lang|Languages"
          "cloud|Cloud" "iac|IaC" "k8s|Kubernetes" "ai|AI" "accounts|Accounts")
 
-YES=0 DRY=0 FORGET=0
+YES=0 DRY=0 FORGET=0 ONLY= BEGIN=0 FINISH=0 SECRETS=0
 ARGS=("$@")
 usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
@@ -191,6 +191,16 @@ while [ $# -gt 0 ]; do
     -n|--dry-run) DRY=1 ;;
     -h|--help) usage; exit 0 ;;
     forget) FORGET=1 ;;
+    # Used by the Go devbox-setup while it still runs these steps here:
+    # --begin (before a run), --only ID (one item, saved answers, no
+    # questions), --finish (notes and ~/devbox-setup.txt).
+    --only) ONLY=${2:?--only needs an item id}; shift ;;
+    --begin) BEGIN=1 ;;
+    --finish) FINISH=1 ;;
+    # --secrets: read this run's typed secrets from stdin (NUL-separated
+    # name/value pairs; never saved), and allow prompts that need the
+    # terminal (the GitHub browser login) when there is one.
+    --secrets) SECRETS=1 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
@@ -1591,7 +1601,9 @@ step() {
 }
 
 FAILED=
-apply() {
+# begin_run — the start of an install run: a fresh log and notes, and apt
+# settings for vendor scripts.
+begin_run() {
   mkdir -p "$STATE"; : > "$LOG"; chmod 600 "$LOG"; rm -f "$STATE/.apt-fresh" "$STATE/.notes"
   # Every apt-get waits for the dpkg lock instead of failing, including
   # those inside vendor install scripts (tailscale, …). pmox also turns off
@@ -1599,6 +1611,62 @@ apply() {
   printf '%s\n' 'DPkg::Lock::Timeout "900";' \
     'Dpkg::Options { "--force-confdef"; "--force-confold"; };' \
     | put_file /etc/apt/apt.conf.d/90devbox-setup 0644 || true
+}
+
+# sync_mcp — register the picked MCP servers with the running gateway.
+sync_mcp() {
+  echo
+  header "MCP servers"
+  curl -s -o /dev/null "http://127.0.0.1:$MCPJUNGLE_PORT/" || \
+    warn "mcpjungle is not answering on port $MCPJUNGLE_PORT; check: journalctl -u mcpjungle"
+  as_user env MCP_CATALOG="$CATALOG" MCPJUNGLE_REGISTRY="http://127.0.0.1:$MCPJUNGLE_PORT" \
+    "$BIN/mcp-sync" $A_MCP_SERVERS || warn "Some servers did not register (see above)."
+  faint "Change credentials in ~$A_USER/.mcp/<name>/env, then run mcp-sync as $A_USER."
+}
+
+# read_secrets — the typed secrets the Go devbox-setup passes on stdin:
+# CRED:<item> <KEY>, MCP:<server> <KEY>, REG_USER:<registry>,
+# REG_PASS:<registry>, and TS_AUTHKEY, GH_TOKEN_IN, GH_PASSPHRASE,
+# AGE_CHOICE, AGE_KEY.
+read_secrets() {
+  local k v
+  while IFS= read -r -d '' k && IFS= read -r -d '' v; do
+    case "$k" in
+      CRED:*) CRED["${k#CRED:}"]=$v ;;
+      MCP:*) MCP_KEYS["${k#MCP:}"]=$v ;;
+      REG_USER:*) REG_USER["${k#REG_USER:}"]=$v ;;
+      REG_PASS:*) REG_PASS["${k#REG_PASS:}"]=$v ;;
+      TS_AUTHKEY|GH_TOKEN_IN|GH_PASSPHRASE|AGE_CHOICE|AGE_KEY) printf -v "$k" '%s' "$v" ;;
+    esac
+  done
+  return 0
+}
+
+# only ID — install one item from the saved answers, no questions (the Go
+# devbox-setup's legacy step). Output goes to stdout, for its log.
+only() {
+  case "$1" in
+    github) github_login ;;
+    gitsign) install_gitsign ;;
+    mcpjungle) run_id mcpjungle; sync_mcp ;;
+    *) run_id "$1" ;;
+  esac
+}
+
+# finish_run — the end of a run: the notes, and ~/devbox-setup.txt.
+finish_run() {
+  if [ -s "$STATE/.notes" ]; then
+    echo
+    while IFS= read -r l; do warn "! $l"; done < "$STATE/.notes"
+  fi
+  write_manage_notes
+  if [ "$MISSING_COUNT" -gt 0 ]; then
+    warn "$MISSING_COUNT secret(s) to fill in — see ~$A_USER/devbox-setup.txt"
+  fi
+}
+
+apply() {
+  begin_run
   local id
   for id in $PLAN; do
     case "$id" in github|gitsign|registries) continue ;; esac
@@ -1618,30 +1686,14 @@ apply() {
     step zshcomp "zsh completions for installed tools" prime_zsh_completions
   fi
 
-  if picked mcpjungle && ! picked_failed mcpjungle; then
-    echo
-    header "MCP servers"
-    curl -s -o /dev/null "http://127.0.0.1:$MCPJUNGLE_PORT/" || \
-      warn "mcpjungle is not answering on port $MCPJUNGLE_PORT; check: journalctl -u mcpjungle"
-    as_user env MCP_CATALOG="$CATALOG" MCPJUNGLE_REGISTRY="http://127.0.0.1:$MCPJUNGLE_PORT" \
-      "$BIN/mcp-sync" $A_MCP_SERVERS || warn "Some servers did not register (see above)."
-    faint "Change credentials in ~$A_USER/.mcp/<name>/env, then run mcp-sync as $A_USER."
-  fi
+  if picked mcpjungle && ! picked_failed mcpjungle; then sync_mcp; fi
   if picked github && ! picked_failed essentials; then github_login; fi
   if picked gitsign && ! picked_failed essentials; then install_gitsign; fi
   if picked registries && ! picked_failed docker; then
     step registries "$(label_of registries)" install_registries
   fi
 
-  if [ -s "$STATE/.notes" ]; then
-    echo
-    while IFS= read -r l; do warn "! $l"; done < "$STATE/.notes"
-  fi
-  echo
-  write_manage_notes
-  if [ "$MISSING_COUNT" -gt 0 ]; then
-    warn "$MISSING_COUNT secret(s) to fill in — see ~$A_USER/devbox-setup.txt"
-  fi
+  finish_run
   faint "How each tool was installed and how to update it: ~$A_USER/devbox-setup.txt"
   faint "Start a new shell (log out and back in) to pick up the new shell, groups and PATH."
   faint "Log: $LOG"
@@ -1899,6 +1951,20 @@ if [ "$FORGET" = 1 ]; then
   A_USER=${A_USER:-${SUDO_USER:-$(id -un)}}
   forget
   exit $?
+fi
+if [ -n "$ONLY" ] || [ "$BEGIN" = 1 ] || [ "$FINISH" = 1 ]; then
+  id "$A_USER" >/dev/null 2>&1 || die "the saved user '$A_USER' does not exist"
+  RUN_PICKS=$A_PICKS RUN_MISE_EXTRA=$A_MISE_EXTRA
+  PLAN=$(resolve $RUN_PICKS)
+  if [ "$SECRETS" = 1 ]; then
+    read_secrets
+    # The terminal is the user's: an interactive Go run hands it over.
+    if [ -t 1 ] && [ -e /dev/tty ]; then INTERACTIVE=1; exec < /dev/tty; fi
+  fi
+  if [ "$BEGIN" = 1 ]; then begin_run; fi
+  if [ -n "$ONLY" ]; then only "$ONLY"; fi
+  if [ "$FINISH" = 1 ]; then finish_run; fi
+  exit 0
 fi
 if [ "$YES" = 1 ]; then
   [ -n "$A_PICKS" ] || die "no saved choices yet; run devbox-setup without --yes first"

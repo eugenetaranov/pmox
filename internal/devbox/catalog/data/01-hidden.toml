@@ -1,0 +1,20 @@
+# devbox-setup catalog: helper items pulled in by needs (not shown in the picker).
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "rubydeps"
+tab = "-"
+label = "Ruby build dependencies"
+
+[[item.step]]
+type = "apt"
+packages = ["libssl-dev", "libyaml-dev", "zlib1g-dev", "libffi-dev", "libreadline-dev", "libgmp-dev"]
+
+[[item]]
+id = "mise"
+tab = "-"
+label = "mise"
+source = "apt mise (mise.jdx.dev repo)"
+
+[[item.step]]
+type = "legacy"

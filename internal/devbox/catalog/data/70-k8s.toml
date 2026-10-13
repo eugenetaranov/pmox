@@ -1,0 +1,99 @@
+# devbox-setup catalog: the Kubernetes tab.
+# `legacy` steps run the bundled bash installer until the item is ported.
+
+[[item]]
+id = "k8s"
+tab = "k8s"
+label = "Kubernetes CLIs (kubectl, kubectx, helm 3, k9s)"
+
+[[item.step]]
+type = "mise"
+tools = ["kubectl@latest", "kubectx@latest", "kubens@latest", "helm@3", "k9s@latest"]
+
+[[item]]
+id = "k8sextra"
+tab = "k8s"
+label = "K8s extras (stern, kustomize, kubecolor, kubie, kubeconform)"
+needs = ["k8s"]
+
+[[item.step]]
+type = "mise"
+tools = ["stern@latest", "kustomize@latest", "kubecolor@latest", "kubie@latest", "kubeconform@latest"]
+
+[[item]]
+id = "krew"
+tab = "k8s"
+label = "kubectl krew + plugins (neat, tree, view-secret)"
+needs = ["k8s"]
+source = "krew release → ~/.krew · kubectl krew install neat tree view-secret"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "helmfile"
+tab = "k8s"
+label = "helmfile + helm-diff"
+needs = ["k8s"]
+source = "mise use -g helmfile · helm plugin install helm-diff"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "gitops"
+tab = "k8s"
+label = "GitOps CLIs (Argo CD, Flux)"
+needs = ["k8s"]
+
+[[item.step]]
+type = "mise"
+tools = ["argocd@latest", "flux2@latest"]
+
+[[item]]
+id = "kind"
+tab = "k8s"
+label = "kind (local k8s in Docker)"
+needs = ["docker"]
+
+[[item.step]]
+type = "mise"
+tools = ["kind@latest"]
+
+[[item]]
+id = "k3d"
+tab = "k8s"
+label = "k3d (k3s in Docker)"
+needs = ["docker"]
+
+[[item.step]]
+type = "mise"
+tools = ["k3d@latest"]
+
+[[item]]
+id = "k3s"
+tab = "k8s"
+label = "k3s cluster on this VM (systemd)"
+source = "curl get.k3s.io · kubeconfig → ~/.kube/config if absent"
+
+[[item.step]]
+type = "legacy"
+
+[[item]]
+id = "devloop"
+tab = "k8s"
+label = "Inner loop (Tilt, Skaffold, ctlptl)"
+needs = ["k8s"]
+
+[[item.step]]
+type = "mise"
+tools = ["tilt@latest", "skaffold@latest", "ctlptl@latest"]
+
+[[item]]
+id = "talos"
+tab = "k8s"
+label = "talosctl (Talos Linux)"
+
+[[item.step]]
+type = "mise"
+tools = ["talosctl@latest"]

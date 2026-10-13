@@ -66,6 +66,11 @@ type Options struct {
 	// PushDevboxFn copies bootstrap.Tarball to the VM at ip and installs
 	// it. The CLI wires it to ssh; nil skips the push.
 	PushDevboxFn func(ctx context.Context, ip string) error
+	// DevboxProfileFn applies a devbox-setup profile on the VM at ip once
+	// devbox-setup is installed (`sudo devbox-setup --profile … --yes`),
+	// streaming its output. Nil skips it. A failure warns, or fails the
+	// launch with StrictHooks.
+	DevboxProfileFn func(ctx context.Context, ip string, stdout, stderr io.Writer) error
 	// ClockSync adds chrony following the Proxmox host's clock to the
 	// uploaded user-data (bootstrap.ClockSync).
 	ClockSync bool
@@ -305,8 +310,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Phase 8c — install devbox-setup over SSH, before any hook so a hook
 	// can run it. Best-effort: the VM is fine without it.
+	pushed := false
 	if opts.DevboxSetup {
-		pushDevbox(ctx, opts, ip)
+		pushed = pushDevbox(ctx, opts, ip)
 	}
 
 	// Phase 9 — mark ready: the VM is cloned, tagged, resized, cloud-init
@@ -316,6 +322,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// a failure here doesn't undo one either.
 	if err := opts.Client.SetConfig(ctx, opts.Node, vmid, map[string]string{"tags": "pmox;" + vm.ReadyTag}); err != nil && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: could not mark vm %d ready (harmless: 'pmox cleanup's opt-in vm category may flag it): %v\n", vmid, err)
+	}
+
+	// Phase 9b — apply the devbox-setup profile, before the hook so a hook
+	// sees the tools installed.
+	if opts.DevboxProfileFn != nil {
+		if err := applyDevboxProfile(ctx, opts, ip, pushed); err != nil {
+			return nil, err
+		}
 	}
 
 	// Phase 10 — run the post-SSH hook if configured.
@@ -403,14 +417,47 @@ func withUserDataEdit(userData []byte, change func([]byte) ([]byte, error), what
 	return out
 }
 
-// pushDevbox installs devbox-setup on the VM, warning on failure.
-func pushDevbox(ctx context.Context, opts Options, ip string) {
+// applyDevboxProfile runs DevboxProfileFn, streaming like a hook. Its
+// failure is a warning, or a *HookError with StrictHooks.
+func applyDevboxProfile(ctx context.Context, opts Options, ip string, pushed bool) error {
+	stdout, stderr := opts.Stdout, opts.Stderr
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	var err error
+	switch {
+	case opts.NoWaitSSH:
+		fmt.Fprintln(stderr, "warning: --no-wait-ssh set; the devbox profile will not be applied")
+		return nil
+	case !pushed:
+		err = errors.New("devbox-setup is not installed")
+	default:
+		fmt.Fprintln(stderr, "Applying the devbox profile…")
+		err = opts.DevboxProfileFn(ctx, ip, stdout, stderr)
+	}
+	if err == nil {
+		fmt.Fprintln(stderr, "✓ devbox profile applied")
+		return nil
+	}
+	fmt.Fprintf(stderr, "warning: devbox profile failed: %v. Retry with: pmox exec %s -- sudo devbox-setup --yes\n", err, opts.Name)
+	if opts.StrictHooks {
+		return &HookError{Hook: "devbox-profile", Err: err}
+	}
+	return nil
+}
+
+// pushDevbox installs devbox-setup on the VM, warning on failure. It
+// reports whether it was installed.
+func pushDevbox(ctx context.Context, opts Options, ip string) bool {
 	hint := "pmox devbox push " + opts.Name
 	if opts.NoWaitSSH || opts.PushDevboxFn == nil {
 		if opts.NoWaitSSH && opts.Stderr != nil {
 			fmt.Fprintf(opts.Stderr, "note: --no-wait-ssh set; devbox-setup not installed. Once the VM is up: %s\n", hint)
 		}
-		return
+		return false
 	}
 	opts.pStart("Installing devbox-setup")
 	err := opts.PushDevboxFn(ctx, ip)
@@ -418,4 +465,5 @@ func pushDevbox(ctx context.Context, opts Options, ip string) {
 	if err != nil && opts.Stderr != nil {
 		fmt.Fprintf(opts.Stderr, "warning: devbox-setup not installed on %s: %v. Retry with: %s\n", opts.Name, err, hint)
 	}
+	return err == nil
 }

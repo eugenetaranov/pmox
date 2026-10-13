@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,8 +28,42 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed devbox-setup picker.py mise-registry.tsv assets conf
+//go:embed devbox-setup picker.py mise-registry.tsv install.sh assets conf
 var files embed.FS
+
+//go:embed gobin
+var gobins embed.FS
+
+// Bins holds the Go devbox-setup builds (devbox-setup-linux-<arch>.gz);
+// tests replace it. Without any, only the bash devbox-setup is shipped.
+var Bins fs.FS = mustSub(gobins, "gobin")
+
+func mustSub(f fs.FS, dir string) fs.FS {
+	s, err := fs.Sub(f, dir)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// LegacyScriptPath is where the bash devbox-setup lands when the Go one
+// is installed: the Go binary runs it for steps not ported yet.
+const LegacyScriptPath = ShareDir + "/devbox-setup.sh"
+
+// goBuilds returns the embedded Go builds by file name.
+func goBuilds() map[string][]byte {
+	out := map[string][]byte{}
+	names, _ := fs.Glob(Bins, "devbox-setup-linux-*.gz")
+	for _, n := range names {
+		if b, err := fs.ReadFile(Bins, n); err == nil && len(b) > 0 {
+			out[n] = b
+		}
+	}
+	return out
+}
+
+// HasGoBuilds reports whether this pmox ships the Go devbox-setup.
+func HasGoBuilds() bool { return len(goBuilds()) > 0 }
 
 // ShareDir is where the assets land on the VM; the script reads them there.
 const ShareDir = "/usr/local/share/devbox-setup"
@@ -57,8 +92,20 @@ func Files() []File {
 	if err != nil {
 		panic(err)
 	}
+	install, err := files.ReadFile("install.sh")
+	if err != nil {
+		panic(err)
+	}
+	// With the Go builds, install.sh puts the right one at ScriptPath and
+	// the bash script stays in the share directory for its legacy steps.
+	scriptAt := ScriptPath
+	builds := goBuilds()
+	if len(builds) > 0 {
+		scriptAt = LegacyScriptPath
+	}
 	out := []File{
-		{Path: ScriptPath, Permissions: "0755", Content: script},
+		{Path: scriptAt, Permissions: "0755", Content: script},
+		{Path: path.Join(ShareDir, "install.sh"), Permissions: "0755", Content: install},
 		{Path: path.Join(ShareDir, "picker.py"), Permissions: "0755", Content: picker},
 		{Path: path.Join(ShareDir, "mise-registry.tsv"), Permissions: "0644", Content: registry},
 	}
@@ -82,6 +129,14 @@ func Files() []File {
 		out = append(out, File{Path: path.Join(ShareDir, p), Permissions: "0644", Content: b})
 		return nil
 	})
+	names := make([]string, 0, len(builds))
+	for n := range builds {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out = append(out, File{Path: path.Join(ShareDir, "bin", n), Permissions: "0644", Content: builds[n]})
+	}
 	return out
 }
 
@@ -280,4 +335,15 @@ func Tarball() ([]byte, error) {
 // InstallCommand is the remote command that installs Tarball (on stdin):
 // it replaces the share directory, so files dropped from pmox don't
 // linger, and leaves /var/lib/devbox-setup (saved answers) alone.
-const InstallCommand = "sudo -n sh -c 'rm -rf " + ShareDir + " && tar -xzf - -C / --no-overwrite-dir'"
+// install.sh then installs the Go build for the VM's architecture.
+const InstallCommand = "sudo -n sh -c 'rm -rf " + ShareDir + " && tar -xzf - -C / --no-overwrite-dir && sh " + ShareDir + "/install.sh'"
+
+// MiseRegistry is pmox's snapshot of mise's registry (name, aliases,
+// description per line), for the picker's search.
+func MiseRegistry() []byte {
+	b, _ := files.ReadFile("mise-registry.tsv")
+	return b
+}
+
+// Conf is devbox-setup's own config files (conf/), for file steps.
+func Conf() fs.FS { return mustSub(files, "conf") }

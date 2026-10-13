@@ -56,6 +56,10 @@ type Server struct {
 	// ForwardAgent makes pmox shell/exec and ssh-config forward the local
 	// ssh-agent to this server's VMs (ssh -A); --forward-agent overrides.
 	ForwardAgent bool `yaml:"forward_agent,omitempty"`
+
+	// DevboxProfile is a devbox-setup profile applied to launched and
+	// cloned VMs (--devbox-profile overrides it).
+	DevboxProfile string `yaml:"devbox_profile,omitempty"`
 }
 
 // DevboxSetupEnabled reports whether launched VMs get devbox-setup.

@@ -9,6 +9,8 @@ before:
   hooks:
     - go mod tidy
     - go generate ./...
+    # The Go devbox-setup for each VM architecture, embedded into pmox.
+    - sh -c 'for a in amd64 arm64; do CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -ldflags "-s -w -X main.version={{ .Version }}" -o internal/bootstrap/gobin/devbox-setup-linux-$a ./cmd/devbox-setup && gzip -9f internal/bootstrap/gobin/devbox-setup-linux-$a; done' 
 
 builds:
   - id: pmox
