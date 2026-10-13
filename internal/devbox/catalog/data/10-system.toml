@@ -365,3 +365,25 @@ source = "docker login per registry · ~/.docker/config.json"
 # After the GitHub login: ghcr.io can use gh's token.
 [[item.step]]
 type = "go:registries"
+
+# Behind a corporate proxy: apt, Docker (daemon and client), mise and
+# login shells go through it. Applied before the run's apt transaction.
+[[item]]
+id = "proxy"
+tab = "system"
+label = "Corporate proxy (apt, Docker, mise, shells)"
+source = "apt.conf.d/95devbox-proxy · /etc/environment · docker.service.d/proxy.conf · ~/.docker/config.json"
+
+[[item.step]]
+type = "go:proxy"
+
+# An internal CA bundle in the system trust store (curl, apt, git, Docker),
+# with Node, Python requests and the AWS CLI pointed at it by shell.sh.
+[[item]]
+id = "corpca"
+tab = "system"
+label = "Internal CA bundle (system trust store; Node, Python, AWS CLI)"
+source = "a PEM path on the VM, or an https URL + sha256 · update-ca-certificates"
+
+[[item.step]]
+type = "go:corpca"

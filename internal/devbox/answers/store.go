@@ -35,6 +35,8 @@ type systemFile struct {
 	Picks    []string            `json:"picks"`
 	TZ       string              `json:"tz"`
 	DevPorts []string            `json:"dev_ports,omitempty"`
+	Proxy    Proxy               `json:"proxy,omitzero"`
+	CA       CA                  `json:"ca,omitzero"`
 	Layers   map[string][]string `json:"layers,omitempty"`
 	Hand     []string            `json:"hand,omitempty"`
 	// Users are the users set up, by name.
@@ -179,7 +181,7 @@ func (s *Store) Load(name string) (*Answers, []string, error) {
 	if err != nil {
 		return nil, notes, err
 	}
-	a := &Answers{Version: Version, User: name, TZ: sys.TZ, DevPorts: sys.DevPorts, Layers: map[string][]string{}}
+	a := &Answers{Version: Version, User: name, TZ: sys.TZ, DevPorts: sys.DevPorts, Proxy: sys.Proxy, CA: sys.CA, Layers: map[string][]string{}}
 	a.Picks = slices.DeleteFunc(slices.Clone(sys.Picks), func(id string) bool { return !s.IsSystem(id) })
 	a.Hand = slices.DeleteFunc(slices.Clone(sys.Hand), func(id string) bool { return !s.IsSystem(id) })
 	for n, l := range sys.Layers {
@@ -251,7 +253,7 @@ func (s *Store) Save(a *Answers) error {
 	}
 	uf := &userFile{Version: Version, MiseExtra: a.MiseExtra, MCPListen: a.MCPListen, MCPServers: a.MCPServers,
 		WireAgents: a.WireAgents, Git: a.Git, GitHub: a.GitHub, NPM: a.NPM, Registries: a.Registries}
-	sys.Version, sys.TZ, sys.DevPorts = Version, a.TZ, a.DevPorts
+	sys.Version, sys.TZ, sys.DevPorts, sys.Proxy, sys.CA = Version, a.TZ, a.DevPorts, a.Proxy, a.CA
 	sys.Picks, uf.Picks = split(a.Picks)
 	sys.Hand, uf.Hand = split(a.Hand)
 	if len(sys.Hand) == 0 {

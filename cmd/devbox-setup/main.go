@@ -294,6 +294,12 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 		}
 		changed = true
 	}
+	// The proxy (proxy item) for everything this run fetches: apt, mise,
+	// curl, as root and as the user.
+	for _, kv := range steps.ProxyEnv(a.Proxy) {
+		k, v, _ := strings.Cut(kv, "=")
+		_ = os.Setenv(k, v)
+	}
 	created, err := o.ensureUser(ctx, a.User, stdout)
 	if err != nil {
 		return err
@@ -715,8 +721,15 @@ func asRoot(args []string) error {
 		return err
 	}
 	argv := []string{"sudo"}
-	if os.Getenv("SSH_AUTH_SOCK") != "" {
-		argv = append(argv, "--preserve-env=SSH_AUTH_SOCK")
+	// Keep a forwarded agent, and a proxy the user's shell has.
+	var keep []string
+	for _, k := range []string{"SSH_AUTH_SOCK", "http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"} {
+		if os.Getenv(k) != "" {
+			keep = append(keep, k)
+		}
+	}
+	if len(keep) > 0 {
+		argv = append(argv, "--preserve-env="+strings.Join(keep, ","))
 	}
 	return syscall.Exec(sudo, append(append(argv, self), args...), os.Environ())
 }

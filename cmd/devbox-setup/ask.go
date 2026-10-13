@@ -120,6 +120,16 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 			return nil, err
 		}
 	}
+	if has("proxy") {
+		if err := k.askProxy(); err != nil {
+			return nil, err
+		}
+	}
+	if has("corpca") {
+		if err := k.askCA(); err != nil {
+			return nil, err
+		}
+	}
 	if has("ufw") {
 		if err := k.askDevPorts(); err != nil {
 			return nil, err
@@ -318,6 +328,73 @@ func (k *asker) askTZ() error {
 		}
 		fmt.Fprintf(k.out, "Unknown timezone %q.\n", tz)
 		cur = tz
+	}
+}
+
+// askProxy asks for the proxy and the hosts that bypass it.
+func (k *asker) askProxy() error {
+	cur := k.a.Proxy
+	if cur.URL == "" {
+		cur.URL = os.Getenv("https_proxy")
+		if cur.URL == "" {
+			cur.URL = os.Getenv("HTTPS_PROXY")
+		}
+	}
+	if cur.NoProxy == "" {
+		cur.NoProxy = "localhost,127.0.0.1,::1"
+	}
+	for {
+		u, err := ui.Input("Proxy URL (e.g. http://proxy.example.com:3128)", "No credentials in it: devbox-setup never saves secrets.", cur.URL)
+		if err != nil {
+			return err
+		}
+		if err := answers.CheckProxy(u); err != nil {
+			fmt.Fprintf(k.out, "%s: %v\n", u, err)
+			cur.URL = u
+			continue
+		}
+		cur.URL = u
+		break
+	}
+	for {
+		n, err := ui.Input("Hosts that bypass the proxy, comma-separated", "", cur.NoProxy)
+		if err != nil {
+			return err
+		}
+		if err := answers.CheckNoProxy(n); err != nil {
+			fmt.Fprintln(k.out, err)
+			cur.NoProxy = n
+			continue
+		}
+		cur.NoProxy = n
+		break
+	}
+	k.a.Proxy = cur
+	return nil
+}
+
+// askCA asks where the internal CA bundle comes from.
+func (k *asker) askCA() error {
+	cur := k.a.CA
+	for {
+		src, err := ui.Input("CA bundle: a PEM file on this VM, or an https URL", "Behind a TLS-inspecting proxy, copy it to the VM first (the URL can't be trusted yet).", cur.Source)
+		if err != nil {
+			return err
+		}
+		cur.Source = src
+		if strings.HasPrefix(src, "https://") {
+			if cur.SHA256, err = ui.Input("Its SHA-256 (sha256sum bundle.pem)", "", cur.SHA256); err != nil {
+				return err
+			}
+		} else {
+			cur.SHA256 = ""
+		}
+		if err := answers.CheckCA(cur); err != nil {
+			fmt.Fprintln(k.out, err)
+			continue
+		}
+		k.a.CA = cur
+		return nil
 	}
 }
 

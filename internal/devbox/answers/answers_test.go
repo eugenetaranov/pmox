@@ -189,3 +189,19 @@ func TestDevPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyAndCAChecks(t *testing.T) {
+	for u, ok := range map[string]bool{"http://proxy:3128": true, "https://p.acme": true, "http://user:pw@proxy:3128": false, "socks5://p:1080": false, "proxy:3128": false, "http://p:1;rm": false, "http://p:1/$(x)": false} {
+		if err := CheckProxy(u); (err == nil) != ok {
+			t.Errorf("%s: err = %v", u, err)
+		}
+	}
+	if CheckNoProxy("localhost,127.0.0.1,.acme,10.0.0.0/8") != nil || CheckNoProxy("a b") == nil {
+		t.Error("no_proxy checks")
+	}
+	for c, ok := range map[CA]bool{{}: true, {Source: "/etc/acme.pem"}: true, {Source: "acme.pem"}: false, {Source: "https://x/r.pem"}: false, {Source: "https://x/r.pem", SHA256: strings.Repeat("a", 64)}: true} {
+		if err := CheckCA(c); (err == nil) != ok {
+			t.Errorf("%+v: err = %v", c, err)
+		}
+	}
+}

@@ -479,7 +479,12 @@ clears the search; Esc on an empty search quits.
    (the clock itself is set up by pmox at launch; see
    [Clock sync](#clock-sync)). Opt-in hardening: automatic
    security updates, quiet needrestart, SSH keys only, ufw (it asks which dev
-   server ports to open), fail2ban.
+   server ports to open), fail2ban. Behind a corporate network: a proxy (apt,
+   Docker, mise and shells use it; no credentials in the URL) and an internal
+   CA bundle (a PEM file on the VM, or an https URL with its sha256), trusted
+   system-wide and by Node, Python and the AWS CLI. Both are applied before
+   anything is installed, and can be set in a profile's `[system]`
+   (`proxy`, `no_proxy`, `ca_bundle`, `ca_sha256`).
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
    delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
    a curated vim config, man pages + tldr. zsh comes as separate items (type

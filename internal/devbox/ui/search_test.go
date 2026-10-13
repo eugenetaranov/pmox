@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 
@@ -142,7 +143,7 @@ import json, sys
 sys.path.insert(0, "../../bootstrap")
 import picker_test, picker
 items = picker_test.everything()
-print(json.dumps({q: [i["id"] for i in picker.search(items, q)[:10]] for q in sys.argv[1:]}))
+print(json.dumps({"ids": [i["id"] for i in items], "results": {q: [i["id"] for i in picker.search(items, q)[:10]] for q in sys.argv[1:]}}))
 `
 	cmd := exec.Command("python3", append([]string{"-c", script}, queries...)...)
 	cmd.Dir = "."
@@ -150,14 +151,18 @@ print(json.dumps({q: [i["id"] for i in picker.search(items, q)[:10]] for q in sy
 	if err != nil {
 		t.Skipf("picker.py: %v", err)
 	}
-	var want map[string][]string
-	if err := json.Unmarshal(out, &want); err != nil {
+	var py struct {
+		IDs     []string            `json:"ids"`
+		Results map[string][]string `json:"results"`
+	}
+	if err := json.Unmarshal(out, &py); err != nil {
 		t.Fatal(err)
 	}
-	items := everything(t)
+	// Items added after the port aren't in picker.py's catalog.
+	items := slices.DeleteFunc(everything(t), func(e *Entry) bool { return !slices.Contains(py.IDs, e.ID) })
 	for _, q := range queries {
-		if got := ids(Search(items, q), 10); !reflect.DeepEqual(got, want[q]) {
-			t.Errorf("%q:\n go %v\n py %v", q, got, want[q])
+		if got := ids(Search(items, q), 10); !reflect.DeepEqual(got, py.Results[q]) {
+			t.Errorf("%q:\n go %v\n py %v", q, got, py.Results[q])
 		}
 	}
 }

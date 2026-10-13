@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,7 +44,11 @@ type Answers struct {
 	TZ         string `json:"tz"`
 	// DevPorts are the ports ufw opens for dev servers ("3000",
 	// "8000-8010", "5353/udp").
-	DevPorts   []string `json:"dev_ports,omitempty"`
+	DevPorts []string `json:"dev_ports,omitempty"`
+	// Proxy is the corporate proxy (no credentials) and the hosts that
+	// bypass it; CA where an internal CA bundle comes from.
+	Proxy      Proxy    `json:"proxy,omitzero"`
+	CA         CA       `json:"ca,omitzero"`
 	GitHub     GitHub   `json:"github"`
 	NPM        NPM      `json:"npm"`
 	Registries []string `json:"registries"`
@@ -62,6 +67,19 @@ type Answers struct {
 type Git struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+}
+
+// Proxy is an HTTP(S) proxy for apt, Docker, mise and shells.
+type Proxy struct {
+	URL     string `json:"url"`
+	NoProxy string `json:"no_proxy"`
+}
+
+// CA is an internal CA bundle: a path on the VM, or an https URL with
+// its SHA-256.
+type CA struct {
+	Source string `json:"source"`
+	SHA256 string `json:"sha256"`
 }
 
 // GitHub holds how the VM reaches GitHub: agent, key or token ("" = key).
@@ -308,4 +326,48 @@ func UFWRule(p string) string {
 		p, proto = p[:i], p[i+1:]
 	}
 	return "allow " + strings.Replace(p, "-", ":", 1) + "/" + proto
+}
+
+// CheckProxy checks a proxy URL: http(s)://host[:port], without
+// credentials (answers never hold secrets).
+func CheckProxy(u string) error {
+	p, err := url.Parse(u)
+	switch {
+	case err != nil:
+		return err
+	case p.Scheme != "http" && p.Scheme != "https", p.Host == "":
+		return errors.New("want http://host:port or https://host:port")
+	case p.User != nil:
+		return errors.New("no credentials in the proxy URL: devbox-setup never saves secrets (use a proxy that authenticates the VM another way)")
+	case strings.ContainsAny(u, " \t\n\"'\\$`"):
+		return errors.New("unexpected characters")
+	}
+	return nil
+}
+
+// CheckNoProxy checks a no-proxy list: comma-separated hosts, domains,
+// IPs and CIDRs.
+func CheckNoProxy(s string) error {
+	if strings.ContainsAny(s, " \t\n\"'\\$`;") {
+		return errors.New("want comma-separated hosts, like localhost,127.0.0.1,.internal")
+	}
+	return nil
+}
+
+var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// CheckCA checks where a CA bundle comes from: an absolute path, or an
+// https URL with a 64-hex-digit SHA-256.
+func CheckCA(c CA) error {
+	switch {
+	case c.Source == "":
+		return nil
+	case strings.HasPrefix(c.Source, "https://"):
+		if !sha256Re.MatchString(c.SHA256) {
+			return errors.New("a CA bundle from a URL needs its sha256 (64 lowercase hex digits)")
+		}
+	case !filepath.IsAbs(c.Source):
+		return errors.New("want an absolute path on the VM or an https URL")
+	}
+	return nil
 }
