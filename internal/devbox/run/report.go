@@ -118,4 +118,34 @@ func Summary(w io.Writer, items []*catalog.Item, extraMise []string, now time.Ti
 		fmt.Fprintln(w, "  vendor apt repos update with apt upgrade; claude and omp update themselves.")
 		fmt.Fprintln(w)
 	}
+	if u := Unverified(items); len(u) > 0 {
+		fmt.Fprintln(w, "Installed without a pinned checksum (what was fetched wasn't checked against a known hash):")
+		for _, x := range u {
+			fmt.Fprintf(w, "  %-40s %s\n", label(x.Item), x.Reason)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+// UnverifiedItem is an item with a download that isn't pinned, and why.
+type UnverifiedItem struct {
+	Item   *catalog.Item
+	Reason string
+}
+
+// Unverified lists the items with an unverified download.
+func Unverified(items []*catalog.Item) []UnverifiedItem {
+	var out []UnverifiedItem
+	for _, it := range items {
+		var why []string
+		for _, s := range it.Steps {
+			if s.Unverified != "" {
+				why = append(why, s.Unverified)
+			}
+		}
+		if len(why) > 0 {
+			out = append(out, UnverifiedItem{it, strings.Join(why, "; ")})
+		}
+	}
+	return out
 }

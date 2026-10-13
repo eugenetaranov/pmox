@@ -528,6 +528,14 @@ clears the search; Esc on an empty search quits.
    sets upstream, delta diffs, aliases, a global ignore file), an SSH key,
    GitHub login, commit signing with SSH, GitLab CLI.
 
+Downloads are pinned: vendor apt keys are checked against their
+fingerprints and release binaries against their sha256 before they're
+installed. The few vendor installers that change in place (Tailscale,
+Ollama, k3s, krew, omp, vim-plug) can't be pinned; `~/devbox-setup.txt`
+lists the installed ones under "Installed without a pinned checksum", with
+why. A `catalog.d` item that downloads must do the same (`sha256`, or
+`unverified = "why"`), or devbox-setup refuses to load it.
+
 After the checklists, it asks every typed question in one place: extra mise
 tools, git name and email, timezone, how to reach GitHub, and the
 credentials of the items you picked. Then a review screen offers Install,

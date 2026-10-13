@@ -197,6 +197,15 @@ func TestSummaryGroups(t *testing.T) {
 	if cli < apt || cli > other || strings.Index(s, "Docker") < other {
 		t.Errorf("cli belongs with apt, docker with vendor repos:\n%s", s)
 	}
+	if strings.Contains(s, "without a pinned checksum") {
+		t.Errorf("an unverified section with nothing unverified:\n%s", s)
+	}
+	buf.Reset()
+	ts := &catalog.Item{ID: "tailscale", Label: "Tailscale", Steps: []catalog.Step{{Type: "run", Cmd: "curl -fsSL https://tailscale.com/install.sh | sh", Unverified: "Tailscale's own installer"}}}
+	Summary(&buf, append(items, ts), nil, time.Now())
+	if s := buf.String(); !strings.Contains(s, "Installed without a pinned checksum") || !strings.Contains(s, "  Tailscale") || !strings.Contains(s, "Tailscale's own installer") {
+		t.Errorf("tailscale not listed as unverified:\n%s", s)
+	}
 }
 
 type alwaysStep struct {

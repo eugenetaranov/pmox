@@ -87,7 +87,9 @@ type Step struct {
 	Header string    `toml:"header"`
 	Keys   []CredKey `toml:"key"`
 
-	// Downloads (run steps that fetch, release binaries): a pin, or why not.
+	// Downloads: a run step that fetches with curl or wget pins what it
+	// fetches (SHA256, used as {{sha256}} in Cmd, or per-architecture
+	// pins checked in Cmd with sha256sum -c), or says why it can't.
 	SHA256     string `toml:"sha256"`
 	Unverified string `toml:"unverified"`
 }
@@ -168,8 +170,8 @@ func (s *Step) validate(files fs.FS) error {
 				return err
 			}
 		}
-		if s.KeyFingerprint != "" && !fprRe.MatchString(s.KeyFingerprint) {
-			return errors.New("key_fingerprint: want 40 uppercase hex digits")
+		if !fprRe.MatchString(s.KeyFingerprint) {
+			return errors.New("key_fingerprint: want the signing key's 40 uppercase hex digits")
 		}
 	case s.Type == "file", s.Type == "template":
 		if err := src(); err != nil {
@@ -223,6 +225,9 @@ func (s *Step) validate(files fs.FS) error {
 		if s.Creates == "" && s.Check == "" && !s.OnChange {
 			return errors.New("needs creates, check or on_change, so a re-run is a no-op")
 		}
+		if err := s.pinned(); err != nil {
+			return err
+		}
 	case s.Type == "note":
 		return need("text", s.Text)
 	case s.Type == "cred":
@@ -251,4 +256,20 @@ func (s *Step) validate(files fs.FS) error {
 		return fmt.Errorf("unknown step type %q", s.Type)
 	}
 	return nil
+}
+
+var fetches = regexp.MustCompile(`\b(curl|wget)\b`)
+
+// Downloads reports whether a run step fetches something.
+func (s Step) Downloads() bool { return s.Type == "run" && fetches.MatchString(s.Cmd) }
+
+// pinned checks that a download is pinned or says why it isn't.
+func (s Step) pinned() error {
+	switch {
+	case s.SHA256 != "" && !strings.Contains(s.Cmd, "{{sha256}}"):
+		return errors.New("sha256 is set but the cmd doesn't check {{sha256}}")
+	case !s.Downloads() || s.Unverified != "" || s.SHA256 != "" || strings.Contains(s.Cmd, "sha256sum -c"):
+		return nil
+	}
+	return errors.New("downloads with curl or wget: pin it (sha256, or sha256sum -c in the cmd) or say why it can't be (unverified = \"…\")")
 }

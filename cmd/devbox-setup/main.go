@@ -369,6 +369,9 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 			fmt.Fprintf(stderr, "devbox-setup: notes: %v\n", err)
 		} else {
 			_, _ = stdout.Write(out)
+			if err := appendUnverified(env, items); err != nil {
+				fmt.Fprintf(stderr, "devbox-setup: %s/devbox-setup.txt: %v\n", env.Home, err)
+			}
 		}
 	} else {
 		if b, err := os.ReadFile(notesFile); err == nil && len(b) > 0 {
@@ -635,6 +638,24 @@ func bashOut(ctx context.Context, env *steps.Env, script, state string, args ...
 func legacyCmd(script, state string, args ...string) steps.Cmd {
 	return steps.Cmd{Name: "bash", Args: append([]string{script}, args...),
 		Env: []string{"DEVBOX_SETUP_STATE=" + state, "DEVBOX_SETUP_SHARE=" + filepath.Dir(script)}}
+}
+
+// appendUnverified adds the "Installed without a pinned checksum" section
+// to the ~/devbox-setup.txt the bash installer just wrote, which lacks it.
+func appendUnverified(env *steps.Env, items []*catalog.Item) error {
+	u := run.Unverified(items)
+	if len(u) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Join(env.Home, "devbox-setup.txt"), os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(f, "\nInstalled without a pinned checksum (what was fetched wasn't checked against a known hash):")
+	for _, x := range u {
+		fmt.Fprintf(f, "  %-40s %s\n", x.Item.Label, x.Reason)
+	}
+	return f.Close()
 }
 
 func writeSummary(env *steps.Env, items []*catalog.Item, extra []string) error {

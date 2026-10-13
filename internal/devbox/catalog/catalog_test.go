@@ -3,6 +3,7 @@ package catalog
 import (
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -227,5 +228,43 @@ func TestScope(t *testing.T) {
 		if got := c.Item(id).System(); got != want {
 			t.Errorf("%s: System() = %v, want %v", id, got, want)
 		}
+	}
+}
+
+func TestDownloadsPinned(t *testing.T) {
+	item := func(step string) fstest.MapFS {
+		return fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"x\"\ntab = \"dev\"\nlabel = \"X\"\n[[item.step]]\n" + step)}}
+	}
+	for step, want := range map[string]string{
+		"type = \"run\"\ncmd = \"curl -fsSL https://x/i.sh | sh\"\ncreates = \"/usr/bin/x\"\n": "pin it",
+		"type = \"run\"\ncmd = \"curl -o /tmp/x https://x/x\"\ncreates = \"/x\"\nsha256 = \"" + strings.Repeat("a", 64) + "\"\n": "doesn't check {{sha256}}",
+		"type = \"apt_repo\"\nname = \"x\"\nkey_url = \"https://x/key\"\nsource = \"Types: deb\"\n":                     "key_fingerprint",
+	} {
+		if got := loadErr(t, item(step)); !strings.Contains(got, want) {
+			t.Errorf("%q: err = %q, want %q", step, got, want)
+		}
+	}
+	for _, step := range []string{
+		"type = \"run\"\ncmd = \"curl -fsSL https://x/i.sh | sh\"\ncreates = \"/x\"\nunverified = \"the vendor's own installer\"\n",
+		"type = \"run\"\ncmd = \"curl -o /tmp/x https://x/x && echo '{{sha256}}  /tmp/x' | sha256sum -c\"\ncreates = \"/x\"\nsha256 = \"" + strings.Repeat("a", 64) + "\"\n",
+	} {
+		load(t, item(step))
+	}
+}
+
+// The items installed without a pinned checksum, kept explicit: adding one
+// is a decision, not an accident.
+func TestUnverifiedList(t *testing.T) {
+	var got []string
+	for _, it := range load(t, nil).Items {
+		for _, s := range it.Steps {
+			if s.Unverified != "" {
+				got = append(got, it.ID)
+			}
+		}
+	}
+	sort.Strings(got)
+	if want := "k3s krew ollama omp tailscale vimcfg"; strings.Join(got, " ") != want {
+		t.Errorf("unverified downloads: %s\nwant %s (update this list when that's intended)", strings.Join(got, " "), want)
 	}
 }

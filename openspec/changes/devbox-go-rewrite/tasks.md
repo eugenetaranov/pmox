@@ -31,7 +31,7 @@
 - [x] 3.4 Source the local override files from zshrc, shell.sh, tmux.conf and vimrc; README section
 - [x] 3.5 Per-user state (system.json, ~/.config/devbox/answers.json, split from answers.json); `mcpjungle@<user>` with port allocation
 - [x] 3.6 `mcp-<user>` service user owning the MCP env files; sudo-mediated edits; opt-in `sudopw`
-- [ ] 3.7 Require `key_fingerprint` on `apt_repo` and `sha256` or `unverified` on downloads; "Installed without a pinned checksum" list
+- [x] 3.7 Require `key_fingerprint` on `apt_repo` and `sha256` or `unverified` on downloads; "Installed without a pinned checksum" list
 - [ ] 3.8 Items: proxy, corpca, dotfiles, agentsafe, OpenCode and Goose wiring, gateway listen options, kubelogin, ufw dev ports, autoupdate-tools, docker-group editor note
 - [ ] 3.9 pmox: ship `catalog.d` and MCP specs from `~/.config/pmox/devbox/` on push; `pmox devbox apply` and `pmox devbox verify` across VMs (4 at a time)
 
