@@ -6,6 +6,7 @@ package profile
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -17,6 +18,11 @@ import (
 
 // Profile is one profile file.
 type Profile struct {
+	// Name makes the profile a layer: applying a profile with the same
+	// name again replaces the picks it set before.
+	Name string `toml:"name,omitempty"`
+	// User is the account to set up (created if missing).
+	User      string   `toml:"user,omitempty"`
 	Picks     []string `toml:"picks"`
 	MiseExtra []string `toml:"mise_extra"`
 	Git       *Git     `toml:"git"`
@@ -63,13 +69,30 @@ func Parse(name string, b []byte) (*Profile, error) {
 	if p.MCP != nil && p.MCP.Listen != "" && p.MCP.Listen != "127.0.0.1" && p.MCP.Listen != "0.0.0.0" {
 		return nil, fmt.Errorf("%s: mcp.listen %q: want 127.0.0.1 or 0.0.0.0", name, p.MCP.Listen)
 	}
+	if p.Name != "" && !layerName.MatchString(p.Name) {
+		return nil, fmt.Errorf("%s: name %q: want letters, digits, '.', '_' or '-'", name, p.Name)
+	}
+	if p.User != "" && !ValidUser(p.User) {
+		return nil, fmt.Errorf("%s: user %q is not a valid user name", name, p.User)
+	}
 	return &p, nil
 }
 
+var (
+	layerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	userName  = regexp.MustCompile(`^[a-z][-a-z0-9_]{0,31}$`)
+)
+
+// ValidUser reports whether name is a user name devbox-setup will create
+// (Debian's default NAME_REGEX, without the trailing '$').
+func ValidUser(name string) bool { return userName.MatchString(name) }
+
 // Apply adds the profile to the saved answers: picks and extra mise tools
 // accumulate, settings replace. Picks are migrated (old ids) and the ones
-// not in the catalog are dropped with a warning.
-func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (warnings []string) {
+// not in the catalog are skipped with a warning. A named profile replaces
+// its earlier layer: dropped are the picks it no longer lists, which
+// leave the answers (they stay installed).
+func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (dropped, warnings []string) {
 	picks, notes := answers.MigratePicks(p.Picks)
 	warnings = append(warnings, notes...)
 	var keep []string
@@ -80,7 +103,14 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (warnings []stri
 		}
 		keep = append(keep, id)
 	}
-	a.Picks = answers.Merge(a.Picks, keep)
+	if p.Name != "" {
+		dropped = a.SetLayer(p.Name, keep)
+	} else {
+		a.Pick(keep)
+	}
+	if p.User != "" {
+		a.User = p.User
+	}
 	a.MiseExtra = answers.Merge(a.MiseExtra, p.MiseExtra)
 	if p.Git != nil {
 		if p.Git.Name != "" {
@@ -103,7 +133,7 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (warnings []stri
 			a.WireAgents = &v
 		}
 	}
-	return warnings
+	return dropped, warnings
 }
 
 // Export writes the saved answers as a profile.

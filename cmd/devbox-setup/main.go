@@ -5,6 +5,8 @@
 //	sudo devbox-setup             choose tools, languages, AI and settings
 //	sudo devbox-setup --yes       re-apply everything chosen so far, no questions
 //	devbox-setup --dry-run        ask, then show what would happen
+//	sudo devbox-setup --profile team.toml --profile me.toml [--yes]
+//	                              apply profiles (review first without --yes)
 package main
 
 import (
@@ -18,7 +20,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -65,7 +69,7 @@ func main() {
 
 type options struct {
 	yes, dryRun, verify, showVersion, list bool
-	state, log, legacy                     string
+	state, log, legacy, user               string
 	profiles                               list
 }
 
@@ -89,6 +93,7 @@ func cli(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&o.state, "state", envOr("DEVBOX_SETUP_STATE", defaultState), "state directory")
 	fs.StringVar(&o.log, "log", envOr("DEVBOX_SETUP_LOG", defaultLog), "log file (every command and its output)")
 	fs.Var(&o.profiles, "profile", "apply a profile (file or https URL; repeatable, later ones win)")
+	fs.StringVar(&o.user, "user", "", "the account to set up, created if missing (wins over profiles)")
 	o.legacy = envOr("DEVBOX_SETUP_LEGACY", defaultLegacy)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -126,34 +131,38 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unknown argument %q", fs.Arg(0))
 	}
 	interactive := !o.yes && !o.verify
-	if interactive && len(o.profiles) > 0 {
-		return errors.New("--profile needs --yes (the picker doesn't load profiles yet)")
-	}
-	if len(o.profiles) > 0 {
-		ctx := context.Background()
-		for _, src := range o.profiles {
-			p, err := loadProfile(ctx, src)
-			if err != nil {
-				return err
-			}
-			for _, w := range p.Apply(a, cat) {
-				fmt.Fprintln(stderr, "devbox-setup: "+w)
-			}
-		}
-		if a.User == "" {
-			a.User = os.Getenv("SUDO_USER")
-		}
-		if a.User == "" {
-			return errors.New("no user to set up: run devbox-setup with sudo from that user's login")
-		}
-		if !o.dryRun && !o.verify {
-			if err := answers.Write(o.state, a); err != nil {
-				return err
-			}
-		}
+	if o.user != "" && !profile.ValidUser(o.user) {
+		return fmt.Errorf("--user %q is not a valid user name", o.user)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	var dropped []string
+	for _, src := range o.profiles {
+		p, b, err := loadProfile(ctx, src)
+		if err != nil {
+			return err
+		}
+		if interactive && strings.HasPrefix(src, "https://") {
+			fmt.Fprintf(stdout, "Profile %s:\n%s\n", src, b)
+		}
+		d, warn := p.Apply(a, cat)
+		for _, w := range warn {
+			fmt.Fprintln(stderr, "devbox-setup: "+w)
+		}
+		dropped = answers.Merge(dropped, d)
+	}
+	// A later profile (or the same one, unnamed) may have kept it.
+	dropped = slices.DeleteFunc(dropped, func(id string) bool { return slices.Contains(a.Picks, id) })
+	changed := len(o.profiles) > 0 || (o.user != "" && o.user != a.User)
+	if o.user != "" {
+		a.User = o.user
+	}
+	if a.User == "" && len(o.profiles) > 0 {
+		a.User = os.Getenv("SUDO_USER")
+		if a.User == "" && !interactive {
+			return errors.New("no user to set up: give --user, or run devbox-setup with sudo from that user's login")
+		}
+	}
 	var items []*catalog.Item
 	extra := a.MiseExtra
 	sec := creds.New()
@@ -161,7 +170,8 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 			return errors.New("needs a terminal (or --yes to re-apply saved choices)")
 		}
-		k := &asker{cat: cat, a: a, share: o.share(), out: stdout, installed: func(t string) bool { return userHas(a.User, t) }}
+		k := &asker{cat: cat, a: a, share: o.share(), out: stdout, installed: func(t string) bool { return userHas(a.User, t) },
+			profile: len(o.profiles) > 0, fixedUser: o.user != "", dropped: dropped}
 		c, err := k.ask(ctx)
 		if errors.Is(err, ui.ErrQuit) {
 			fmt.Fprintln(stdout, "Cancelled.")
@@ -170,24 +180,25 @@ func cli(args []string, stdout, stderr io.Writer) error {
 		if err != nil || c == nil {
 			return err
 		}
-		a.Picks = answers.Merge(a.Picks, c.picks)
+		a.Pick(c.picks)
 		a.MiseExtra = answers.Merge(a.MiseExtra, c.miseExtra)
 		items, extra, sec = c.items, c.miseExtra, c.secrets
-		if o.dryRun {
-			env, err := o.env(a, sec, nil)
-			if err != nil {
-				return err
-			}
-			return run.DryRun(stdout, env, items, extra)
-		}
-		if err := answers.Write(o.state, a); err != nil {
-			return err
-		}
+		changed = true
 	} else {
 		if len(a.Picks) == 0 {
 			return errors.New("no saved choices yet; run devbox-setup without --yes first")
 		}
 		if items, err = plan.Resolve(cat, a.Picks, len(a.MiseExtra) > 0); err != nil {
+			return err
+		}
+		listDropped(stdout, cat, dropped)
+	}
+	created, err := o.ensureUser(ctx, a.User, stdout)
+	if err != nil {
+		return err
+	}
+	if changed && !o.dryRun && !o.verify {
+		if err := answers.Write(o.state, a); err != nil {
 			return err
 		}
 	}
@@ -210,6 +221,9 @@ func cli(args []string, stdout, stderr io.Writer) error {
 	env, err := o.env(a, sec, logf)
 	if err != nil {
 		return err
+	}
+	if created {
+		env.Note(fmt.Sprintf("Created user %s (passwordless sudo, no password or SSH key): add a key to %s/.ssh/authorized_keys, or use 'sudo -iu %s'.", a.User, env.Home, a.User))
 	}
 	bash := legacyRunner(env, o.legacy, o.state)
 	if bash != nil {
@@ -316,7 +330,7 @@ func verify(ctx context.Context, w io.Writer, env *steps.Env, items []*catalog.I
 // and this run's secrets. Notes go to the state's .notes (shown at the
 // end of the run) and the log.
 func (o *options) env(a *answers.Answers, sec *creds.Secrets, log io.Writer) (*steps.Env, error) {
-	env, err := newEnv(a.User, o.share(), log)
+	env, err := newEnv(a.User, o.share(), log, o.dryRun)
 	if err != nil {
 		return nil, err
 	}
@@ -357,22 +371,56 @@ func localCatalog() fs.FS {
 	return nil
 }
 
-// loadProfile reads a profile from a file or an https URL.
-func loadProfile(ctx context.Context, src string) (*profile.Profile, error) {
-	var b []byte
-	var err error
+// loadProfile reads a profile from a file or an https URL; b is its text.
+func loadProfile(ctx context.Context, src string) (p *profile.Profile, b []byte, err error) {
 	switch {
 	case strings.HasPrefix(src, "https://"):
 		b, err = download(ctx, src)
 	case strings.Contains(src, "://"):
-		return nil, fmt.Errorf("%s: profiles load from a file or an https URL", src)
+		return nil, nil, fmt.Errorf("%s: profiles load from a file or an https URL", src)
 	default:
 		b, err = os.ReadFile(src)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return profile.Parse(src, b)
+	p, err = profile.Parse(src, b)
+	return p, b, err
+}
+
+// listDropped prints the picks named profiles dropped.
+func listDropped(w io.Writer, cat *catalog.Catalog, ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Dropped by the profile (still installed, no longer re-applied):")
+	for _, id := range ids {
+		label := id
+		if it := cat.Item(id); it != nil {
+			label = fmt.Sprintf("%s (%s)", it.Label, id)
+		}
+		fmt.Fprintf(w, "  - %s\n", label)
+	}
+}
+
+// ensureUser creates the target user when it doesn't exist (a dry run
+// says it would; verify fails).
+func (o *options) ensureUser(ctx context.Context, name string, w io.Writer) (created bool, err error) {
+	if _, err := user.Lookup(name); err == nil {
+		return false, nil
+	}
+	switch {
+	case o.verify:
+		return false, fmt.Errorf("user %q does not exist", name)
+	case o.dryRun:
+		fmt.Fprintf(w, "Would create user %s (passwordless sudo, the groups of the user running sudo)\n", name)
+		return false, nil
+	}
+	if err := createUser(ctx, steps.OSExec{}, name, os.Getenv("SUDO_USER")); err != nil {
+		return false, err
+	}
+	fmt.Fprintf(w, "Created user %s.\n", name)
+	return true, nil
 }
 
 // export writes the saved answers as a profile, to file or stdout.

@@ -46,7 +46,7 @@ func TestOldAndUnknownIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &answers.Answers{}
-	warn := p.Apply(a, cat(t))
+	_, warn := p.Apply(a, cat(t))
 	if want := []string{"zsh", "zshcfg", "p10k"}; !reflect.DeepEqual(a.Picks, want) {
 		t.Errorf("picks = %v, want %v", a.Picks, want)
 	}
@@ -61,7 +61,7 @@ func TestApplyAccumulates(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &answers.Answers{Picks: []string{"lazygit"}, Git: answers.Git{Name: "Old"}}
-	if w := p.Apply(a, cat(t)); len(w) != 0 {
+	if _, w := p.Apply(a, cat(t)); len(w) != 0 {
 		t.Errorf("warnings: %v", w)
 	}
 	if a.Picks[0] != "lazygit" || len(a.Picks) != 9 || a.Git.Name != "Ada Lovelace" || a.TZ != "Europe/Istanbul" || len(a.MCPServers) != 2 {
@@ -109,5 +109,59 @@ func TestSecretsRefused(t *testing.T) {
 	}
 	if _, err := Parse("p.toml", []byte("picks = []\ncolour = \"red\"\n")); err == nil || !strings.Contains(err.Error(), "unknown key colour") {
 		t.Errorf("plain unknown key: %v", err)
+	}
+}
+
+func apply(t *testing.T, a *answers.Answers, src string) []string {
+	t.Helper()
+	p, err := Parse("p.toml", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropped, warn := p.Apply(a, cat(t))
+	if len(warn) > 0 {
+		t.Errorf("warnings: %v", warn)
+	}
+	return dropped
+}
+
+// A named profile applied again replaces its layer; hand picks and other
+// layers' picks stay.
+func TestNamedLayerReplaces(t *testing.T) {
+	a := &answers.Answers{}
+	apply(t, a, `picks = ["lazygit", "go"]`) // unnamed: like picks made by hand
+	apply(t, a, `name = "team"
+picks = ["docker", "k8s", "go", "terraform"]`)
+	apply(t, a, `name = "infra"
+picks = ["terraform"]`)
+	a.Pick([]string{"docker"}) // by hand, after the team listed it
+	dropped := apply(t, a, `name = "team"
+picks = ["cli"]`)
+	if want := []string{"k8s"}; !reflect.DeepEqual(dropped, want) {
+		t.Errorf("dropped = %v, want %v", dropped, want)
+	}
+	if want := []string{"lazygit", "go", "docker", "terraform", "cli"}; !reflect.DeepEqual(a.Picks, want) {
+		t.Errorf("picks = %v, want %v", a.Picks, want)
+	}
+	if want := []string{"cli"}; !reflect.DeepEqual(a.Layers["team"], want) {
+		t.Errorf("team layer = %v", a.Layers["team"])
+	}
+	// The same profile again drops nothing.
+	if d := apply(t, a, "name = \"team\"\npicks = [\"cli\"]\n"); len(d) != 0 {
+		t.Errorf("re-apply dropped %v", d)
+	}
+}
+
+func TestUserAndName(t *testing.T) {
+	a := &answers.Answers{User: "ubuntu"}
+	apply(t, a, `user = "ada"`)
+	if a.User != "ada" {
+		t.Errorf("user = %q", a.User)
+	}
+	for _, src := range []string{`user = "Ada Lovelace"`, `user = "root;rm"`, `name = "a b"`, `name = ""
+user = "-x"`} {
+		if _, err := Parse("p.toml", []byte(src)); err == nil {
+			t.Errorf("%s: want an error", src)
+		}
 	}
 }

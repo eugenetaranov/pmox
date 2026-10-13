@@ -18,9 +18,13 @@ import (
 )
 
 // newEnv describes this machine and the target user for the steps; file
-// steps read from share's conf directory.
-func newEnv(username, share string, log io.Writer) (*steps.Env, error) {
+// steps read from share's conf directory. With planned, a user that
+// doesn't exist yet (a dry run before creating it) gets /home/<user>.
+func newEnv(username, share string, log io.Writer, planned bool) (*steps.Env, error) {
 	u, err := user.Lookup(username)
+	if err != nil && planned {
+		u, err = &user.User{Username: username, HomeDir: "/home/" + username, Uid: "-1", Gid: "-1"}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("user %q: %w", username, err)
 	}

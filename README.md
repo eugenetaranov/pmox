@@ -605,6 +605,13 @@ timezone, MCP servers), never secrets. `sudo devbox-setup --profile team.toml
 a personal one combine), and `pmox launch web1 --devbox-profile team.toml`
 (or `devbox_profile:` under a server) applies it as soon as the VM is up,
 before any hook. A failed profile only warns, unless `--strict-hooks`.
+Without `--yes`, `--profile` shows the plan for review and asks for the
+secrets it can't hold. A profile with `name = "team"` is a layer: applying
+a newer `team` profile replaces the picks the old one made, and lists the
+ones it dropped (they stay installed, but aren't re-applied). Picks you
+made yourself are never dropped. `user = "ada"` in a profile, or
+`--user ada` (which wins), sets up that account, creating it like the VM's
+first user (passwordless sudo, same groups) if it doesn't exist.
 
 pmox also adds a line to the VM's cloud-init that turns off unattended-upgrades and the apt-daily timers:
 on first boot they hold the dpkg lock and make installs fail. Security

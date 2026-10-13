@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -41,6 +42,13 @@ type Answers struct {
 	GitHub     GitHub   `json:"github"`
 	NPM        NPM      `json:"npm"`
 	Registries []string `json:"registries"`
+	// Layers are the picks each named profile set, by its name. Applying
+	// a profile with that name again replaces its layer (SetLayer).
+	Layers map[string][]string `json:"layers,omitempty"`
+	// Hand are picks made by hand, or by an unnamed profile, that a named
+	// layer also lists: no layer drops them. A pick in no layer is a hand
+	// pick too, so this stays short.
+	Hand []string `json:"hand,omitempty"`
 }
 
 // Git is the git identity.
@@ -141,6 +149,10 @@ func Read(state string) (a *Answers, notes []string, err error) {
 	a.clean()
 	var more []string
 	a.Picks, more = MigratePicks(a.Picks)
+	a.Hand, _ = MigratePicks(a.Hand)
+	for n, l := range a.Layers {
+		a.Layers[n], _ = MigratePicks(l)
+	}
 	return a, append(notes, more...), nil
 }
 
@@ -217,4 +229,50 @@ func Merge(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// Pick adds picks made by hand (or by an unnamed profile): no named
+// profile drops them later.
+func (a *Answers) Pick(ids []string) {
+	for _, id := range ids {
+		if a.inLayer(id, "") {
+			a.Hand = Merge(a.Hand, []string{id})
+		}
+	}
+	a.Picks = Merge(a.Picks, ids)
+}
+
+// SetLayer makes ids the named profile's picks, replacing what it set
+// before. It returns the picks the profile no longer lists that nothing
+// else keeps (hand picks and other layers' picks stay); they leave Picks,
+// so they stop being re-applied, but stay installed.
+func (a *Answers) SetLayer(name string, ids []string) (dropped []string) {
+	for _, id := range ids {
+		// Picked before any layer claimed it: it's the user's own.
+		if slices.Contains(a.Picks, id) && !a.inLayer(id, "") {
+			a.Hand = Merge(a.Hand, []string{id})
+		}
+	}
+	old := a.Layers[name]
+	if a.Layers == nil {
+		a.Layers = map[string][]string{}
+	}
+	a.Layers[name] = Merge(nil, ids)
+	for _, id := range old {
+		if !slices.Contains(ids, id) && !slices.Contains(a.Hand, id) && !a.inLayer(id, name) {
+			dropped = append(dropped, id)
+		}
+	}
+	a.Picks = slices.DeleteFunc(Merge(a.Picks, ids), func(id string) bool { return slices.Contains(dropped, id) })
+	return dropped
+}
+
+// inLayer reports whether a named layer other than except lists id.
+func (a *Answers) inLayer(id, except string) bool {
+	for n, l := range a.Layers {
+		if n != except && slices.Contains(l, id) {
+			return true
+		}
+	}
+	return false
 }

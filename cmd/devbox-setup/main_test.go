@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"os/user"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/eugenetaranov/pmox/internal/devbox/answers"
+	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 )
 
 func TestDryRunPlan(t *testing.T) {
@@ -116,5 +118,64 @@ func TestExportAndProfile(t *testing.T) {
 	}
 	if err := cli([]string{"--state", dst, "--profile", "http://example.com/p.toml", "--yes", "--dry-run"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Errorf("plain http profile: err = %v", err)
+	}
+}
+
+// A named profile applied again lists what it dropped; --user names a
+// user to create, which a dry run only reports.
+func TestProfileLayersAndUser(t *testing.T) {
+	me, _ := user.Current()
+	state := t.TempDir()
+	a := &answers.Answers{User: me.Username, Picks: []string{"lazygit", "cli", "terraform"}, Layers: map[string][]string{"team": {"cli", "terraform"}}}
+	if err := answers.Write(state, a); err != nil {
+		t.Fatal(err)
+	}
+	f := t.TempDir() + "/team.toml"
+	if err := os.WriteFile(f, []byte("name = \"team\"\npicks = [\"cli\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := cli([]string{"--state", state, "--profile", f, "--user", "devboxnewuser", "--yes", "--dry-run"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"Dropped by the profile (still installed, no longer re-applied):\n  - Terraform (terraform)\n", "Would create user devboxnewuser", "For user: devboxnewuser\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Terraform\n") {
+		t.Errorf("dropped item still planned:\n%s", got)
+	}
+	if b, _, _ := answers.Read(state); b.User != me.Username {
+		t.Error("--dry-run saved the answers")
+	}
+	if err := cli([]string{"--state", state, "--user", "Bad User", "--yes", "--dry-run"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Error("want an error for --user 'Bad User'")
+	}
+}
+
+type fakeExec struct{ cmds []string }
+
+func (f *fakeExec) Run(_ context.Context, c steps.Cmd) ([]byte, error) {
+	f.cmds = append(f.cmds, c.String())
+	if c.Name == "id" {
+		return []byte("ubuntu adm sudo docker\n"), nil
+	}
+	return nil, nil
+}
+
+func TestCreateUser(t *testing.T) {
+	sudoersDir = t.TempDir()
+	x := &fakeExec{}
+	if err := createUser(context.Background(), x, "ada", "ubuntu"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "useradd -m -U -s /bin/bash -G adm,sudo,docker ada"; len(x.cmds) != 2 || x.cmds[1] != want {
+		t.Errorf("commands = %q, want %q last", x.cmds, want)
+	}
+	b, err := os.ReadFile(sudoersDir + "/90-devbox-ada")
+	if err != nil || string(b) != "ada ALL=(ALL) NOPASSWD:ALL\n" {
+		t.Errorf("sudo rule = %q, %v", b, err)
 	}
 }

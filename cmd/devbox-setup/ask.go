@@ -15,6 +15,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/devbox/creds"
 	"github.com/eugenetaranov/pmox/internal/devbox/mcp"
 	"github.com/eugenetaranov/pmox/internal/devbox/plan"
+	"github.com/eugenetaranov/pmox/internal/devbox/profile"
 	"github.com/eugenetaranov/pmox/internal/devbox/steps"
 	"github.com/eugenetaranov/pmox/internal/devbox/ui"
 )
@@ -34,16 +35,32 @@ type asker struct {
 	out   io.Writer
 	// installed reports whether a tool is on the user's PATH.
 	installed func(tool string) bool
+	// profile: the answers already hold the profiles' picks; review them
+	// instead of opening the picker. dropped are the picks they dropped.
+	profile bool
+	dropped []string
+	// fixedUser: --user chose the user, so don't ask.
+	fixedUser bool
 }
 
 // ask runs every prompt, then the review; it loops on "Start over".
 func (k *asker) ask(ctx context.Context) (*choices, error) {
+	if k.profile {
+		c, err := k.fromProfile(ctx)
+		if err != nil || c == nil {
+			return c, err
+		}
+		if k.review(c, "Install", "Quit") != "Install" {
+			return nil, ui.ErrQuit
+		}
+		return c, nil
+	}
 	for {
 		c, err := k.once(ctx)
 		if err != nil || c == nil {
 			return c, err
 		}
-		switch k.review(c) {
+		switch k.review(c, "Install", "Start over", "Quit") {
 		case "Install":
 			return c, nil
 		case "Start over":
@@ -55,20 +72,12 @@ func (k *asker) ask(ctx context.Context) (*choices, error) {
 }
 
 func (k *asker) once(ctx context.Context) (*choices, error) {
-	a := k.a
 	fmt.Fprintln(k.out, "devbox-setup — pick what to install: nothing is preselected. Run it again any time to add more.")
-	def := a.User
-	if def == "" {
-		def = os.Getenv("SUDO_USER")
+	if !k.fixedUser {
+		if err := k.askUser(); err != nil {
+			return nil, err
+		}
 	}
-	u, err := ui.Input("Set up for which user?", "", def)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := user.Lookup(u); err != nil {
-		return nil, fmt.Errorf("user %q does not exist", u)
-	}
-	a.User = u
 
 	// 1. Pick: one tabbed checklist over every category, plus mise's registry.
 	var tabs []ui.Tab
@@ -105,8 +114,7 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 		fmt.Fprintln(k.out, "Nothing picked.")
 		return nil, nil
 	}
-	picks := " " + strings.Join(plan.IDs(c.items), " ") + " "
-	has := func(id string) bool { return strings.Contains(picks, " "+id+" ") }
+	has := planHas(c.items)
 	if has("gitid") {
 		if err := k.askGit(); err != nil {
 			return nil, err
@@ -122,30 +130,100 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 			return nil, err
 		}
 	}
-	if has("github") {
-		if err := k.askGitHub(c); err != nil {
+	return c, k.askSecrets(c, has)
+}
+
+// fromProfile plans the profiles' picks (already in the answers) and asks
+// only what a profile can't hold: secrets, and settings it left unset.
+func (k *asker) fromProfile(ctx context.Context) (*choices, error) {
+	a := k.a
+	if a.User == "" {
+		if err := k.askUser(); err != nil {
 			return nil, err
 		}
 	}
-	if err := k.askCreds(c, has); err != nil {
+	c := &choices{secrets: creds.New(), miseExtra: a.MiseExtra, mcpServers: a.MCPServers}
+	var err error
+	if c.items, err = plan.Resolve(k.cat, a.Picks, len(a.MiseExtra) > 0); err != nil {
 		return nil, err
+	}
+	if len(c.items) == 0 {
+		fmt.Fprintln(k.out, "The profiles pick nothing.")
+		return nil, nil
+	}
+	has := planHas(c.items)
+	if has("gitid") && a.Git.Name+a.Git.Email == "" {
+		if err := k.askGit(); err != nil {
+			return nil, err
+		}
+	}
+	if has("tzlocale") && a.TZ == "" {
+		if err := k.askTZ(); err != nil {
+			return nil, err
+		}
+	}
+	return c, k.askSecrets(c, has)
+}
+
+// planHas reports whether an id is in the plan.
+func planHas(items []*catalog.Item) func(string) bool {
+	picks := " " + strings.Join(plan.IDs(items), " ") + " "
+	return func(id string) bool { return strings.Contains(picks, " "+id+" ") }
+}
+
+// askUser asks which user to set up, offering to create a missing one.
+func (k *asker) askUser() error {
+	def := k.a.User
+	if def == "" {
+		def = os.Getenv("SUDO_USER")
+	}
+	u, err := ui.Input("Set up for which user?", "", def)
+	if err != nil {
+		return err
+	}
+	if _, err := user.Lookup(u); err != nil {
+		if !profile.ValidUser(u) {
+			return fmt.Errorf("user %q does not exist", u)
+		}
+		yes, err := ui.Confirm("User "+u+" does not exist. Create it?", "Like the VM's first user: passwordless sudo and the same groups.", false)
+		if err != nil {
+			return err
+		}
+		if !yes {
+			return fmt.Errorf("user %q does not exist", u)
+		}
+	}
+	k.a.User = u
+	return nil
+}
+
+// askSecrets asks for the credentials and secrets of the plan's items.
+func (k *asker) askSecrets(c *choices, has func(string) bool) error {
+	var err error
+	if has("github") {
+		if err := k.askGitHub(c); err != nil {
+			return err
+		}
+	}
+	if err := k.askCreds(c, has); err != nil {
+		return err
 	}
 	if has("registries") {
 		if err := k.askRegistries(c); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if has("agekey") {
 		if err := k.askAgeKey(c); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if has("tailscale") && exec.Command("tailscale", "status").Run() != nil {
 		if c.secrets.TSAuthKey, err = ui.Password("Tailscale auth key (empty: run 'sudo tailscale up' later)", ""); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return c, nil
+	return nil
 }
 
 // miseRegistry is the live registry when mise is installed, else pmox's
@@ -480,9 +558,14 @@ func (k *asker) askAgeKey(c *choices) error {
 	return nil
 }
 
-// review shows the plan and asks Install, Start over or Quit.
-func (k *asker) review(c *choices) string {
-	fmt.Fprintf(k.out, "\nFor user: %s\n", k.a.User)
+// review shows the plan and what the profiles dropped, and asks which of
+// options (Install first).
+func (k *asker) review(c *choices, options ...string) string {
+	if _, err := user.Lookup(k.a.User); err != nil {
+		fmt.Fprintf(k.out, "\nFor user: %s (new account)\n", k.a.User)
+	} else {
+		fmt.Fprintf(k.out, "\nFor user: %s\n", k.a.User)
+	}
 	for _, it := range c.items {
 		if it.Hidden() {
 			continue
@@ -498,7 +581,8 @@ func (k *asker) review(c *choices) string {
 	if k.a.Git.Name+k.a.Git.Email != "" {
 		fmt.Fprintf(k.out, "  Git: %s <%s>\n", k.a.Git.Name, k.a.Git.Email)
 	}
-	ch, err := ui.Choose("Ready?", []string{"Install", "Start over", "Quit"}, "Install")
+	listDropped(k.out, k.cat, k.dropped)
+	ch, err := ui.Choose("Ready?", options, options[0])
 	if err != nil {
 		return "Quit"
 	}
