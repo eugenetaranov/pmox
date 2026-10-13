@@ -140,7 +140,7 @@ pmox launch, list, info, start, stop, delete, shell, exec, cp, sync, apply.`)
 	}
 	add("vm-lifecycle",
 		newLaunchCmd(), newCloneCmd(), rename(newListCmd(), "list", "ls"), newInfoCmd(),
-		newStartCmd(), newStopCmd(), rename(newDeleteCmd(), "delete", "rm"),
+		newStartCmd(), newStopCmd(), newResizeCmd(), rename(newDeleteCmd(), "delete", "rm"),
 	)
 	add("vm-access",
 		newShellCmd(), newExecCmd(), newCpCmd(), newSyncCmd(), newApplyCmd(), newSSHConfigCmd(),

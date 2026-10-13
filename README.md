@@ -163,6 +163,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox vm info web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
 | `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox vm stop web1 web2` |
+| `resize ram`, `cpu`, `disk` | Set memory (GiB) or cores (applied at the next stop/start; `--restart` does it now), or grow the disk (`+20` or `60` GiB) and, on a running VM, its filesystem | `pmox vm resize disk web1 +20` |
 | `delete`, `rm` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox vm delete web1` |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox vm shell web1` |
 | `exec` | Run one command on a VM over SSH | `pmox vm exec web1 -- uname -a` |
