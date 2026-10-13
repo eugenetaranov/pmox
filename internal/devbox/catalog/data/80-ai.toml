@@ -147,6 +147,18 @@ src = "agent-notes.md"
 to = "~/.codex/AGENTS.md"
 if_absent = true
 
+# Settings for agents left to run unattended, merged into their own files:
+# after the agents and their notes (agentcfg writes those only if absent).
+[[item]]
+id = "agentsafe"
+tab = "ai"
+label = "Safer unattended agents (deny force-push, sudo, token reads; Codex sandbox)"
+after = ["claude", "codex", "agentcfg"]
+source = "~/.claude/settings.json deny rules · ~/.codex/config.toml sandbox · a Pushing section in CLAUDE.md/AGENTS.md"
+
+[[item.step]]
+type = "go:agentsafe"
+
 [[item]]
 id = "agentkeys"
 tab = "ai"

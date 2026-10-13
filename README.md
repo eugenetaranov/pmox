@@ -527,7 +527,11 @@ clears the search; Esc on an empty search quits.
    Tilt, Skaffold, ctlptl; talosctl.
 8. **AI:** Claude Code, Codex CLI, Gemini CLI, OpenCode, Aider, Goose, omp,
    Ollama, OpenSpec, ECC for Claude Code (agents, rules and commands, no hooks), a `CLAUDE.md` /
-   `AGENTS.md` describing the VM, agent API keys (Anthropic, OpenAI, Gemini),
+   `AGENTS.md` describing the VM, settings for agents left to run unattended
+   (Claude Code may not force-push, sudo, or read `~/.mcp`, `~/.ssh` or the
+   agent keys; Codex asks first and works in a sandbox; both are told to push
+   only to non-default branches; merged into your settings, not replacing
+   them), agent API keys (Anthropic, OpenAI, Gemini),
    and the MCPJungle gateway with MCP servers (GitHub, Linear, Postgres,
    Playwright, Jira, AWS, Jenkins, context7, …), added to Claude Code, Codex
    and Gemini CLI.
