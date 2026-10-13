@@ -20,7 +20,7 @@ import (
 
 // YardoVersion is the yardo release pmox installs on VMs.
 // PMOX_YARDO_VERSION overrides it (a tag, or "latest").
-const YardoVersion = "v0.1.0"
+const YardoVersion = "v0.1.1"
 
 // yardoRepo is where yardo's releases are.
 const yardoRepo = "https://github.com/eugenetaranov/yardo"
