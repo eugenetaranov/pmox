@@ -41,6 +41,8 @@ type Git struct {
 // System holds machine settings.
 type System struct {
 	TZ string `toml:"tz"`
+	// DevPorts are opened by ufw ("3000", "8000-8010", "5353/udp").
+	DevPorts []string `toml:"dev_ports,omitempty"`
 }
 
 // MCP holds the MCPJungle settings.
@@ -70,6 +72,13 @@ func Parse(name string, b []byte) (*Profile, error) {
 	}
 	if p.MCP != nil && p.MCP.Listen != "" && p.MCP.Listen != "127.0.0.1" && p.MCP.Listen != "0.0.0.0" {
 		return nil, fmt.Errorf("%s: mcp.listen %q: want 127.0.0.1 or 0.0.0.0", name, p.MCP.Listen)
+	}
+	if p.System != nil {
+		for _, port := range p.System.DevPorts {
+			if !answers.ValidPort(port) {
+				return nil, fmt.Errorf("%s: system.dev_ports: %q: want a port, a range (8000-8010), or either with /udp", name, port)
+			}
+		}
 	}
 	if p.Lock != nil {
 		if err := p.Lock.Check(); err != nil {
@@ -130,6 +139,9 @@ func (p *Profile) Apply(a *answers.Answers, c *catalog.Catalog) (dropped, warnin
 	if p.System != nil && p.System.TZ != "" {
 		a.TZ = p.System.TZ
 	}
+	if p.System != nil {
+		a.DevPorts = answers.Merge(a.DevPorts, p.System.DevPorts)
+	}
 	if p.MCP != nil {
 		a.MCPServers = answers.Merge(a.MCPServers, p.MCP.Servers)
 		if p.MCP.Listen != "" {
@@ -153,8 +165,8 @@ func Export(a *answers.Answers, lock *answers.Lock) []byte {
 	if a.Git.Name != "" || a.Git.Email != "" {
 		p.Git = &Git{Name: a.Git.Name, Email: a.Git.Email}
 	}
-	if a.TZ != "" {
-		p.System = &System{TZ: a.TZ}
+	if a.TZ != "" || len(a.DevPorts) > 0 {
+		p.System = &System{TZ: a.TZ, DevPorts: a.DevPorts}
 	}
 	if len(a.MCPServers) > 0 || a.MCPListen != "" || a.WireAgents != nil {
 		p.MCP = &MCP{Servers: a.MCPServers, Listen: a.MCPListen, WireAgents: a.WireAgents}

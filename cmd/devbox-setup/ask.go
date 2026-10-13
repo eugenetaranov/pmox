@@ -120,6 +120,11 @@ func (k *asker) once(ctx context.Context) (*choices, error) {
 			return nil, err
 		}
 	}
+	if has("ufw") {
+		if err := k.askDevPorts(); err != nil {
+			return nil, err
+		}
+	}
 	if has("mcpjungle") {
 		if err := k.askMCP(ctx, c, has); err != nil {
 			return nil, err
@@ -313,6 +318,29 @@ func (k *asker) askTZ() error {
 		}
 		fmt.Fprintf(k.out, "Unknown timezone %q.\n", tz)
 		cur = tz
+	}
+}
+
+// askDevPorts asks which dev server ports ufw opens.
+func (k *asker) askDevPorts() error {
+	cur := strings.Join(k.a.DevPorts, " ")
+	for {
+		v, err := ui.Input("Dev server ports for ufw to open, space-separated (e.g. 3000 8000-8010 5353/udp), blank for none", "", cur)
+		if err != nil {
+			return err
+		}
+		var bad []string
+		for _, p := range strings.Fields(v) {
+			if !answers.ValidPort(p) {
+				bad = append(bad, p)
+			}
+		}
+		if len(bad) == 0 {
+			k.a.DevPorts = strings.Fields(v)
+			return nil
+		}
+		fmt.Fprintf(k.out, "Not a port or range: %s\n", strings.Join(bad, " "))
+		cur = v
 	}
 }
 

@@ -176,3 +176,16 @@ func TestMerge(t *testing.T) {
 		t.Errorf("Merge = %v", got)
 	}
 }
+
+func TestDevPorts(t *testing.T) {
+	for p, rule := range map[string]string{"3000": "allow 3000/tcp", "8000-8010": "allow 8000:8010/tcp", "5353/udp": "allow 5353/udp", "60000-61000/udp": "allow 60000:61000/udp"} {
+		if !ValidPort(p) || UFWRule(p) != rule {
+			t.Errorf("%s: valid %v, rule %q, want %q", p, ValidPort(p), UFWRule(p), rule)
+		}
+	}
+	for _, p := range []string{"", "0", "70000", "9-3", "22/sctp", "3000;rm", "a"} {
+		if ValidPort(p) {
+			t.Errorf("%q: valid", p)
+		}
+	}
+}

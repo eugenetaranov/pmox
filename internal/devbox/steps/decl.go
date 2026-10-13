@@ -758,7 +758,9 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 func (r runStep) Plan(e *Env) []Action { return []Action{{"run", r.cmd(e)}} }
 
 // cmd is the filled-in command; {{sha256}} is the step's pin.
-func (r runStep) cmd(e *Env) string { return strings.ReplaceAll(fill(e, r.s.Cmd), "{{sha256}}", r.s.SHA256) }
+func (r runStep) cmd(e *Env) string {
+	return strings.ReplaceAll(fill(e, r.s.Cmd), "{{sha256}}", r.s.SHA256)
+}
 
 // Follows: an on_change step runs only after a change.
 func (r runStep) Follows() bool { return r.s.OnChange }
@@ -798,5 +800,8 @@ func (n noteStep) Apply(ctx context.Context, e *Env) error {
 
 func (r runStep) Apply(ctx context.Context, e *Env) error {
 	_, err := e.run(ctx, Cmd{Name: "sh", Args: []string{"-c", r.cmd(e)}, AsUser: r.s.AsUser})
+	if err == nil && r.s.Text != "" {
+		e.note(fill(e, r.s.Text))
+	}
 	return err
 }

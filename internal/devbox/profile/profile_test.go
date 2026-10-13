@@ -186,3 +186,14 @@ func TestLock(t *testing.T) {
 		}
 	}
 }
+
+func TestDevPortsInProfile(t *testing.T) {
+	a := &answers.Answers{DevPorts: []string{"3000"}}
+	apply(t, a, "[system]\ndev_ports = [\"8000-8010\", \"3000\"]\n")
+	if strings.Join(a.DevPorts, " ") != "3000 8000-8010" {
+		t.Errorf("dev ports = %v", a.DevPorts)
+	}
+	if _, err := Parse("p", []byte("[system]\ndev_ports = [\"22;x\"]\n")); err == nil {
+		t.Error("want an error for a bad port")
+	}
+}

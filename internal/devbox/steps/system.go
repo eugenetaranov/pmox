@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/eugenetaranov/pmox/internal/devbox/answers"
 	"github.com/eugenetaranov/pmox/internal/devbox/catalog"
 )
 
@@ -222,6 +223,13 @@ func (u ufwStep) rules(ctx context.Context, e *Env) []string {
 	}
 	for _, p := range slices.Sorted(maps.Keys(ports)) {
 		rules = append(rules, fmt.Sprintf("allow %d/tcp", p))
+	}
+	if e.Answers != nil {
+		for _, p := range e.Answers.DevPorts {
+			if answers.ValidPort(p) {
+				rules = append(rules, answers.UFWRule(p))
+			}
+		}
 	}
 	return rules
 }

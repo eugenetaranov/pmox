@@ -11,7 +11,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -36,9 +38,12 @@ type Answers struct {
 	MCPListen  string   `json:"mcp_listen"`
 	MCPServers []string `json:"mcp_servers"`
 	// WireAgents: nil means never asked.
-	WireAgents *bool    `json:"wire_agents"`
-	Git        Git      `json:"git"`
-	TZ         string   `json:"tz"`
+	WireAgents *bool  `json:"wire_agents"`
+	Git        Git    `json:"git"`
+	TZ         string `json:"tz"`
+	// DevPorts are the ports ufw opens for dev servers ("3000",
+	// "8000-8010", "5353/udp").
+	DevPorts   []string `json:"dev_ports,omitempty"`
 	GitHub     GitHub   `json:"github"`
 	NPM        NPM      `json:"npm"`
 	Registries []string `json:"registries"`
@@ -161,7 +166,7 @@ func Read(state string) (a *Answers, notes []string, err error) {
 // clean drops list entries that aren't single words (the bash side splits
 // them on spaces).
 func (a *Answers) clean() {
-	for _, l := range []*[]string{&a.Picks, &a.MiseExtra, &a.MCPServers, &a.Registries} {
+	for _, l := range []*[]string{&a.Picks, &a.MiseExtra, &a.MCPServers, &a.Registries, &a.DevPorts} {
 		out := (*l)[:0]
 		for _, s := range *l {
 			if s != "" && !strings.ContainsAny(s, " \t\n") {
@@ -277,4 +282,30 @@ func (a *Answers) inLayer(id, except string) bool {
 		}
 	}
 	return false
+}
+
+var portRe = regexp.MustCompile(`^([0-9]{1,5})(-([0-9]{1,5}))?(/(tcp|udp))?$`)
+
+// ValidPort reports whether p is a dev port spec: "3000", "8000-8010",
+// either with /tcp or /udp.
+func ValidPort(p string) bool {
+	m := portRe.FindStringSubmatch(p)
+	if m == nil {
+		return false
+	}
+	lo, _ := strconv.Atoi(m[1])
+	hi := lo
+	if m[3] != "" {
+		hi, _ = strconv.Atoi(m[3])
+	}
+	return lo >= 1 && hi <= 65535 && lo <= hi
+}
+
+// UFWRule is ufw's rule for a dev port spec ("8000-8010" → "8000:8010/tcp").
+func UFWRule(p string) string {
+	proto := "tcp"
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		p, proto = p[:i], p[i+1:]
+	}
+	return "allow " + strings.Replace(p, "-", ":", 1) + "/" + proto
 }

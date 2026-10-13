@@ -130,7 +130,7 @@ CATALOG_ROWS=(
   "vault|iac|Vault CLI|mise|vault@latest||"
   "agekey|iac|age key for sops (generate or paste)|fn||sops|~/.config/sops/age/keys.txt (0600) · SOPS_AGE_KEY_FILE"
 
-  "k8s|k8s|Kubernetes CLIs (kubectl, kubectx, helm 3, k9s)|mise|kubectl@latest kubectx@latest kubens@latest helm@3 k9s@latest||"
+  "k8s|k8s|Kubernetes CLIs (kubectl, kubectx, helm 3, k9s, kubelogin)|mise|kubectl@latest kubectx@latest kubens@latest helm@3 k9s@latest kubelogin@latest||"
   "k8sextra|k8s|K8s extras (stern, kustomize, kubecolor, kubie, kubeconform)|mise|stern@latest kustomize@latest kubecolor@latest kubie@latest kubeconform@latest|k8s|"
   "krew|k8s|kubectl krew + plugins (neat, tree, view-secret)|fn||k8s|krew release → ~/.krew · kubectl krew install neat tree view-secret"
   "helmfile|k8s|helmfile + helm-diff|fn||k8s|mise use -g helmfile · helm plugin install helm-diff"

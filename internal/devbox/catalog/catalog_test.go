@@ -75,7 +75,7 @@ func TestMatchesBashCatalog(t *testing.T) {
 
 // goOnly are items added after the port: the bash installer, the fallback
 // until the cut-over, doesn't offer them.
-var goOnly = map[string]bool{"sudopw": true}
+var goOnly = map[string]bool{"sudopw": true, "autoupdate-tools": true}
 
 const teamTab = `
 [[item]]
@@ -236,9 +236,9 @@ func TestDownloadsPinned(t *testing.T) {
 		return fstest.MapFS{"x.toml": {Data: []byte("[[item]]\nid = \"x\"\ntab = \"dev\"\nlabel = \"X\"\n[[item.step]]\n" + step)}}
 	}
 	for step, want := range map[string]string{
-		"type = \"run\"\ncmd = \"curl -fsSL https://x/i.sh | sh\"\ncreates = \"/usr/bin/x\"\n": "pin it",
+		"type = \"run\"\ncmd = \"curl -fsSL https://x/i.sh | sh\"\ncreates = \"/usr/bin/x\"\n":                                   "pin it",
 		"type = \"run\"\ncmd = \"curl -o /tmp/x https://x/x\"\ncreates = \"/x\"\nsha256 = \"" + strings.Repeat("a", 64) + "\"\n": "doesn't check {{sha256}}",
-		"type = \"apt_repo\"\nname = \"x\"\nkey_url = \"https://x/key\"\nsource = \"Types: deb\"\n":                     "key_fingerprint",
+		"type = \"apt_repo\"\nname = \"x\"\nkey_url = \"https://x/key\"\nsource = \"Types: deb\"\n":                              "key_fingerprint",
 	} {
 		if got := loadErr(t, item(step)); !strings.Contains(got, want) {
 			t.Errorf("%q: err = %q, want %q", step, got, want)

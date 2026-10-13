@@ -1,0 +1,15 @@
+# devbox-setup's "Weekly tool updates": the user's mise tools and krew
+# plugins, as that user. Run it now: sudo systemctl start devbox-update@<user>
+[Unit]
+Description=Update %i's mise tools and krew plugins (devbox-setup)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=~
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:%h/.krew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c 'mise up --yes; if command -v kubectl-krew >/dev/null; then kubectl krew update && kubectl krew upgrade; fi'
+Nice=10
+IOSchedulingClass=idle

@@ -75,7 +75,8 @@ type Step struct {
 	OnChange bool `toml:"on_change"`
 
 	// note: Text is shown after the run when the shell condition When
-	// holds (always, without one).
+	// holds (always, without one). On a run step, Text is shown after the
+	// run when the step ran.
 	Text string `toml:"text"`
 	When string `toml:"when"`
 

@@ -478,7 +478,8 @@ clears the search; Esc on an empty search quits.
    (inotify, open files), zram swap, a journal size cap, timezone + locale
    (the clock itself is set up by pmox at launch; see
    [Clock sync](#clock-sync)). Opt-in hardening: automatic
-   security updates, quiet needrestart, SSH keys only, ufw, fail2ban.
+   security updates, quiet needrestart, SSH keys only, ufw (it asks which dev
+   server ports to open), fail2ban.
 2. **Shell and CLI:** modern CLI tools (ripgrep, fd, bat, eza, zoxide, fzf,
    delta, direnv), Vim, Neovim (latest, from mise), tmux, zellij, mosh,
    a curated vim config, man pages + tldr. zsh comes as separate items (type
@@ -504,7 +505,8 @@ clears the search; Esc on an empty search quits.
 3. **Dev tools:** lazygit, just + watchexec + hyperfine, Task, yq, xh + hurl,
    linters and hooks (shellcheck, shfmt, actionlint, gitleaks, pre-commit),
    database clients, pgcli + usql, perf/valgrind/bpftrace, act, a private npm
-   registry (scope and token in `~/.npmrc`).
+   registry (scope and token in `~/.npmrc`), weekly tool updates (a systemd
+   timer running `mise up` and `krew upgrade` as you).
 4. **Languages** (mise, except PHP and C/C++ from apt): Go + gopls, delve,
    govulncheck, golangci-lint; Python 3.13 + uv + ruff; Node + pnpm +
    TypeScript; Bun; Deno; Java 25 + Maven + Gradle + Kotlin; Rust +
@@ -514,7 +516,7 @@ clears the search; Esc on an empty search quits.
 6. **IaC** (mise): Terraform, OpenTofu, terragrunt + tflint + terraform-docs,
    trivy + checkov, Packer, Ansible, sops + age (and an age key: generate or
    paste), Vault.
-7. **Kubernetes:** kubectl, kubectx/kubens, Helm 3, k9s; stern, kustomize,
+7. **Kubernetes:** kubectl, kubectx/kubens, Helm 3, k9s, kubelogin (OIDC); stern, kustomize,
    kubecolor, kubie, kubeconform; krew with plugins; helmfile + helm-diff;
    Argo CD and Flux CLIs; kind, k3d, or k3s as a real cluster on the VM;
    Tilt, Skaffold, ctlptl; talosctl.

@@ -4,11 +4,11 @@
 [[item]]
 id = "k8s"
 tab = "k8s"
-label = "Kubernetes CLIs (kubectl, kubectx, helm 3, k9s)"
+label = "Kubernetes CLIs (kubectl, kubectx, helm 3, k9s, kubelogin)"
 
 [[item.step]]
 type = "mise"
-tools = ["kubectl@latest", "kubectx@latest", "kubens@latest", "helm@3", "k9s@latest"]
+tools = ["kubectl@latest", "kubectx@latest", "kubens@latest", "helm@3", "k9s@latest", "kubelogin@latest"]
 
 [[item]]
 id = "k8sextra"

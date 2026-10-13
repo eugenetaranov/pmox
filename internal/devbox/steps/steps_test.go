@@ -372,3 +372,15 @@ func TestVersions(t *testing.T) {
 		t.Errorf("missing = %v", missing)
 	}
 }
+
+// A run step's text is a note when the step ran, not when it was done.
+func TestRunStepNote(t *testing.T) {
+	e := testEnv(t, &fakeExec{})
+	var notes []string
+	e.Note = func(s string) { notes = append(notes, s) }
+	st := step(t, catalog.Step{Type: "run", Cmd: "usermod -aG docker {{user}}", Check: "false", Text: "{{user}} joined docker"})
+	apply(t, e, st)
+	if len(notes) != 1 || notes[0] != "ada joined docker" {
+		t.Errorf("notes = %q", notes)
+	}
+}

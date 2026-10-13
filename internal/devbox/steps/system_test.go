@@ -129,6 +129,10 @@ func TestUFWRules(t *testing.T) {
 	if r := strings.Join(ufwStep{}.rules(context.Background(), e), "; "); r != "limit OpenSSH; allow 60000:61000/udp; allow 8081/tcp" {
 		t.Errorf("rules = %s", r)
 	}
+	e.Answers.DevPorts = []string{"3000", "8000-8010"}
+	if r := strings.Join(ufwStep{}.rules(context.Background(), e), "; "); !strings.HasSuffix(r, "; allow 3000/tcp; allow 8000:8010/tcp") {
+		t.Errorf("rules with dev ports = %s", r)
+	}
 }
 
 func TestTimezone(t *testing.T) {

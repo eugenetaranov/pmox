@@ -86,6 +86,7 @@ unit = "docker"
 type = "run"
 cmd = "usermod -aG docker {{user}}"
 check = "id -nG {{user}} | tr ' ' '\\n' | grep -qx docker"
+text = "{{user}} is now in the docker group: log in again (or run 'newgrp docker'). VS Code and Cursor remote servers keep the old groups until restarted: run 'Remote-SSH: Kill VS Code Server on Host' from the editor."
 
 [[item]]
 id = "podman"
