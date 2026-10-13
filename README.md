@@ -180,6 +180,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `mount create` / `list` / `delete` | Continuous rsync of a local dir to a VM; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
+| `devbox push` / `apply` / `verify` | Install devbox-setup on a VM; apply profiles across VMs (4 at a time); check them for drift | `pmox devbox apply --tag team --profile team.toml` |
 
 ### Maintenance
 
@@ -662,6 +663,21 @@ over (before any `--post-create`/`--tack` hook, so a hook can run
 downloaded for it at boot. A failed copy only warns. With `--no-wait-ssh`
 nothing is copied. `pmox devbox push web1` installs it, or refreshes it to
 your pmox version, on an existing VM; saved choices are kept.
+
+**Across VMs.** `pmox devbox apply [vm…] --profile team.toml` (or `--all`, or
+`--tag team` for the running pmox VMs with that Proxmox tag) pushes
+devbox-setup to each VM and applies the profiles there, four VMs at a time,
+with one result line per VM; without `--profile` it re-applies each VM's
+saved choices. `pmox devbox verify` with the same selectors changes nothing
+and lists what each VM is missing. Both exit non-zero if any VM failed.
+
+**Your team's own items and MCP servers.** Put item files in
+`~/.config/pmox/devbox/catalog.d/*.toml` (the catalog's format; checked
+before each push) and MCP server specs in
+`~/.config/pmox/devbox/mcp-catalog/*.spec`. Every push (launch, `devbox
+push`, `apply`, `verify`) copies them to `/etc/devbox-setup/catalog.d/` and
+the VM's MCP catalog, and removes the ones it copied before that you've
+since deleted; other files there are left alone.
 
 **Profiles.** `sudo devbox-setup export > team.toml` writes the choices on
 a VM as a profile: a TOML file of picks and plain settings (git identity,

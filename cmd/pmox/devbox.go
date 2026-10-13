@@ -28,8 +28,13 @@ func newDevboxCmd() *cobra.Command {
 	return nounGroup("devbox", "Install devbox-setup on VMs", `devbox-setup is the on-VM installer for dev tools, languages, Docker,
 AI agents and MCPJungle ('sudo devbox-setup' on the VM). pmox installs it
 on every VM it launches; 'pmox devbox push' installs or refreshes it on
-an existing VM.`,
+an existing VM, 'pmox devbox apply' applies profiles across VMs, and
+'pmox devbox verify' checks them. Your team's own items and MCP servers
+in ~/.config/pmox/devbox/catalog.d/*.toml and mcp-catalog/*.spec go with
+every push.`,
 		newDevboxPushCmd(),
+		newDevboxApplyCmd(),
+		newDevboxVerifyCmd(),
 	)
 }
 
@@ -165,7 +170,11 @@ var devboxProfileFn = func(ctx context.Context, target *sshTarget, prof []byte, 
 // devboxPushFn streams bootstrap.Tarball to the target and installs it
 // with bootstrap.InstallCommand. A seam for tests.
 var devboxPushFn = func(ctx context.Context, target *sshTarget) error {
-	tgz, err := bootstrap.Tarball()
+	team, err := devboxTeamFiles()
+	if err != nil {
+		return err
+	}
+	tgz, err := bootstrap.Tarball(team...)
 	if err != nil {
 		return err
 	}

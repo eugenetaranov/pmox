@@ -192,9 +192,13 @@ func (mcpFilesStep) files(e *Env) ([]wantFile, error) {
 			specs[filepath.Base(p)] = b
 		}
 	}
+	// The team's specs pmox shipped win over ours of the same name.
+	team, _ := os.ReadFile(e.Path(filepath.Join(mcpCatalog, ".pmox-files")))
 	var out []wantFile
 	for name, b := range specs {
-		out = append(out, wantFile{filepath.Join(mcpCatalog, name), b, 0o644})
+		if !hasLine(team, name) {
+			out = append(out, wantFile{filepath.Join(mcpCatalog, name), b, 0o644})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].to < out[j].to })
 	b, err := os.ReadFile(filepath.Join(e.Share, "mcp-sync"))

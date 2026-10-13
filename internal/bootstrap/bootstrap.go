@@ -297,12 +297,12 @@ func gzipB64(b []byte) (string, error) {
 // Tarball returns devbox-setup's files as a gzip'd tar to extract at /
 // as root. It holds file entries only, so extracting never changes the
 // modes of existing directories such as /usr/local.
-func Tarball() ([]byte, error) {
+func Tarball(extra ...File) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
 	now := time.Now()
-	for _, f := range Files() {
+	for _, f := range append(Files(), extra...) {
 		mode, err := strconv.ParseInt(f.Permissions, 8, 64)
 		if err != nil {
 			return nil, fmt.Errorf("%s: permissions %q: %w", f.Path, f.Permissions, err)
@@ -331,6 +331,11 @@ func Tarball() ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// TeamDir is where a push's team files land in the share directory;
+// install.sh syncs TeamDir/catalog.d/*.toml into /etc/devbox-setup/catalog.d
+// and TeamDir/mcp-catalog/*.spec into the MCP catalog.
+const TeamDir = ShareDir + "/team"
 
 // InstallCommand is the remote command that installs Tarball (on stdin):
 // it replaces the share directory, so files dropped from pmox don't

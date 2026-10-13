@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -284,5 +287,60 @@ func TestPlainRunIsNotLegacyMode(t *testing.T) {
 	}
 	if strings.TrimSpace(string(out)) != "plain" {
 		t.Errorf("a plain run takes the legacy branch (%s)", strings.TrimSpace(cond))
+	}
+}
+
+// install.sh's sync_team: the team's files land, the ones pmox copied
+// before and no longer ships go, and other files stay.
+func TestInstallSyncTeam(t *testing.T) {
+	b, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := regexp.MustCompile(`(?ms)^sync_team\(\) \{.*?^\}`).Find(b)
+	if fn == nil {
+		t.Fatal("no sync_team in install.sh")
+	}
+	d := t.TempDir()
+	src, dst := d+"/src", d+"/dst"
+	for _, f := range []string{src + "/a.toml", src + "/b.toml", dst + "/mine.toml"} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync := func() {
+		t.Helper()
+		if out, err := exec.Command("sh", "-c", "set -e\n"+string(fn)+"\nsync_team \"$1\" \"$2\" .toml", "_", src, dst).CombinedOutput(); err != nil {
+			t.Fatalf("sync_team: %v: %s", err, out)
+		}
+	}
+	ls := func() string {
+		t.Helper()
+		m, _ := filepath.Glob(dst + "/*.toml")
+		for i := range m {
+			m[i] = filepath.Base(m[i])
+		}
+		return strings.Join(m, " ")
+	}
+	sync()
+	if got := ls(); got != "a.toml b.toml mine.toml" {
+		t.Errorf("first push: %s", got)
+	}
+	if err := os.Remove(src + "/a.toml"); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+	if got := ls(); got != "b.toml mine.toml" {
+		t.Errorf("a.toml dropped locally: %s", got)
+	}
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+	if got := ls(); got != "mine.toml" {
+		t.Errorf("no team files: %s", got)
 	}
 }
