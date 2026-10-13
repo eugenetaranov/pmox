@@ -169,6 +169,9 @@ func TestYardoInstallCommand(t *testing.T) {
 	if got := YardoInstallCommand("latest"); !strings.Contains(got, "/releases/latest/download/install.sh") || strings.Contains(got, "--version") {
 		t.Errorf("latest: %s", got)
 	}
+	if Yardo() != "latest" {
+		t.Errorf("default Yardo() = %s, want latest", Yardo())
+	}
 	t.Setenv("PMOX_YARDO_VERSION", "v9.9.9")
 	if Yardo() != "v9.9.9" {
 		t.Errorf("Yardo() = %s", Yardo())

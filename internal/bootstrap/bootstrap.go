@@ -18,20 +18,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// YardoVersion is the yardo release pmox installs on VMs.
-// PMOX_YARDO_VERSION overrides it (a tag, or "latest").
-const YardoVersion = "v0.1.1"
-
 // yardoRepo is where yardo's releases are.
 const yardoRepo = "https://github.com/eugenetaranov/yardo"
 
-// Yardo is the yardo release to install: PMOX_YARDO_VERSION, else
-// YardoVersion.
+// Yardo is the yardo release to install: the latest, unless
+// PMOX_YARDO_VERSION names one (a tag). pmox doesn't pin yardo: it is its
+// own project, released on its own.
 func Yardo() string {
 	if v := strings.TrimSpace(os.Getenv("PMOX_YARDO_VERSION")); v != "" {
 		return v
 	}
-	return YardoVersion
+	return "latest"
 }
 
 // YardoInstallCommand is the remote command that installs yardo's release

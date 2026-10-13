@@ -466,8 +466,9 @@ Once a new VM answers SSH, pmox installs yardo's release on it (the VM
 downloads it from GitHub and checks its checksum), before any
 `--post-create`/`--tack` hook, so a hook can run `sudo yardo --yes`. It isn't
 part of the user-data. A failed install only warns; with `--no-wait-ssh`
-nothing is installed. Each pmox version pins a yardo release;
-`PMOX_YARDO_VERSION` picks another (a tag, or `latest`). To turn yardo off
+nothing is installed. pmox installs yardo's latest release (yardo is
+released on its own; `PMOX_YARDO_VERSION=v0.1.2` installs a given one, and
+`sudo yardo version up` upgrades it on a VM). To turn yardo off
 for a server, set `yardo: false` under that server in `config.yaml`.
 
 - `pmox yardo push web1` installs it, or refreshes it, on an existing VM;

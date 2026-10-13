@@ -33,8 +33,8 @@ it launches; 'pmox yardo push' installs or refreshes it on an existing
 VM, 'pmox yardo apply' applies profiles across VMs, 'pmox yardo verify'
 checks them, and 'pmox yardo gitkey' sends a git SSH key. Your team's own
 items and MCP servers in ~/.config/pmox/yardo/catalog.d/*.toml and
-mcp-catalog/*.spec go with every push. PMOX_YARDO_VERSION picks another
-release than this pmox's (a tag, or latest).`,
+mcp-catalog/*.spec go with every push. pmox installs yardo's latest
+release; PMOX_YARDO_VERSION=<tag> installs another.`,
 		newYardoPushCmd(),
 		newYardoApplyCmd(),
 		newYardoVerifyCmd(),
