@@ -127,7 +127,8 @@ func newVMCmd() *cobra.Command {
 	g := nounGroup("vm", "All VM commands", `Manage pmox VMs on the current context's cluster.
 
 The most common verbs are also available at the top level:
-pmox launch, list, info, start, stop, delete, shell, exec, cp, sync, apply.`)
+pmox launch, list, start, stop, delete, shell, exec, cp, sync, apply.
+('pmox info' shows the Proxmox host; 'pmox vm info <name>' a VM.)`)
 	g.AddGroup(
 		&cobra.Group{ID: "vm-lifecycle", Title: "Lifecycle:"},
 		&cobra.Group{ID: "vm-access", Title: "Access & files:"},
@@ -194,7 +195,6 @@ func registerCommands(root *cobra.Command) {
 		shortcut(newShellCmd(), groupStart, "vm shell"),
 
 		shortcut(rename(newListCmd(), "list", "ls"), groupCommon, "vm list"),
-		shortcut(newInfoCmd(), groupCommon, "vm info"),
 		shortcut(newStartCmd(), groupCommon, "vm start"),
 		shortcut(newStopCmd(), groupCommon, "vm stop"),
 		shortcut(rename(newDeleteCmd(), "delete", "rm"), groupCommon, "vm delete"),
@@ -212,6 +212,10 @@ func registerCommands(root *cobra.Command) {
 		g.GroupID = groupResources
 		root.AddCommand(g)
 	}
+
+	hostInfo := newHostInfoCmd()
+	hostInfo.GroupID = groupCommon
+	root.AddCommand(hostInfo)
 
 	for _, c := range []*cobra.Command{newDoctorCmd(), newCleanupCmd(), newVersionCmd()} {
 		c.GroupID = groupMaintenance

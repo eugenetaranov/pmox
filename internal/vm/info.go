@@ -9,7 +9,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 )
 
-// Info is the aggregated detail view shown by `pmox info`.
+// Info is the aggregated detail view shown by `pmox vm info`.
 type Info struct {
 	Name        string      `json:"name"`
 	VMID        int         `json:"vmid"`

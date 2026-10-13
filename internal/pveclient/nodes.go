@@ -13,6 +13,13 @@ import (
 type Node struct {
 	Node   string `json:"node"`
 	Status string `json:"status"`
+	// Usage, from GET /nodes: CPU is the busy fraction (0..1) of MaxCPU
+	// cores; Mem and MaxMem are bytes; Uptime is seconds.
+	CPU    float64 `json:"cpu"`
+	MaxCPU int     `json:"maxcpu"`
+	Mem    int64   `json:"mem"`
+	MaxMem int64   `json:"maxmem"`
+	Uptime int64   `json:"uptime"`
 }
 
 // Template represents a qemu VM template (from GET /nodes/{node}/qemu, filtered to template=1).

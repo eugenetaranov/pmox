@@ -42,7 +42,11 @@ func TestCommandTreeResolves(t *testing.T) {
 			t.Errorf("canonical %q is hidden/deprecated", p)
 		}
 	}
-	shortcuts := []string{"launch", "create", "list", "ls", "info", "start", "stop", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
+	shortcuts := []string{"launch", "create", "list", "ls", "start", "stop", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
+	// The root's info is the Proxmox host's; a VM's is vm info.
+	if c := findPath(t, "info"); c.Annotations[canonicalAnnotation] != "" || !strings.Contains(c.Short, "Proxmox host") {
+		t.Errorf("root info = %q (%q), want the host overview", c.Short, c.Annotations[canonicalAnnotation])
+	}
 	for _, p := range shortcuts {
 		findPath(t, p)
 	}

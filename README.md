@@ -145,13 +145,20 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `launch` | `vm launch` | `pmox launch web1` |
 | `shell` | `vm shell` | `pmox shell web1` |
 | `list`, `ls` | `vm list` | `pmox ls` |
-| `info` | `vm info` | `pmox info web1` |
 | `start` / `stop` | `vm start` / `vm stop` | `pmox stop web1 web2` |
 | `delete`, `rm` | `vm delete` | `pmox rm web1` |
 | `exec` | `vm exec` | `pmox exec web1 -- uname -a` |
 | `cp` / `sync` | `vm cp` / `vm sync` | `pmox sync ./src/ web1:/opt/app/` |
 | `apply` | `vm apply` | `pmox apply web1` |
 | `mount` / `umount` | `mount create` / `mount delete` | `pmox mount ./src web1:/opt/app` |
+
+### `pmox info`: the Proxmox host
+
+`pmox info` shows the current context's Proxmox host: its version, each
+node's status, uptime, CPU and memory use, its storage pools with free
+space, and how many VMs run there (pmox's and in all). `--context` picks
+another server and `-o json` prints it as JSON. For one VM, use `pmox vm info
+<name>`.
 
 ### `pmox vm`: VMs
 
