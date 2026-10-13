@@ -244,11 +244,18 @@ func (r *Runner) batchApt(ctx context.Context, b []built, failed map[string]bool
 			if done {
 				continue
 			}
+			title := label(x.item) + ": setting up before the apt install"
+			if repo {
+				title = label(x.item) + ": adding its apt repository"
+			}
+			r.Progress.Start(title)
 			out.Reset()
 			if err := r.withLog(&out, func() error { return st.Apply(ctx, r.Env) }); err != nil {
+				r.Progress.Done("fail", title)
 				fail(x.item.ID, err, out.Bytes())
 				break
 			}
+			r.Progress.Done("ok", title)
 			reposChanged = reposChanged || repo
 			settled[x.item.ID+"\x00changed"] = true
 		}
@@ -287,19 +294,19 @@ func (r *Runner) batchApt(ctx context.Context, b []built, failed map[string]bool
 	if len(all) == 0 && !reposChanged {
 		return settled
 	}
-	r.Progress.Start("apt: " + strings.Join(all, " "))
 	out.Reset()
-	err := r.withLog(&out, func() error {
-		if err := steps.AptUpdate(ctx, r.Env); err != nil {
-			return err
+	r.Progress.Start("apt: updating the package lists")
+	err := r.withLog(&out, func() error { return steps.AptUpdate(ctx, r.Env) })
+	if err == nil {
+		r.Progress.Done("ok", "apt: package lists updated")
+		if len(all) > 0 {
+			r.Progress.Start(fmt.Sprintf("apt: installing %d packages (%s)", len(all), strings.Join(all, " ")))
+			err = r.withLog(&out, func() error { return steps.AptInstall(ctx, r.Env, all) })
 		}
-		return steps.AptInstall(ctx, r.Env, all)
-	})
+	}
 	if err == nil {
 		if len(all) > 0 {
-			r.Progress.Done("ok", fmt.Sprintf("apt: %d packages", len(all)))
-		} else {
-			r.Progress.Done("ok", "apt: package lists")
+			r.Progress.Done("ok", fmt.Sprintf("apt: %d packages installed", len(all)))
 		}
 		return settled
 	}

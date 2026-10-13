@@ -337,6 +337,7 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 	if created {
 		env.Note(fmt.Sprintf("Created user %s (passwordless sudo, no password or SSH key): add a key to %s/.ssh/authorized_keys, or use 'sudo -iu %s'.", a.User, env.Home, a.User))
 	}
+	prog := progressFor(stdout)
 	bash := legacyRunner(env, o.legacy, o.state)
 	if bash != nil {
 		stdin := sec.Encode()
@@ -344,6 +345,9 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 			// The GitHub steps may open the browser login: in an
 			// interactive run they get the terminal.
 			if interactive && (id == "github" || id == "gitsign") {
+				if l, ok := prog.(*run.Live); ok {
+					l.Pause()
+				}
 				c := exec.CommandContext(ctx, "bash", o.legacy, "--only", id, "--secrets")
 				c.Env = append(os.Environ(), legacyCmd(o.legacy, o.state).Env...)
 				c.Stdin, c.Stdout, c.Stderr = bytes.NewReader(stdin), os.Stdout, os.Stderr
@@ -354,15 +358,18 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 			_, err := env.RunLogged(ctx, cmd)
 			return err
 		}
+		prog.Start("Getting ready")
 		if err := bash(ctx, "--begin"); err != nil {
+			prog.Done("fail", "Getting ready")
 			return err
 		}
+		prog.Done("ok", "Ready to install")
 	}
 	notesFile := filepath.Join(o.state, ".notes")
 	if bash == nil {
 		_ = os.Remove(notesFile) // bash's --begin does this when it runs
 	}
-	r := &run.Runner{Env: env, Progress: run.Plain{W: stdout}, TailLines: 25}
+	r := &run.Runner{Env: env, Progress: prog, TailLines: 25}
 	res := r.Run(ctx, items, extra)
 	if err := primeZshCompletions(ctx, env, r.Progress); err != nil {
 		res.Failed = append(res.Failed, "zshcomp")
@@ -397,6 +404,16 @@ func (o *options) runUser(ctx context.Context, cat *catalog.Catalog, st *answers
 		return fmt.Errorf("failed: %s — fix and re-run devbox-setup", strings.Join(res.Failed, " "))
 	}
 	return nil
+}
+
+// progressFor shows each step with a spinner and its elapsed time on a
+// terminal, and plain result lines otherwise (logs, pmox's streamed runs).
+func progressFor(w io.Writer) run.Progress {
+	if f, ok := w.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		width, _, _ := term.GetSize(int(f.Fd()))
+		return &run.Live{W: w, Width: width}
+	}
+	return run.Plain{W: w}
 }
 
 // primeZshCompletions fills the zsh completion cache once every tool of

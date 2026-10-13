@@ -273,3 +273,19 @@ func TestBeforeAptOrder(t *testing.T) {
 		t.Errorf("ran %q: want PRE before the install", x.ran)
 	}
 }
+
+func TestLiveProgress(t *testing.T) {
+	var buf bytes.Buffer
+	l := &Live{W: &buf, Width: 40}
+	l.Start("apt: installing 3 packages (git curl jq)")
+	l.Done("ok", "apt: 3 packages installed")
+	l.Start("zsh")
+	l.Pause()
+	l.Done("fail", "zsh")
+	if s := buf.String(); !strings.Contains(s, "✓ apt: 3 packages installed\n") || !strings.Contains(s, "✗ zsh\n") {
+		t.Errorf("output %q", s)
+	}
+	if got := l.label("apt: installing 87 packages (git curl wget ca-certificates unzip)", 75*time.Second); len([]rune(got)) > 37 || !strings.HasSuffix(got, "… (1m15s)") {
+		t.Errorf("label %q", got)
+	}
+}
