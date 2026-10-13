@@ -178,6 +178,9 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
+	// The spinner is gone by now: say which VM the session is on.
+	fmt.Fprintf(cmd.ErrOrStderr(), "Connecting to %s (%s@%s)…\n", target.Name, target.User, target.IP)
+
 	// ssh runs as a child (not exec'd over pmox) so a rejected key can be
 	// explained afterwards; the session's exit status passes through.
 	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), f.forwards)...)
