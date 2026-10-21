@@ -190,9 +190,33 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 
 	// ssh runs as a child (not exec'd over pmox) so a rejected key can be
 	// explained afterwards; the session's exit status passes through.
-	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), f.forwards)...)
+	opts := append(guestHostKeyOpts(), keepAliveOpts...)
+	opts = append(opts, forwardingArgs(wantForwardAgent(cmd, f, srv), f.forwards)...)
 	sshArgs := buildSSHArgs(sshPath, target, opts, nil)
-	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
+	runErr := runRemote(sshPath, sshArgs)
+	resetTerminalModes(os.Stdout)
+	return explainSSHFailure(ctx, target, resolved.URL, runErr, true)
+}
+
+// keepAliveOpts make ssh notice a dead connection (laptop slept, network
+// dropped) within ~45s and exit, instead of hanging until TCP gives up.
+var keepAliveOpts = []string{"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"}
+
+// terminalResetSeq turns off the modes a remote full-screen program
+// (tmux, vim, htop, a TUI) may have left on when the connection died
+// without it restoring them: mouse reporting (else every mouse move or
+// scroll prints escape garbage), bracketed paste, focus events, the
+// alternate screen, a hidden cursor, xterm modifyOtherKeys and the kitty
+// keyboard protocol (zellij pushes it; left on, keys arrive as CSI-u
+// sequences).
+const terminalResetSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+	"\x1b[?2004l\x1b[?1004l\x1b[?1049l\x1b[?25h\x1b[>4m\x1b[<u"
+
+// resetTerminalModes writes terminalResetSeq when out is a terminal.
+func resetTerminalModes(out *os.File) {
+	if out != nil && isTTYFunc(out.Fd()) {
+		_, _ = out.WriteString(terminalResetSeq)
+	}
 }
 
 func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
@@ -224,7 +248,8 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 		return err
 	}
 
-	opts := append(guestHostKeyOpts(), forwardingArgs(wantForwardAgent(cmd, f, srv), nil)...)
+	opts := append(guestHostKeyOpts(), keepAliveOpts...)
+	opts = append(opts, forwardingArgs(wantForwardAgent(cmd, f, srv), nil)...)
 	sshArgs := buildSSHArgs(sshPath, target, opts, []string{remoteCommand(remoteArgs)})
 	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
