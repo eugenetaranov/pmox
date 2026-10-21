@@ -144,7 +144,7 @@ func TestWatchAndSyncRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck // only waiting for the run to finish
 	case <-time.After(5 * time.Second):
 		t.Fatalf("no recovery; log:\n%s", log.String())
 	}

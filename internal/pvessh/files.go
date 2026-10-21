@@ -30,7 +30,7 @@ func (c *Client) run(ctx context.Context, fn func() error) error {
 	select {
 	case <-ctx.Done():
 		_ = c.Close()
-		<-done
+		<-done //nolint:errcheck // ctx.Err() wins; just reap the goroutine
 		return ctx.Err()
 	case err := <-done:
 		return err

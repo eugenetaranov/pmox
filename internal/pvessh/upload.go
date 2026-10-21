@@ -64,7 +64,7 @@ func (c *Client) UploadSnippet(ctx context.Context, storagePath, filename string
 		// makes them fail fast so a hung node can't block us forever.
 		// Wait for the goroutine so it doesn't leak.
 		_ = c.Close()
-		<-done
+		<-done //nolint:errcheck // ctx.Err() wins; just reap the goroutine
 		return ctx.Err()
 	case err := <-done:
 		if err != nil {
