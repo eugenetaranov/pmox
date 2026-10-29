@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1074,4 +1075,71 @@ func stubTemplateRunFn(t *testing.T, result *template.Result, err error) func() 
 		return result, err
 	}
 	return func() { templateRunFn = orig }
+}
+
+func TestUnreachableHint(t *testing.T) {
+	_, home, _ := net.ParseCIDR("10.83.17.0/24")
+	_, cafe, _ := net.ParseCIDR("192.168.1.0/24")
+	nets := func(ns ...*net.IPNet) func() ([]*net.IPNet, error) {
+		return func() ([]*net.IPNet, error) { return ns, nil }
+	}
+	cafeIface := &net.IPNet{IP: net.ParseIP("192.168.1.57").To4(), Mask: cafe.Mask}
+	homeIface := &net.IPNet{IP: net.ParseIP("10.83.17.40").To4(), Mask: home.Mask}
+	lookup := func(ip string) func(context.Context, string) ([]string, error) {
+		return func(context.Context, string) ([]string, error) { return []string{ip}, nil }
+	}
+	cases := []struct {
+		name, url string
+		deps      doctorDeps
+		want      string
+	}{
+		{"away without a route", "https://10.83.17.2:8006/api2/json", doctorDeps{localNets: nets(cafeIface)}, "not on the home LAN"},
+		{"cafe overlaps home", "https://192.168.1.10:8006/api2/json", doctorDeps{localNets: nets(cafeIface)}, "renumber the home LAN"},
+		{"name resolving to private", "https://pve.home.arpa:8006/api2/json", doctorDeps{localNets: nets(homeIface), lookupHost: lookup("10.99.0.2")}, "not on the home LAN"},
+		{"public address", "https://203.0.113.5:8006/api2/json", doctorDeps{localNets: nets(cafeIface)}, "(firewall?)"},
+		{"no lookup", "https://pve.example.com:8006/api2/json", doctorDeps{}, "check the host is up"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unreachableHint(context.Background(), tc.url, tc.deps)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("hint = %q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+	if got := unreachableHint(context.Background(), "https://203.0.113.5:8006/api2/json", doctorDeps{}); strings.Contains(got, "home LAN") {
+		t.Errorf("public host got an off-LAN hint: %q", got)
+	}
+}
+
+func TestDoctorOverlay(t *testing.T) {
+	ts := &net.IPNet{IP: net.ParseIP("100.101.7.9").To4(), Mask: net.CIDRMask(32, 32)}
+	wifi := &net.IPNet{IP: net.ParseIP("192.168.1.57").To4(), Mask: net.CIDRMask(24, 32)}
+	cases := []struct {
+		name    string
+		address string
+		nets    []*net.IPNet
+		want    doctor.Status
+		checked bool
+	}{
+		{"lan mode skips the check", "", []*net.IPNet{wifi}, doctor.Pass, false},
+		{"overlay up", config.AddressOverlay, []*net.IPNet{wifi, ts}, doctor.Pass, true},
+		{"overlay down warns", config.AddressOverlay, []*net.IPNet{wifi}, doctor.Warn, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cl := &doctor.Checklist{}
+			nets := tc.nets
+			doctorOverlay(cl, &config.Server{Address: tc.address}, doctorDeps{localNets: func() ([]*net.IPNet, error) { return nets, nil }})
+			if !tc.checked {
+				if cl.Has("net.overlay") {
+					t.Fatal("unexpected net.overlay check")
+				}
+				return
+			}
+			if got := cl.StatusOf("net.overlay"); got != tc.want {
+				t.Fatalf("net.overlay = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

@@ -397,7 +397,7 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	if err != nil {
 		return "", fmt.Errorf("VM %q is running but guest agent is not responding; is qemu-guest-agent installed?", ref.Name)
 	}
-	ip := vmwait.PickIPv4(ifaces)
+	ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 	if ip == "" {
 		return "", fmt.Errorf("VM %q is running but guest agent returned no usable IPv4 address", ref.Name)
 	}

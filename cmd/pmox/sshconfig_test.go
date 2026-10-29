@@ -97,3 +97,35 @@ func TestSSHCommandLine_QuotesSpaces(t *testing.T) {
 		t.Errorf("key path with a space should be quoted: %s", cmd)
 	}
 }
+
+func TestSSHConfig_OverlayAddress(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/cluster/resources", pvetest.JSON(`{"data":[{"vmid":100,"name":"web1","node":"pve1","status":"running","tags":"pmox"}]}`))
+	s.Handle("GET", "/status/current", pvetest.JSON(`{"data":{"status":"running","vmid":100,"name":"web1"}}`))
+	s.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(`{"data":{"result":[`+
+		`{"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"10.83.17.20"}]},`+
+		`{"name":"tailscale0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"100.101.7.3"}]}]}}`))
+	for _, tc := range []struct {
+		overlay bool
+		want    string
+	}{{false, "10.83.17.20"}, {true, "100.101.7.3"}} {
+		c := s.Client()
+		c.PreferOverlay = tc.overlay
+		info, err := resolveSSHConnInfo(context.Background(), c, "web1", &sshFlags{}, "", &config.Server{User: "pmox"}, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveSSHConnInfo: %v", err)
+		}
+		if info.Hostname != tc.want {
+			t.Errorf("overlay=%v: hostname = %q, want %q", tc.overlay, info.Hostname, tc.want)
+		}
+	}
+}
+
+func TestNewAPIClientAddressMode(t *testing.T) {
+	if c := newAPIClient("https://pve.lan:8006/api2/json", &config.Server{}, "s", ""); c.PreferOverlay {
+		t.Error("default server prefers the overlay")
+	}
+	if c := newAPIClient("https://pve.lan:8006/api2/json", &config.Server{Address: config.AddressOverlay}, "s", ""); !c.PreferOverlay {
+		t.Error("address: overlay doesn't prefer the overlay")
+	}
+}

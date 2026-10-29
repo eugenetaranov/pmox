@@ -401,3 +401,28 @@ func TestRenamedYardoKeys(t *testing.T) {
 		t.Error("yardo: false didn't turn it off")
 	}
 }
+
+func TestAddressMode(t *testing.T) {
+	cases := []struct {
+		address, want string
+		wantErr       bool
+	}{
+		{"", AddressLAN, false},
+		{AddressLAN, AddressLAN, false},
+		{AddressOverlay, AddressOverlay, false},
+		{"auto", "auto", true},
+	}
+	for _, tc := range cases {
+		srv := &Server{Address: tc.address}
+		if got := srv.AddressMode(); got != tc.want {
+			t.Errorf("AddressMode(%q) = %q, want %q", tc.address, got, tc.want)
+		}
+		if err := srv.CheckAddress("https://pve.lan:8006/api2/json"); (err != nil) != tc.wantErr {
+			t.Errorf("CheckAddress(%q) = %v, wantErr %v", tc.address, err, tc.wantErr)
+		}
+		cfg := &Config{Servers: map[string]*Server{"https://pve.lan:8006/api2/json": srv}}
+		if err := cfg.Validate(); (err != nil) != tc.wantErr {
+			t.Errorf("Validate(address=%q) = %v, wantErr %v", tc.address, err, tc.wantErr)
+		}
+	}
+}

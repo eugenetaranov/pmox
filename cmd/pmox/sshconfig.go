@@ -119,7 +119,7 @@ func resolveSSHConnInfo(ctx context.Context, client *pveclient.Client, arg strin
 	if err != nil {
 		return nil, fmt.Errorf("VM %q is running but the guest agent is not responding; is qemu-guest-agent installed?", ref.Name)
 	}
-	ip := vmwait.PickIPv4(ifaces)
+	ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 	if ip == "" {
 		return nil, fmt.Errorf("VM %q is running but the guest agent reports no usable IPv4 address yet", ref.Name)
 	}

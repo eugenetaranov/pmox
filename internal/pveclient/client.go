@@ -35,6 +35,11 @@ type Client struct {
 	Secret     string
 	Insecure   bool
 	HTTPClient *http.Client
+
+	// PreferOverlay makes pmox connect to a VM at its overlay
+	// (Tailscale/NetBird) address, when it has one, rather than its LAN
+	// address: the server's "address: overlay".
+	PreferOverlay bool
 }
 
 // Options holds optional Client settings for NewWithOptions.

@@ -60,6 +60,34 @@ type Server struct {
 	// YardoProfile is a yardo profile applied to launched and
 	// cloned VMs (--yardo-profile overrides it).
 	YardoProfile string `yaml:"yardo_profile,omitempty"`
+
+	// Address is which of a VM's addresses guest commands connect to:
+	// AddressLAN (empty means this) or AddressOverlay, the VM's
+	// Tailscale/NetBird address when it has one.
+	Address string `yaml:"address,omitempty"`
+}
+
+// Address values.
+const (
+	AddressLAN     = "lan"
+	AddressOverlay = "overlay"
+)
+
+// AddressMode is the server's address setting, AddressLAN when unset.
+func (s *Server) AddressMode() string {
+	if s.Address == "" {
+		return AddressLAN
+	}
+	return s.Address
+}
+
+// CheckAddress fails on an address setting pmox can't act on.
+func (s *Server) CheckAddress(url string) error {
+	switch s.Address {
+	case "", AddressLAN, AddressOverlay:
+		return nil
+	}
+	return fmt.Errorf("server %s: address %q is not one of %q, %q", url, s.Address, AddressLAN, AddressOverlay)
 }
 
 // YardoEnabled reports whether launched VMs get yardo.
@@ -256,7 +284,13 @@ func checkRenamedKeys(data []byte) error {
 func (c *Config) Validate() error {
 	for _, u := range c.ServerURLs() {
 		srv := c.Servers[u]
-		if srv == nil || srv.NodeSSH == nil {
+		if srv == nil {
+			continue
+		}
+		if err := srv.CheckAddress(u); err != nil {
+			return err
+		}
+		if srv.NodeSSH == nil {
 			continue
 		}
 		switch srv.NodeSSH.Auth {

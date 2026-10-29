@@ -73,7 +73,7 @@ setup" section.
 ### IP picking heuristic (when the agent returns multiple)
 
 ```
-1. Skip interfaces named: lo, lo0, docker*, br-*, veth*, cni*, virbr*, tun*
+1. Skip interfaces named: lo, lo0, docker*, br-*, veth*, cni*, virbr*, tun*, tailscale*, wt* (with `address: overlay`, tailscale*/wt* are tried first instead)
 2. From remaining interfaces, pick the first IPv4 that is:
    - not in 127.0.0.0/8
    - not in 169.254.0.0/16

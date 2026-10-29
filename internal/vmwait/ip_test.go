@@ -207,3 +207,48 @@ func TestWaitForIP_ContextCancel(t *testing.T) {
 		t.Fatal("WaitForIP err=nil, want ctx.Err()")
 	}
 }
+
+func TestPickGuestIPv4Overlay(t *testing.T) {
+	iface := func(name, ip string) pveclient.AgentIface {
+		return pveclient.AgentIface{Name: name, IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: ip}}}
+	}
+	lan := iface("ens18", "10.83.17.20")
+	ts := iface("tailscale0", "100.101.7.3")
+	nb := iface("wt0", "100.88.4.9")
+	tests := []struct {
+		name    string
+		ifaces  []pveclient.AgentIface
+		overlay bool
+		want    string
+	}{
+		{"lan mode skips tailscale listed first", []pveclient.AgentIface{ts, lan}, false, "10.83.17.20"},
+		{"lan mode skips netbird listed first", []pveclient.AgentIface{nb, lan}, false, "10.83.17.20"},
+		{"lan mode falls back to a lone overlay", []pveclient.AgentIface{ts}, false, "100.101.7.3"},
+		{"overlay mode prefers tailscale", []pveclient.AgentIface{lan, ts}, true, "100.101.7.3"},
+		{"overlay mode prefers netbird", []pveclient.AgentIface{lan, nb}, true, "100.88.4.9"},
+		{"overlay mode without overlay uses lan", []pveclient.AgentIface{iface("docker0", "172.17.0.1"), lan}, true, "10.83.17.20"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PickGuestIPv4(tc.ifaces, tc.overlay); got != tc.want {
+				t.Errorf("PickGuestIPv4 = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAllIPv4(t *testing.T) {
+	ifaces := []pveclient.AgentIface{
+		{Name: "lo", IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: "127.0.0.1"}}},
+		{Name: "ens18", IPAddresses: []pveclient.AgentIPAddr{
+			{IPAddressType: "ipv4", IPAddress: "10.83.17.20"},
+			{IPAddressType: "ipv4", IPAddress: "169.254.3.4"},
+			{IPAddressType: "ipv6", IPAddress: "fd00::1"},
+		}},
+		{Name: "tailscale0", IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: "100.101.7.3"}}},
+	}
+	got := AllIPv4(ifaces)
+	if strings.Join(got, ",") != "10.83.17.20,100.101.7.3" {
+		t.Errorf("AllIPv4 = %v", got)
+	}
+}

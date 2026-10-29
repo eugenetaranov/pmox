@@ -367,7 +367,7 @@ func runCleanup(cmd *cobra.Command, o cleanupOpts) error {
 				ipsComplete = false // can't confirm this VM's IP → don't risk pruning its pin
 				continue
 			}
-			if ip := vmwait.PickIPv4(ifaces); ip != "" {
+			for _, ip := range vmwait.AllIPv4(ifaces) { // the overlay address's pin too
 				liveIPs[ip] = true
 			}
 		}

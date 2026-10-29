@@ -58,6 +58,9 @@ func connect(ctx context.Context, cmd *cobra.Command, opts connectOptions) (*ses
 	if verbose {
 		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
+	if err := resolved.Server.CheckAddress(resolved.URL); err != nil {
+		return nil, fmt.Errorf("%w (pmox config edit)", err)
+	}
 	pin, err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved.URL, resolved.Server, pinTOFU)
 	if err != nil {
 		return nil, err
@@ -95,7 +98,9 @@ func contextPicker(stdin *os.File) func(string, []server.Choice) (string, error)
 // newAPIClient builds the PVE client for srv. pin, when non-empty, is
 // enforced on every TLS handshake of the API connection.
 func newAPIClient(url string, srv *config.Server, secret, pin string) *pveclient.Client {
-	return pveclient.NewWithOptions(url, srv.TokenID, secret, srv.Insecure, pveclient.Options{PinSHA256: pin})
+	c := pveclient.NewWithOptions(url, srv.TokenID, secret, srv.Insecure, pveclient.Options{PinSHA256: pin})
+	c.PreferOverlay = srv.AddressMode() == config.AddressOverlay
+	return c
 }
 
 // storedPin returns the TLS pin to enforce for srv without probing or

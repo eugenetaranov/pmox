@@ -224,7 +224,7 @@ var fleetIPFn = func(ctx context.Context, client *pveclient.Client, r pveclient.
 	if err != nil {
 		return "", errors.New("guest agent not responding")
 	}
-	ip := vmwait.PickIPv4(ifaces)
+	ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 	if ip == "" {
 		return "", errors.New("no IPv4 address from the guest agent")
 	}

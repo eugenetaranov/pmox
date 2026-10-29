@@ -121,6 +121,7 @@ servers:
     ssh_pubkey: /home/you/.ssh/id_ed25519.pub
     user: pmox
     insecure: false      # true = skip TLS verify; pmox then pins the cert (see tls_pin_sha256)
+    address: lan         # "lan" (default) | "overlay": connect to VMs at their Tailscale/NetBird (tailscale0/wt0) address when they have one
     tls_pin_sha256: ""   # set automatically on first insecure connect; a later mismatch aborts (possible MITM)
     node_ssh:
       user: root
@@ -164,5 +165,6 @@ rewrites it from the stored pubkey.
 - README: https://github.com/eugenetaranov/pmox/blob/main/README.md
 - Roadmap: https://github.com/eugenetaranov/pmox/blob/main/ROADMAP.md
 - PVE setup guide: https://github.com/eugenetaranov/pmox/blob/main/docs/pve-setup.md
+- Remote access (Tailscale/NetBird, Docker and MCP from a laptop): https://github.com/eugenetaranov/pmox/blob/main/docs/remote-access.md
 - tack (companion provisioning tool): https://github.com/tackhq/tack
 - Releases: https://github.com/eugenetaranov/pmox/releases

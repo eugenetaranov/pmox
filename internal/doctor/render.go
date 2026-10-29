@@ -9,10 +9,11 @@ import (
 // setup flow (config first, then connectivity, storage, SSH, template)
 // with local tooling last. Unknown groups print after these in first-seen
 // order.
-var groupOrder = []string{"config", "api", "storage", "ssh", "template", "access", "tooling"}
+var groupOrder = []string{"config", "network", "api", "storage", "ssh", "template", "access", "tooling"}
 
 var groupTitle = map[string]string{
 	"config":   "Config",
+	"network":  "Network",
 	"api":      "Proxmox API",
 	"storage":  "Storage",
 	"ssh":      "Node SSH",

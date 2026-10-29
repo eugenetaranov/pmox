@@ -407,7 +407,7 @@ var yardoForgetTargetFn = func(ctx context.Context, client *pveclient.Client, re
 	if err != nil {
 		return nil, fmt.Errorf("guest agent: %w", err)
 	}
-	ip := vmwait.PickIPv4(ifaces)
+	ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 	if ip == "" {
 		return nil, errors.New("no IPv4 address")
 	}

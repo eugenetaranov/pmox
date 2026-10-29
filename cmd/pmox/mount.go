@@ -410,7 +410,7 @@ func runMount(cmd *cobra.Command, args []string, f *mountFlags) error {
 		if err != nil {
 			return nil, fmt.Errorf("guest agent: %w", err)
 		}
-		ip := vmwait.PickIPv4(ifaces)
+		ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 		if ip == "" {
 			return nil, errors.New("no IPv4 address from the guest agent")
 		}

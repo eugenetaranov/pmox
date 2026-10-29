@@ -54,6 +54,11 @@ pmox needs three things on the cluster:
 including required privileges, SSH mode tradeoffs, and the most
 common first-launch errors.
 
+Away from home, pmox needs an overlay network (Tailscale or NetBird) to
+reach the cluster and its VMs; [docs/remote-access.md](./docs/remote-access.md)
+sets one up so it switches by itself when you're back on the LAN, and
+covers connecting your laptop's Docker and MCP clients to a VM.
+
 ## Quick start
 
 ```
@@ -410,6 +415,16 @@ timeout, …), so CI can gate on it; `--output json` (with a stable
 `schema_version` and per-check `id`) is the machine-readable form.
 Add `--verbose` to also list passing checks.
 
+**Away from home.**
+- When the API host is on a private address and can't be reached,
+  doctor's hint says why: this machine is off the home LAN with no
+  Tailscale or NetBird route to it, or it's on a network with the same
+  addresses as home.
+- With `address: overlay`, the Network check `net.overlay` warns when
+  this machine has no Tailscale or NetBird address.
+
+See [docs/remote-access.md](./docs/remote-access.md).
+
 ## Cloud-init
 
 pmox uploads a cloud-init file as a Proxmox `snippets` volume on
@@ -468,7 +483,8 @@ an interactive setup tool you run on the VM itself: `pmox shell web1`, then
 and Kubernetes CLIs, Docker, coding agents wired to an MCP gateway, system
 hardening, SSH and git keys, and your dotfiles; it remembers your choices and
 re-applies them. yardo is its own project: see its README for everything it
-does.
+does. To use a VM's Docker or MCP gateway from your laptop, at home
+or away, see [docs/remote-access.md](./docs/remote-access.md#8-docker-from-your-laptop).
 
 Once a new VM answers SSH, pmox installs yardo's release on it (the VM
 downloads it from GitHub and checks its checksum), before any
@@ -659,6 +675,7 @@ servers:
     ssh_pubkey: /home/you/.ssh/id_ed25519.pub
     user: pmox
     insecure: false
+    address: lan          # or overlay: connect to VMs at their Tailscale/NetBird address
     node_ssh:
       user: root
       auth: key
@@ -696,6 +713,16 @@ when it detects the file authorizes a different key. Either way, relaunch
 existing VMs for a new key to take effect (cloud-init only runs at first
 boot). `pmox doctor` flags this drift (`ssh_pubkey` vs the key in the
 cloud-init file) before it turns into a `Permission denied (publickey)`.
+
+**`address`** picks which of a VM's addresses pmox connects to:
+- `lan` is the default: the VM's LAN address, even on a VM that is also
+  on Tailscale or NetBird.
+- `overlay` uses the VM's Tailscale (`tailscale0`) or NetBird (`wt0`)
+  address whenever it has one, and the LAN address otherwise. That address
+  is the same at home and away, so sessions and mounts survive moving
+  between them.
+
+See [docs/remote-access.md](./docs/remote-access.md).
 
 ### Contexts (multiple servers)
 
@@ -842,6 +869,14 @@ with its options, and `pmox mount autostart on` does that for you at login
 and every five minutes (a launchd agent on macOS, a systemd user timer on
 Linux). `pmox remount <vm>:<path> --exclude=…` restarts a mount with
 changed options.
+
+### pmox can't reach the cluster away from home
+
+Without Tailscale or NetBird, pmox only reaches the cluster from the
+home LAN. `pmox doctor` names the cause (no route, or a network with the
+same addresses as home);
+[docs/remote-access.md](./docs/remote-access.md#10-troubleshooting) has
+the fixes.
 
 ### Hook exited non-zero but `pmox launch` exited 0
 

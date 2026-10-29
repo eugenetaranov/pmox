@@ -12,9 +12,14 @@ import (
 
 // skipPrefixes are interface name prefixes that PickIPv4 filters out
 // on the first pass. They correspond to loopback, container runtimes,
-// bridge-veth pairs, CNI, libvirt, and tun/tap — none of which are
-// the VM's "real" network interface from an SSH-reachability standpoint.
-var skipPrefixes = []string{"lo", "docker", "br-", "veth", "cni", "virbr", "tun"}
+// bridge-veth pairs, CNI, libvirt, tun/tap, and overlay networks
+// (overlayPrefixes) — none of which are the VM's "real" network
+// interface from an SSH-reachability standpoint.
+var skipPrefixes = append([]string{"lo", "docker", "br-", "veth", "cni", "virbr", "tun"}, overlayPrefixes...)
+
+// overlayPrefixes name overlay network interfaces: Tailscale
+// (tailscale0) and NetBird (wt0).
+var overlayPrefixes = []string{"tailscale", "wt"}
 
 // WaitForIP polls the qemu-guest-agent's network-interfaces endpoint
 // until it reports an interface with a usable IPv4, the context is
@@ -62,45 +67,73 @@ func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, 
 }
 
 // PickIPv4 implements the D-T3 heuristic shared between launch and
-// list: skip virtual / container / loopback interfaces, exclude
-// loopback and link-local addresses, and fall back to any non-loopback
-// non-link-local IPv4 if nothing survived the prefix filter. Returns
-// the empty string when no IPv4 is usable so the caller can keep
-// polling.
+// list: skip virtual / container / overlay / loopback interfaces,
+// exclude loopback and link-local addresses, and fall back to any
+// non-loopback non-link-local IPv4 if nothing survived the prefix
+// filter. Returns the empty string when no IPv4 is usable so the caller
+// can keep polling.
 func PickIPv4(ifaces []pveclient.AgentIface) string {
-	if ip := firstUsableIPv4(ifaces, true); ip != "" {
+	if ip := firstUsableIPv4(ifaces, func(name string) bool { return !hasPrefix(name, skipPrefixes) }); ip != "" {
 		return ip
 	}
-	return firstUsableIPv4(ifaces, false)
+	return firstUsableIPv4(ifaces, func(string) bool { return true })
 }
 
-// firstUsableIPv4 scans the interface list in order and returns the
-// first IPv4 that isn't loopback or link-local. When applyPrefixFilter
-// is true, interfaces whose name starts with a skip-prefix are ignored.
-func firstUsableIPv4(ifaces []pveclient.AgentIface, applyPrefixFilter bool) string {
+// PickGuestIPv4 is PickIPv4, except that with preferOverlay it returns
+// the address on the VM's overlay interface (Tailscale, NetBird) first,
+// when there is one.
+func PickGuestIPv4(ifaces []pveclient.AgentIface, preferOverlay bool) string {
+	if preferOverlay {
+		if ip := firstUsableIPv4(ifaces, func(name string) bool { return hasPrefix(name, overlayPrefixes) }); ip != "" {
+			return ip
+		}
+	}
+	return PickIPv4(ifaces)
+}
+
+// AllIPv4 returns every usable (not loopback, not link-local) IPv4 on
+// every interface, in the guest agent's order.
+func AllIPv4(ifaces []pveclient.AgentIface) []string {
+	var out []string
 	for _, iface := range ifaces {
-		if applyPrefixFilter && hasSkipPrefix(iface.Name) {
+		out = append(out, usableIPv4s(iface)...)
+	}
+	return out
+}
+
+// firstUsableIPv4 scans the interfaces keep accepts, in order, and
+// returns the first IPv4 that isn't loopback or link-local.
+func firstUsableIPv4(ifaces []pveclient.AgentIface, keep func(name string) bool) string {
+	for _, iface := range ifaces {
+		if !keep(iface.Name) {
 			continue
 		}
-		for _, addr := range iface.IPAddresses {
-			if addr.IPAddressType != "ipv4" {
-				continue
-			}
-			parsed := net.ParseIP(addr.IPAddress)
-			if parsed == nil {
-				continue
-			}
-			if parsed.IsLoopback() || parsed.IsLinkLocalUnicast() {
-				continue
-			}
-			return parsed.String()
+		if ips := usableIPv4s(iface); len(ips) > 0 {
+			return ips[0]
 		}
 	}
 	return ""
 }
 
-func hasSkipPrefix(name string) bool {
-	for _, p := range skipPrefixes {
+// usableIPv4s are iface's IPv4 addresses that aren't loopback or
+// link-local.
+func usableIPv4s(iface pveclient.AgentIface) []string {
+	var out []string
+	for _, addr := range iface.IPAddresses {
+		if addr.IPAddressType != "ipv4" {
+			continue
+		}
+		parsed := net.ParseIP(addr.IPAddress)
+		if parsed == nil || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() {
+			continue
+		}
+		out = append(out, parsed.String())
+	}
+	return out
+}
+
+func hasPrefix(name string, prefixes []string) bool {
+	for _, p := range prefixes {
 		if strings.HasPrefix(name, p) {
 			return true
 		}

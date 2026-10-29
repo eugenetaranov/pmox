@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -108,6 +110,26 @@ type doctorDeps struct {
 	lookPath          func(string) (string, error)
 	knownHostHasEntry func(host string) (bool, error)
 	sshDial           func(ctx context.Context) error
+	// localNets are this machine's interface networks; lookupHost
+	// resolves a host name. Both may be nil (no off-LAN hints).
+	localNets  func() ([]*net.IPNet, error)
+	lookupHost func(ctx context.Context, host string) ([]string, error)
+}
+
+// localInterfaceNets is doctorDeps.localNets for real: the networks of
+// this machine's interfaces.
+func localInterfaceNets() ([]*net.IPNet, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	var out []*net.IPNet
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
@@ -163,7 +185,9 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		knownHostHasEntry: func(host string) (bool, error) {
 			return knownHostsHasEntry(host)
 		},
-		sshDial: func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
+		sshDial:    func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
+		localNets:  localInterfaceNets,
+		lookupHost: net.DefaultResolver.LookupHost,
 	}
 
 	// doctor never pins on its own (that's a mutation), but a pin that
@@ -355,9 +379,10 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	// --- Local tooling (independent of network) ---
 	doctorTooling(cl, deps)
 	doctorTack(cl, deps)
+	doctorOverlay(cl, srv, deps)
 
 	// --- API reachability + auth ---
-	authOK := doctorAPIReach(ctx, cl, client)
+	authOK := doctorAPIReach(ctx, cl, client, deps)
 
 	if authOK {
 		doctorPrivileges(ctx, cl, client, srv)
@@ -538,9 +563,74 @@ func doctorTack(cl *doctor.Checklist, deps doctorDeps) {
 	cl.Pass("tooling.tack", "tooling", "tack available; "+source+" present")
 }
 
+// unreachableHint is api.reachable's hint when the API can't be reached.
+// For a host on a private address it names the likely cause: this
+// machine is off the home LAN, or on a network that uses the same
+// addresses as it.
+func unreachableHint(ctx context.Context, apiURL string, deps doctorDeps) string {
+	const plain = "check the host is up and port 8006 is reachable (firewall?)"
+	u, err := url.Parse(apiURL)
+	if err != nil || u.Hostname() == "" {
+		return plain
+	}
+	ips := []string{u.Hostname()}
+	if net.ParseIP(u.Hostname()) == nil {
+		if deps.lookupHost == nil {
+			return plain
+		}
+		if ips, err = deps.lookupHost(ctx, u.Hostname()); err != nil {
+			return plain
+		}
+	}
+	var private net.IP
+	for _, s := range ips {
+		if ip := net.ParseIP(s); ip != nil && ip.To4() != nil && ip.IsPrivate() {
+			private = ip
+			break
+		}
+	}
+	if private == nil {
+		return plain
+	}
+	if deps.localNets != nil {
+		nets, _ := deps.localNets()
+		for _, n := range nets {
+			if n.IP.To4() != nil && !n.IP.IsLoopback() && n.Contains(private) {
+				return fmt.Sprintf("this network (%s) uses the same addresses as the Proxmox host %s: away from home, it overlaps your home LAN, so renumber the home LAN to an uncommon subnet (docs/remote-access.md); at home, %s", n, private, plain)
+			}
+		}
+	}
+	return fmt.Sprintf("%s is a private address: not on the home LAN? bring up Tailscale or NetBird with a route to it, or the node on the overlay (docs/remote-access.md); otherwise %s", private, plain)
+}
+
+// overlayNet is the CGNAT range Tailscale (and NetBird by default) hand
+// out addresses from.
+var overlayNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// doctorOverlay warns when the server connects to VMs over the overlay
+// (address: overlay) but this machine has no overlay address.
+func doctorOverlay(cl *doctor.Checklist, srv *config.Server, deps doctorDeps) {
+	if srv.AddressMode() != config.AddressOverlay || deps.localNets == nil {
+		return
+	}
+	nets, err := deps.localNets()
+	if err != nil {
+		cl.Warn("net.overlay", "network", "could not list this machine's addresses: "+err.Error(), "")
+		return
+	}
+	for _, n := range nets {
+		if overlayNet.Contains(n.IP) {
+			cl.Pass("net.overlay", "network", "overlay address "+n.IP.String()+" (address: overlay)")
+			return
+		}
+	}
+	cl.Warn("net.overlay", "network", "address: overlay is set, but this machine has no Tailscale/NetBird address (100.64.0.0/10)",
+		"bring Tailscale or NetBird up on this machine (a NetBird network on another range can ignore this)")
+}
+
 // doctorAPIReach probes GET /version, splitting reachability from auth.
 // Returns true when the API is reachable AND authenticated.
-func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client) bool {
+func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient.Client, deps doctorDeps) bool {
 	version, err := client.GetVersion(ctx)
 	switch {
 	case err == nil:
@@ -555,7 +645,7 @@ func doctorAPIReach(ctx context.Context, cl *doctor.Checklist, client *pveclient
 		cl.Fail("api.reachable", "api", "TLS verification failed: "+err.Error(), "install a trusted cert, or set insecure: true if this is a self-signed homelab cert", exitcode.ExitNetworkError)
 		return false
 	case errors.Is(err, pveclient.ErrNetwork), errors.Is(err, context.DeadlineExceeded):
-		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), "check the host is up and port 8006 is reachable (firewall?)", exitcode.From(err))
+		cl.Fail("api.reachable", "api", "cannot reach the API: "+err.Error(), unreachableHint(ctx, client.BaseURL, deps), exitcode.From(err))
 		return false
 	default:
 		cl.Fail("api.reachable", "api", "API error: "+err.Error(), "", exitcode.From(err))

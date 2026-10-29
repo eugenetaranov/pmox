@@ -94,7 +94,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 			if err != nil {
 				return
 			}
-			rows[i].IP = vmwait.PickIPv4(ifaces)
+			rows[i].IP = vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 		}(i)
 	}
 	wg.Wait()
