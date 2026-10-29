@@ -29,28 +29,29 @@ import (
 	"github.com/eugenetaranov/pmox/internal/vm"
 )
 
-// spawnDetachedSleep starts a `sleep` reparented to init (via a
+// spawnDetachedSleep starts a sleeping process reparented to init (via a
 // short-lived sh) so it is NOT a child of the test process — matching
 // how a real mount daemon is detached, so mount.Alive/Stop behave as in
-// production. Returns the sleep's PID.
+// production. Returns its PID.
 func spawnDetachedSleep(t *testing.T) int {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skipf("sh not on PATH: %v", err)
 	}
-	sleepBin, err := exec.LookPath("sleep")
-	if err != nil {
+	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skipf("sleep not on PATH: %v", err)
 	}
-	// Symlink sleep under a pmox-named path so its command line satisfies
+	// A script under a pmox-named path, so its command line satisfies
 	// mount.LooksReused's pmox-daemon check (a bare "sleep" would be
-	// treated as a recycled PID and skipped).
-	link := filepath.Join(t.TempDir(), "pmox-mount-daemon")
-	if err := os.Symlink(sleepBin, link); err != nil {
-		t.Fatalf("symlink sleep: %v", err)
+	// treated as a recycled PID and skipped). Not a symlink to sleep: a
+	// multi-call coreutils (uutils, Ubuntu 26) picks the tool from
+	// argv[0] and exits at once under another name.
+	script := filepath.Join(t.TempDir(), "pmox-mount-daemon")
+	if err := os.WriteFile(script, []byte("i=0\nwhile [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done\n"), 0o755); err != nil {
+		t.Fatalf("write daemon script: %v", err)
 	}
-	out, err := exec.Command(sh, "-c", link+" 30 >/dev/null 2>&1 & echo $!").Output()
+	out, err := exec.Command(sh, "-c", sh+" "+script+" >/dev/null 2>&1 & echo $!").Output()
 	if err != nil {
 		t.Fatalf("spawn detached sleep: %v", err)
 	}
