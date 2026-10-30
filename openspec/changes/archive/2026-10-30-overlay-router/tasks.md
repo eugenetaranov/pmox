@@ -81,7 +81,7 @@
 ## 9. Integration check
 
 - [x] 9.1 Run `task test` and `golangci-lint run --timeout=3m`. Both must pass.
-- [ ] 9.2 Manual check on p0:
+- [x] 9.2 Manual check on p0 (2026-10-30: create, status with the route approved, and `pmox list` at home and from a phone hotspot all passed on the real router, container 105. `router delete` wasn't run on the live router; the spike exercised its logout and destroy on the cluster):
   - `pmox router create --auth-key-file …` builds a working router
   - `router status` shows the route approved
   - from a phone hotspot, `pmox list` works

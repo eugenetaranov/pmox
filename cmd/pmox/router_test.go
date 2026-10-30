@@ -222,3 +222,16 @@ func TestRouterRouteGuards(t *testing.T) {
 		t.Errorf("public route: err = %v", err)
 	}
 }
+
+func TestRenderRoutesAligned(t *testing.T) {
+	var b strings.Builder
+	renderRoutes(&b, &router.TailscaleState{
+		Advertised: []string{"192.168.0.185/32", "192.168.0.71/32"},
+		Approved:   []string{"192.168.0.185/32"},
+	})
+	want := "Routes:     192.168.0.185/32  approved\n" +
+		"            192.168.0.71/32   awaiting approval in the Tailscale admin console\n"
+	if b.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", b.String(), want)
+	}
+}

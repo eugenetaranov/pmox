@@ -7,8 +7,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -333,21 +333,21 @@ func renderRoutes(w io.Writer, ts *router.TailscaleState) {
 		fmt.Fprintln(w, "Routes:     none advertised")
 		return
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	width := 0
+	for _, r := range ts.Advertised {
+		width = max(width, len(r))
+	}
 	for i, r := range ts.Advertised {
 		label := ""
 		if i == 0 {
 			label = "Routes:"
 		}
 		state := "approved"
-		for _, a := range ts.Awaiting() {
-			if a == r {
-				state = "awaiting approval in the Tailscale admin console"
-			}
+		if slices.Contains(ts.Awaiting(), r) {
+			state = "awaiting approval in the Tailscale admin console"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", label, r, state)
+		fmt.Fprintf(w, "%-12s%-*s  %s\n", label, width, r, state)
 	}
-	_ = tw.Flush()
 }
 
 func newRouterRouteCmd() *cobra.Command {

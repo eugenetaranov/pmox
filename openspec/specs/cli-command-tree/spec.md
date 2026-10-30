@@ -3,7 +3,9 @@
 ## Purpose
 How pmox's commands are grouped by noun and verb, which daily
 shortcuts stay at the top level, and how renamed commands keep working.
+
 ## Requirements
+
 ### Requirement: Noun-verb command groups
 
 pmox SHALL organize commands into singular noun groups:
@@ -17,6 +19,7 @@ pmox SHALL organize commands into singular noun groups:
 | `mount` | `create`, `list`/`ls`, `delete`/`rm` |
 | `key` | `publish`, `unpublish`, `show` |
 | `access` | `grant`, `revoke`, `list`, `sync` |
+| `router` | `create`, `login`, `status`, `delete`/`rm`, `route` (`add`, `rm`, `list`/`ls`) |
 
 `ls` and `rm` SHALL be the only verb aliases. `init`, `doctor`, `cleanup`, `version` and `completion` SHALL remain root commands. `version` SHALL keep printing the version when run alone, and SHALL have one verb, `upgrade` (see `self-upgrade`). The palette SHALL run `version` directly; `upgrade` is reached as `pmox version upgrade`.
 
@@ -43,6 +46,10 @@ pmox SHALL organize commands into singular noun groups:
 #### Scenario: Upgrade under version
 - **WHEN** a user runs `pmox version upgrade --check`
 - **THEN** pmox reports whether a newer release exists
+
+#### Scenario: Router under its noun
+- **WHEN** a user runs `pmox router status`
+- **THEN** pmox reports the overlay router (see `overlay-router`)
 
 ### Requirement: Top-level shortcuts with full parity
 
@@ -124,4 +131,3 @@ Every hint pmox prints SHALL name commands by their canonical noun-verb form. Th
 #### Scenario: Doctor remediation uses the new form
 - **WHEN** doctor reports that no template is configured
 - **THEN** its remediation suggests `pmox template create`
-
