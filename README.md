@@ -724,7 +724,7 @@ cloud-init file) before it turns into a `Permission denied (publickey)`.
   address whenever it has one, and the LAN address otherwise. That address
   is the same at home and away, so sessions and mounts survive moving
   between them.
-  - `pmox list` marks overlay addresses ` (ts)` or ` (nb)`, and
+  - `pmox list` marks overlay addresses ` (tailscale)` or ` (netbird)`, and
     `pmox vm info` shows which address pmox connects to.
   - When `shell` or `exec` starts a stopped VM, pmox waits up to 90s for
     its overlay address and connects to that.

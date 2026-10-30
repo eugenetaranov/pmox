@@ -65,7 +65,7 @@ func TestRenderTable_OverlayTag(t *testing.T) {
 		{Name: "lan1", VMID: 106, Node: "p0", Status: "running", IP: "192.168.0.50"},
 	})
 	out := buf.String()
-	for _, want := range []string{"100.104.54.92 (ts)", "100.88.4.9 (nb)"} {
+	for _, want := range []string{"100.104.54.92 (tailscale)", "100.88.4.9 (netbird)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table missing %q:\n%s", want, out)
 		}

@@ -238,11 +238,11 @@ Name/VMID resolution, the interactive VM picker, `pmox list`, `access`, the `yar
 
 ### Requirement: list marks overlay addresses
 
-When the address `pmox list` shows for a VM is on a `tailscale*` interface, the table SHALL suffix it with ` (ts)`; on a `wt*` interface, with ` (nb)`. JSON output SHALL keep the plain address in `ip` and SHALL add `"overlay": "tailscale"` or `"overlay": "netbird"`.
+When the address `pmox list` shows for a VM is on a `tailscale*` interface, the table SHALL suffix it with ` (tailscale)`; on a `wt*` interface, with ` (netbird)`. JSON output SHALL keep the plain address in `ip` and SHALL add `"overlay": "tailscale"` or `"overlay": "netbird"`.
 
 #### Scenario: Overlay VM in the table
 - **WHEN** `address: overlay` is set and `payzoff` reports `tailscale0` 100.104.54.92
-- **THEN** its IP cell SHALL read `100.104.54.92 (ts)`
+- **THEN** its IP cell SHALL read `100.104.54.92 (tailscale)`
 
 #### Scenario: LAN address unmarked
 - **WHEN** the address shown is on `ens18`

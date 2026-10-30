@@ -19,7 +19,7 @@ type Row struct {
 }
 
 // overlayTag is the IP cell's suffix for each overlay.
-var overlayTag = map[string]string{"tailscale": " (ts)", "netbird": " (nb)"}
+var overlayTag = map[string]string{"tailscale": " (tailscale)", "netbird": " (netbird)"}
 
 const (
 	nameMax = 40
@@ -32,7 +32,7 @@ const (
 // RenderTable writes a fixed five-column table (NAME VMID NODE STATUS IP)
 // to w. Column widths per design D2: NAME max 40, NODE max 20, VMID 6,
 // STATUS 8, IP 15. Blank IP cells render as "-"; an overlay address is
-// followed by " (ts)" (Tailscale) or " (nb)" (NetBird).
+// followed by " (tailscale)" or " (netbird)".
 func RenderTable(w io.Writer, rows []Row) {
 	nameW, nodeW := 4, 4
 	for _, r := range rows {
