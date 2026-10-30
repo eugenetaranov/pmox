@@ -145,6 +145,10 @@ Both commands SHALL discover the VM's IPv4 address by querying the QEMU guest ag
 - **WHEN** the guest agent reports interfaces with a usable IPv4 address
 - **THEN** the command SHALL use that IP for the SSH connection
 
+#### Scenario: Server prefers the overlay address
+- **WHEN** the server's `address` is `overlay` and the guest agent reports a `tailscale*` or `wt*` interface with a usable IPv4
+- **THEN** the command SHALL use the overlay IP for the SSH connection, and SHALL pin the VM's host key under that IP
+
 #### Scenario: Guest agent not responding on a running VM
 - **WHEN** the VM is running but the guest agent does not respond
 - **THEN** the command SHALL exit non-zero
@@ -153,3 +157,19 @@ Both commands SHALL discover the VM's IPv4 address by querying the QEMU guest ag
 #### Scenario: Guest agent returns no IPv4
 - **WHEN** the guest agent responds but no interface has a usable IPv4 address
 - **THEN** the command SHALL exit non-zero with an error about missing IP
+
+### Requirement: Auto-start waits for the overlay address
+
+When `address: overlay` is set and `shell` or `exec` starts a stopped VM, the command SHALL wait (up to 90 seconds after the VM has an IP) for the guest agent to report an IPv4 on a `tailscale*` or `wt*` interface. It SHALL then wait for SSH on that address. If none appears in time, it SHALL use the LAN address and print a note saying so.
+
+#### Scenario: VM rejoins the tailnet after boot
+- **WHEN** `address: overlay` is set, `web1` is stopped, and its `tailscale0` address appears 20 seconds after boot
+- **THEN** `pmox shell web1` SHALL connect to the `tailscale0` address
+
+#### Scenario: VM never joins
+- **WHEN** `address: overlay` is set and the started VM reports no overlay interface within the wait
+- **THEN** the command SHALL try the LAN address and print a note that the VM has no overlay address
+
+#### Scenario: lan mode unchanged
+- **WHEN** `address` is `lan` and `shell` starts a stopped VM
+- **THEN** the command SHALL wait on the LAN address only, as before

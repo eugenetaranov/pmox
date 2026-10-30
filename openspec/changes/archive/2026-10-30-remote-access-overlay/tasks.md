@@ -37,7 +37,7 @@
 ## 6. Integration check
 
 - [x] 6.1 Run `task test` and `golangci-lint run --timeout=3m`. Both must pass.
-- [ ] 6.2 Manual check with Tailscale on the PVE node and one VM (`pmox apply web1 -t tailscale`), with `address: overlay` set:
+- [x] 6.2 Manual check (2026-10-30, with `address: overlay` on p0: `tailscale ping payzoff` goes direct over the LAN; `pmox list` shows payzoff at its 100.x address with `(ts)`; `vm ssh-config` writes `HostName 100.104.54.92`; `pmox exec` connects over Tailscale; doctor passes `net.overlay`; `pmox list` from a phone hotspot works through the router) with Tailscale on the PVE node and one VM (`pmox apply web1 -t tailscale`), with `address: overlay` set:
   - At home, `tailscale ping web1` shows a direct LAN path.
   - From a phone hotspot, `pmox shell web1` and `docker --context web1 ps` work, and the MCP gateway answers.
   - Move from the hotspot back to home Wi-Fi with `pmox shell` and `pmox mount` running: the shell survives and the mount keeps syncing.

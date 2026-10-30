@@ -23,7 +23,7 @@
 ## 4. Integration check
 
 - [x] 4.1 Run `task test` and `golangci-lint run --timeout=3m`. Both must pass.
-- [ ] 4.2 Manual check:
+- [x] 4.2 Manual check (2026-10-30, with `address: overlay` on p0: payzoff was stopped and `pmox exec payzoff` started it, waited for its Tailscale address, and connected over 100.104.54.92 in 17s; `pmox list` shows `100.104.54.92 (ts)` and `vm info` shows `SSH: 100.104.54.92 (Tailscale)`; `pmox list` from a phone hotspot works through the router):
   - From a phone hotspot, with `p0` advertising `192.168.0.185/32`: `pmox list` works, and `pmox shell` on a stopped VM that has joined starts it and connects over `100.x`.
 
 ## Workflow follow-up
