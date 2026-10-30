@@ -102,7 +102,7 @@ func collectHostInfo(ctx context.Context, client *pveclient.Client, resolved *se
 		}
 		info.Nodes = append(info.Nodes, hn)
 	}
-	if res, err := client.ClusterResources(ctx, "vm"); err == nil {
+	if res, err := client.QEMUResources(ctx); err == nil {
 		for _, r := range res {
 			switch {
 			case r.IsTemplate():

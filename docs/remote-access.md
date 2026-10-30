@@ -93,23 +93,72 @@ other way round), so consider NetBird (§4).
      (`10.83.16.0/23` covers `10.83.17.0/24`) means the LAN's own, more
      specific route wins while you're home, and the overlay route wins
      away.
-2. **The Proxmox host (B).** Install it with
-   `curl -fsSL https://tailscale.com/install.sh | sh`, then pick one:
-   - **Keep the LAN URL (recommended).** Advertise just the host's own
-     address as a route:
+2. **The Proxmox host: `pmox router` (recommended).** pmox builds a small
+   router container on the node's bridge that puts the node on your
+   tailnet, without installing anything on the host itself:
+   ```
+   pmox router create --auth-key-file ~/ts.key   # or TS_AUTHKEY=…, or paste it when asked
+   pmox router status
+   ```
+   - **What it builds:** an unprivileged Ubuntu LTS container, tagged
+     `pmox-router`, that starts first on boot. It runs Tailscale in
+     userspace mode (no `/dev/net/tun`, no forwarding on the host), has no
+     SSH server, and advertises only the node's own address as a `/32`
+     (`10.83.17.2/32`).
+   - **Your pmox config is untouched:** the URL, saved secret, certificate
+     pin and host-key pin all stay as they are.
+   - **Café networks:** a `/32` is more specific than any network's `/24`,
+     so it reaches the node even on a café network that uses your home
+     subnet.
+   - **Node SSH:** pmox manages the container with `pct exec` over node
+     SSH, so it must be configured (`pmox init`).
+   - **The auth key:** pmox passes it into the container on stdin and
+     keeps no copy. Use a pre-approved, single-use, **non-ephemeral** key;
+     an ephemeral router disappears after a long outage.
+   - **Tags:** tag the key (`tag:pmox-router`) so the router's key never
+     expires. Untagged works too, but then disable key expiry for
+     `pmox-router-<node>` in the admin console.
+   - **No key:** create without one, then `pmox router login` shows a
+     login URL.
+   - **Route approval:** approve the route on the device page, or let the
+     policy do it. This approves anything inside your LAN, including
+     routes you add later:
+     ```json
+     "autoApprovers": { "routes": { "10.83.17.0/24": ["tag:pmox-router"] } }
      ```
-     echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-tailscale.conf && sysctl -p /etc/sysctl.d/99-tailscale.conf
-     tailscale up --advertise-routes=10.83.17.2/32
+   - **Policy:** if you use one, a grant like this keeps the router to
+     what pmox needs:
+     ```json
+     { "src": ["autogroup:member"], "dst": ["10.83.17.2/32"], "ip": ["tcp:8006", "tcp:22"], "via": ["tag:pmox-router"] }
      ```
-     Then approve the route in the admin console.
-     - pmox's URL, saved secret, certificate pin and host-key pin all stay
-       as they are.
-     - A `/32` is more specific than any network's `/24`, so it reaches
-       the host even on a café network that uses your home subnet.
-   - **Use its MagicDNS name.** Run `tailscale up` as a plain node (no
-     routes, no forwarding), and use `pve.<tailnet>.ts.net` as the URL.
-     pmox keys its saved secret and pins by URL, so this means running
-     `pmox init` again for the new URL.
+   - **Other machines:** `pmox router route add 10.83.17.20/32`
+     advertises a VM (or any LAN host) too, and `pmox router route rm`
+     takes it away again. Routes must be private and no wider than `/16`.
+     Removing the node's own route needs `--force`.
+   - **At home:** the `/32` also wins over your LAN, so the Mac reaches
+     the node through the router there too, directly over the LAN. If
+     the router is down while Tailscale is up on the Mac, the node is
+     unreachable even at home. Run `tailscale set --accept-routes=false`
+     until it's back. `pmox doctor` points this out.
+   - **Firewall:** `--firewall` (with `--ip` and `--gw`) turns on the
+     container's guest firewall, allowing outbound traffic only to the
+     routed hosts, Tailscale, DNS and the web. It needs the datacenter
+     firewall already on, and pmox never turns that on for you, because
+     enabling it applies the host's input rules and can lock you out.
+     Without it, the container has no listening services and updates
+     itself.
+   - **Logging:** the node sees every connection as coming from the
+     router's LAN address (Tailscale's SNAT), so its logs can't tell
+     tailnet clients apart.
+   - **Removing it:** `pmox router delete`. It logs the router out and
+     destroys the container. Then remove the `pmox-router-<node>` device
+     in the admin console, since logging out leaves it listed.
+
+   **Or by hand on the host,** if you'd rather: install Tailscale on the
+   host and either advertise its own `/32` (`tailscale up
+   --advertise-routes=10.83.17.2/32`, with `net.ipv4.ip_forward=1`), or
+   run it as a plain node and use its MagicDNS name as pmox's URL
+   (`pmox init` again for the new URL).
 3. **VMs (B).**
    - In `sudo yardo` on the VM, pick **Tailscale**, then **Tailscale
      login**, and paste an auth key.

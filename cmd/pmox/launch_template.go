@@ -31,7 +31,7 @@ func ensureLaunchTemplate(cmd *cobra.Command, client *pveclient.Client, resolved
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
 	sp := startSpin("Loading templates…")
-	all, err := client.ClusterResources(ctx, "vm")
+	all, err := client.QEMUResources(ctx)
 	sp.Stop()
 	if err != nil {
 		return fmt.Errorf("list templates: %w", err)

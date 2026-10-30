@@ -26,7 +26,7 @@ type Ref struct {
 // /cluster/resources call. A purely numeric arg is treated as a VMID;
 // anything else is matched against names.
 func Resolve(ctx context.Context, c *pveclient.Client, arg string) (*Ref, error) {
-	resources, err := c.ClusterResources(ctx, "vm")
+	resources, err := c.QEMUResources(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list cluster resources: %w", err)
 	}

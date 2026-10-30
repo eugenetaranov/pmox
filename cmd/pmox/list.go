@@ -52,7 +52,7 @@ func runListCmd(cmd *cobra.Command, f *listFlags) error {
 func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, f *listFlags) error {
 	sp := startSpin("Loading VMs…")
 	defer sp.Stop()
-	resources, err := client.ClusterResources(ctx, "vm")
+	resources, err := client.QEMUResources(ctx)
 	if err != nil {
 		return fmt.Errorf("list cluster resources: %w", err)
 	}

@@ -3,13 +3,18 @@ package pvessh
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -128,10 +133,38 @@ func (s *testServer) handleSession(t *testing.T, ch ssh.Channel, reqs <-chan *ss
 				return
 			}
 			_ = req.Reply(false, nil)
+		case "exec":
+			_ = req.Reply(true, nil)
+			s.runExec(ch, string(req.Payload[4:]))
+			return
 		default:
 			_ = req.Reply(false, nil)
 		}
 	}
+}
+
+// runExec fakes a few commands for Run's tests: "cat" echoes stdin,
+// "exit N" exits N, "both" writes to stdout and stderr, "sleep" outlasts
+// the cancellation test.
+func (s *testServer) runExec(ch ssh.Channel, command string) {
+	defer func() { _ = ch.Close() }()
+	code := 0
+	switch {
+	case command == "cat":
+		_, _ = io.Copy(ch, ch)
+	case strings.HasPrefix(command, "exit "):
+		code, _ = strconv.Atoi(strings.TrimPrefix(command, "exit "))
+		_, _ = ch.Stderr().Write([]byte("bye\n"))
+	case command == "both":
+		_, _ = ch.Write([]byte("to-stdout\n"))
+		_, _ = ch.Stderr().Write([]byte("to-stderr\n"))
+	case command == "sleep":
+		time.Sleep(3 * time.Second)
+		return
+	}
+	status := make([]byte, 4)
+	binary.BigEndian.PutUint32(status, uint32(code))
+	_, _ = ch.SendRequest("exit-status", false, status)
 }
 
 func (s *testServer) writeKnownHosts(t *testing.T) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/guestkeys"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvessh"
+	"github.com/eugenetaranov/pmox/internal/router"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/snippet"
 	"github.com/eugenetaranov/pmox/internal/sshkey"
@@ -114,6 +116,9 @@ type doctorDeps struct {
 	// resolves a host name. Both may be nil (no off-LAN hints).
 	localNets  func() ([]*net.IPNet, error)
 	lookupHost func(ctx context.Context, host string) ([]string, error)
+	// routerRun runs commands on the node for the router's Tailscale
+	// check; nil skips that part.
+	routerRun router.Runner
 }
 
 // localInterfaceNets is doctorDeps.localNets for real: the networks of
@@ -188,6 +193,16 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		sshDial:    func(ctx context.Context) error { return doctorSSHDial(ctx, resolved) },
 		localNets:  localInterfaceNets,
 		lookupHost: net.DefaultResolver.LookupHost,
+	}
+	if resolved.HasNodeSSH() {
+		deps.routerRun = func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
+			c, err := dialPvessh(ctx, resolved)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			return c.Run(ctx, command, stdin, stdout, stderr)
+		}
 	}
 
 	// doctor never pins on its own (that's a mutation), but a pin that
@@ -397,6 +412,11 @@ func executeDoctor(ctx context.Context, cl *doctor.Checklist, client *pveclient.
 	// --- Node SSH (independent of API auth) ---
 	doctorNodeSSH(ctx, cl, resolved, deps)
 
+	// --- The overlay router, when there is one ---
+	if authOK {
+		doctorRouter(ctx, cl, client, resolved, deps)
+	}
+
 	// --- VM access sharing (optional feature) ---
 	if authOK {
 		doctorAccess(ctx, cl, client, resolved, cfg)
@@ -594,13 +614,72 @@ func unreachableHint(ctx context.Context, apiURL string, deps doctorDeps) string
 	}
 	if deps.localNets != nil {
 		nets, _ := deps.localNets()
+		overlayUp := false
+		for _, n := range nets {
+			overlayUp = overlayUp || overlayNet.Contains(n.IP)
+		}
 		for _, n := range nets {
 			if n.IP.To4() != nil && !n.IP.IsLoopback() && n.Contains(private) {
+				if overlayUp {
+					// At home with Tailscale up: a router advertising the
+					// node's /32 wins over the LAN, so a router that's down
+					// takes the node with it.
+					return fmt.Sprintf("this network (%s) holds the Proxmox host %s and Tailscale is up: if a pmox router advertises %s/32 and is down, the node is unreachable even at home; run 'tailscale set --accept-routes=false' while home, then check the router (pmox router status). Away from home, this network overlaps your home LAN; otherwise %s", n, private, private, plain)
+				}
 				return fmt.Sprintf("this network (%s) uses the same addresses as the Proxmox host %s: away from home, it overlaps your home LAN, so renumber the home LAN to an uncommon subnet (docs/remote-access.md); at home, %s", n, private, plain)
 			}
 		}
 	}
 	return fmt.Sprintf("%s is a private address: not on the home LAN? bring up Tailscale or NetBird with a route to it, or the node on the overlay (docs/remote-access.md); otherwise %s", private, plain)
+}
+
+// doctorRouter checks the overlay router when the cluster has one: the
+// container runs and starts on boot, and (with node SSH) Tailscale is
+// up with the node's route approved.
+func doctorRouter(ctx context.Context, cl *doctor.Checklist, client router.API, resolved *server.Resolved, deps doctorDeps) {
+	if _, err := router.Find(ctx, client); errors.Is(err, router.ErrNotFound) {
+		return
+	} else if err != nil {
+		cl.Warn("net.router", "network", "router: "+err.Error(), "")
+		return
+	}
+	srv := resolved.Server
+	run := deps.routerRun
+	if run == nil {
+		run = func(context.Context, string, io.Reader, io.Writer, io.Writer) error {
+			return errors.New("node SSH not checked")
+		}
+	}
+	st, err := router.Report(ctx, client, run, router.StatusOptions{
+		Bridge: firstNonEmpty(srv.Bridge, "vmbr0"), APIURL: resolved.URL, Lookup: deps.lookupHost,
+	})
+	if err != nil {
+		cl.Warn("net.router", "network", "router: "+err.Error(), "pmox router status")
+		return
+	}
+	var problems []string
+	if st.State != "running" {
+		problems = append(problems, "container "+fmt.Sprint(st.VMID)+" is "+st.State)
+	}
+	if !st.OnBoot {
+		problems = append(problems, "it doesn't start on boot")
+	}
+	if ts := st.Tailscale; ts != nil {
+		if ts.Backend != "Running" {
+			problems = append(problems, "Tailscale is "+ts.Backend+" (pmox router login)")
+		}
+		if st.NodeRoute != "" && !st.RouteFresh {
+			problems = append(problems, "it doesn't advertise the node's "+st.NodeRoute)
+		}
+		for _, a := range ts.Awaiting() {
+			problems = append(problems, a+" awaits approval in the Tailscale admin console")
+		}
+	}
+	if len(problems) > 0 {
+		cl.Warn("net.router", "network", "router: "+strings.Join(problems, "; "), "pmox router status")
+		return
+	}
+	cl.Pass("net.router", "network", fmt.Sprintf("router %d running", st.VMID))
 }
 
 // overlayNet is the CGNAT range Tailscale (and NetBird by default) hand

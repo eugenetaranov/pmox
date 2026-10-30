@@ -49,7 +49,7 @@ var (
 	}
 	guestAgentFn = func(c *pveclient.Client) guestkeys.Agent { return c }
 	clusterVMsFn = func(ctx context.Context, c *pveclient.Client) ([]pveclient.Resource, error) {
-		return c.ClusterResources(ctx, "vm")
+		return c.QEMUResources(ctx)
 	}
 	syncWorkers   = 4
 	errAccessSync = errors.New("some VMs could not be updated")

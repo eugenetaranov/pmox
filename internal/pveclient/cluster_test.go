@@ -54,3 +54,24 @@ func TestClusterResources_NoFilter(t *testing.T) {
 		t.Errorf("query = %q, want empty", gotQuery)
 	}
 }
+
+func TestQEMUResources_DropsContainers(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[
+		  {"vmid":104,"name":"payzoff","type":"qemu"},
+		  {"vmid":110,"name":"pmox-router","type":"lxc"},
+		  {"vmid":9000,"name":"tmpl"}
+		]}`))
+	})
+	got, err := c.QEMUResources(context.Background())
+	if err != nil {
+		t.Fatalf("QEMUResources: %v", err)
+	}
+	var ids []int
+	for _, r := range got {
+		ids = append(ids, r.VMID)
+	}
+	if len(ids) != 2 || ids[0] != 104 || ids[1] != 9000 {
+		t.Errorf("vmids = %v, want [104 9000] (a missing type counts as qemu)", ids)
+	}
+}

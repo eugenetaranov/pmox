@@ -55,7 +55,9 @@ including required privileges, SSH mode tradeoffs, and the most
 common first-launch errors.
 
 Away from home, pmox needs an overlay network (Tailscale or NetBird) to
-reach the cluster and its VMs; [docs/remote-access.md](./docs/remote-access.md)
+reach the cluster and its VMs. `pmox router create` builds a small
+Tailscale router container on the node's bridge that puts the node's API
+and SSH on your tailnet; [docs/remote-access.md](./docs/remote-access.md)
 sets one up so it switches by itself when you're back on the LAN, and
 covers connecting your laptop's Docker and MCP clients to a VM.
 
@@ -194,6 +196,7 @@ another server and `-o json` prints it as JSON. For one VM, use `pmox vm info
 | `mount create` / `list` / `delete` | Continuous one-way rsync of a local dir to a VM, `.git` and gitignored files included (`--gitignore` leaves those out); changes on the VM are overwritten, so commit locally; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
+| `router create` / `login` / `status` / `route add`/`rm`/`list` / `delete` | A Tailscale router container that puts the node on your tailnet ([docs/remote-access.md](./docs/remote-access.md)) | `pmox router create --auth-key-file ~/ts.key` |
 | `yardo push` / `apply` / `verify` / `gitkey` | Install yardo on a VM; apply profiles across VMs (4 at a time); check them for drift; send an SSH key for git | `pmox yardo gitkey web1 ~/.ssh/deploy_key` |
 
 ### Maintenance

@@ -17,6 +17,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/doctor"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
+	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/pvetest"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/setup"
@@ -1141,5 +1142,44 @@ func TestDoctorOverlay(t *testing.T) {
 				t.Fatalf("net.overlay = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUnreachableHintRouterLockout(t *testing.T) {
+	home := &net.IPNet{IP: net.ParseIP("192.168.0.57").To4(), Mask: net.CIDRMask(24, 32)}
+	ts := &net.IPNet{IP: net.ParseIP("100.96.39.100").To4(), Mask: net.CIDRMask(32, 32)}
+	deps := doctorDeps{localNets: func() ([]*net.IPNet, error) { return []*net.IPNet{home, ts}, nil }}
+	got := unreachableHint(context.Background(), "https://192.168.0.185:8006/api2/json", deps)
+	for _, want := range []string{"tailscale set --accept-routes=false", "pmox router status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hint lacks %q: %s", want, got)
+		}
+	}
+}
+
+func TestDoctorRouter(t *testing.T) {
+	resolved := &server.Resolved{URL: "https://192.168.0.185:8006/api2/json", Server: &config.Server{Node: "p0"}}
+	node := &routerFakeNode{}
+	deps := doctorDeps{routerRun: node.run}
+
+	cl := &doctor.Checklist{}
+	doctorRouter(context.Background(), cl, &routerFakeAPI{}, resolved, deps)
+	if cl.Has("net.router") {
+		t.Error("no router, but a net.router check")
+	}
+
+	running := &routerFakeAPI{resources: []pveclient.Resource{{VMID: 110, Node: "p0", Type: "lxc", Tags: "pmox-router", Status: "running"}}}
+	cl = &doctor.Checklist{}
+	doctorRouter(context.Background(), cl, running, resolved, deps)
+	// routerStateOut advertises the node's /32 but hasn't had it approved.
+	if cl.StatusOf("net.router") != doctor.Warn {
+		t.Errorf("unapproved route: net.router = %v, want warn", cl.StatusOf("net.router"))
+	}
+
+	stopped := &routerFakeAPI{resources: []pveclient.Resource{{VMID: 110, Node: "p0", Type: "lxc", Tags: "pmox-router", Status: "stopped"}}}
+	cl = &doctor.Checklist{}
+	doctorRouter(context.Background(), cl, stopped, resolved, deps)
+	if cl.StatusOf("net.router") != doctor.Warn {
+		t.Errorf("stopped router: net.router = %v, want warn", cl.StatusOf("net.router"))
 	}
 }

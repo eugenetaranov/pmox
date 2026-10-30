@@ -135,7 +135,12 @@ func (c *Client) GetStatus(ctx context.Context, node string, vmid int) (*VMStatu
 // the map uniformly. Numbers are decoded as json.Number so large ints
 // keep their literal form (memory 1048576, not "1.048576e+06").
 func (c *Client) GetConfig(ctx context.Context, node string, vmid int) (map[string]string, error) {
-	path := fmt.Sprintf("/nodes/%s/qemu/%d/config", url.PathEscape(node), vmid)
+	return c.getConfigMap(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/config", url.PathEscape(node), vmid))
+}
+
+// getConfigMap GETs a guest config at path as a string map (see
+// GetConfig).
+func (c *Client) getConfigMap(ctx context.Context, path string) (map[string]string, error) {
 	body, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err

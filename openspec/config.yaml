@@ -34,7 +34,7 @@ context: |
       via fmt.Fprintln at call sites.
 
   Out of scope for v1 (do not propose changes for these):
-    - LXC containers
+    - LXC containers (except pmox's own router container, see overlay-router)
     - Snapshots
     - Multi-VM launch (--count)
     - pmox shell / pmox exec

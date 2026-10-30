@@ -255,7 +255,7 @@ func runYardoFleet(cmd *cobra.Command, args []string, f *fleetFlags, verify bool
 	if err != nil {
 		return err
 	}
-	resources, err := client.ClusterResources(ctx, "vm")
+	resources, err := client.QEMUResources(ctx)
 	if err != nil {
 		return fmt.Errorf("list VMs: %w", err)
 	}

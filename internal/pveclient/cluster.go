@@ -30,7 +30,13 @@ type Resource struct {
 	Tags     string `json:"tags"`
 	Uptime   int64  `json:"uptime"`   // seconds; free from the same response
 	Template int    `json:"template"` // 1 if this VM is a template
+	// Type is the guest's type: "qemu" or "lxc" (type=vm lists both).
+	Type string `json:"type"`
 }
+
+// IsQEMU reports whether the guest is a QEMU VM rather than an LXC
+// container. A missing type counts as QEMU.
+func (r Resource) IsQEMU() bool { return r.Type == "" || r.Type == "qemu" }
 
 // State returns the VM's status as a VMState.
 func (r Resource) State() VMState { return VMState(r.Status) }
@@ -75,4 +81,21 @@ func (c *Client) ClusterResources(ctx context.Context, typeFilter string) ([]Res
 		q.Set("type", typeFilter)
 	}
 	return getData[[]Resource](ctx, c, "/cluster/resources", q, "cluster resources")
+}
+
+// QEMUResources is ClusterResources("vm") without LXC containers: the
+// guests pmox's VM commands work on. VMID allocation and cleanup, which
+// must see every guest, use ClusterResources.
+func (c *Client) QEMUResources(ctx context.Context) ([]Resource, error) {
+	all, err := c.ClusterResources(ctx, "vm")
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, r := range all {
+		if r.IsQEMU() {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }

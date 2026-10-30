@@ -94,6 +94,10 @@ func FilterStorage(pools []Storage, keep func(Storage) bool) []Storage {
 type Bridge struct {
 	Iface string `json:"iface"`
 	Type  string `json:"type"`
+	// Address and CIDR are the node's own IPv4 on the bridge ("" when
+	// it has none), e.g. "192.168.0.185" and "192.168.0.185/24".
+	Address string `json:"address"`
+	CIDR    string `json:"cidr"`
 }
 
 // ListNodes fetches the list of cluster nodes.

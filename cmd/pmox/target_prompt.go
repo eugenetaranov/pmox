@@ -30,7 +30,7 @@ var targetVMsFn = targetVMs
 func targetVMs(ctx context.Context, client *pveclient.Client) ([]target.VM, error) {
 	sp := startSpin("Loading VMs…")
 	defer sp.Stop()
-	resources, err := client.ClusterResources(ctx, "vm")
+	resources, err := client.QEMUResources(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list cluster resources: %w", err)
 	}

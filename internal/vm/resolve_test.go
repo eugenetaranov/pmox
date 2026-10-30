@@ -193,3 +193,22 @@ func TestRefRequirePMOXTag(t *testing.T) {
 		t.Errorf("untagged: err = %v", err)
 	}
 }
+
+// A container shares the VMID space but isn't a VM: pmox's VM commands
+// must not resolve it (its qemu calls would fail with an API error).
+const vmAndContainerFixture = `{"data":[
+  {"vmid":104,"name":"payzoff","node":"p0","status":"running","tags":"pmox","type":"qemu"},
+  {"vmid":110,"name":"pmox-router","node":"p0","status":"running","tags":"pmox-router","type":"lxc"}
+]}`
+
+func TestResolve_IgnoresContainers(t *testing.T) {
+	c := clusterServer(t, vmAndContainerFixture)
+	for _, arg := range []string{"110", "pmox-router"} {
+		if ref, err := Resolve(context.Background(), c, arg); err == nil {
+			t.Errorf("Resolve(%q) = %+v, want not found", arg, ref)
+		}
+	}
+	if ref, err := Resolve(context.Background(), c, "104"); err != nil || ref.Name != "payzoff" {
+		t.Errorf("Resolve(104) = %+v, %v", ref, err)
+	}
+}
