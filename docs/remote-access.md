@@ -93,10 +93,23 @@ other way round), so consider NetBird (§4).
      (`10.83.16.0/23` covers `10.83.17.0/24`) means the LAN's own, more
      specific route wins while you're home, and the overlay route wins
      away.
-2. **The Proxmox host (B).** Run `curl -fsSL https://tailscale.com/install.sh | sh`,
-   then `sudo tailscale up --advertise-tags=tag:pve`.
-   - It's a plain node: no routes, no forwarding.
-   - Its MagicDNS name (`pve.<tailnet>.ts.net`) works at home and away.
+2. **The Proxmox host (B).** Install it with
+   `curl -fsSL https://tailscale.com/install.sh | sh`, then pick one:
+   - **Keep the LAN URL (recommended).** Advertise just the host's own
+     address as a route:
+     ```
+     echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-tailscale.conf && sysctl -p /etc/sysctl.d/99-tailscale.conf
+     tailscale up --advertise-routes=10.83.17.2/32
+     ```
+     Then approve the route in the admin console.
+     - pmox's URL, saved secret, certificate pin and host-key pin all stay
+       as they are.
+     - A `/32` is more specific than any network's `/24`, so it reaches
+       the host even on a café network that uses your home subnet.
+   - **Use its MagicDNS name.** Run `tailscale up` as a plain node (no
+     routes, no forwarding), and use `pve.<tailnet>.ts.net` as the URL.
+     pmox keys its saved secret and pins by URL, so this means running
+     `pmox init` again for the new URL.
 3. **VMs (B).**
    - In `sudo yardo` on the VM, pick **Tailscale**, then **Tailscale
      login**, and paste an auth key.
@@ -105,6 +118,10 @@ other way round), so consider NetBird (§4).
    - Mint the keys in the admin console as **tagged** (`tag:pmox-vm`) and
      **pre-approved**. Make them **ephemeral** for throwaway VMs, so a
      deleted VM's device goes away by itself.
+   - `pmox delete` doesn't remove a VM's device from the tailnet. A device
+     joined with an ephemeral key goes away by itself. Otherwise remove it
+     in the admin console, or the next VM with that name joins as
+     `web1-1`.
    - pmox stores no auth keys.
 4. **MagicDNS.** Turn it on, so `web1` and `pve` resolve on the laptop
    everywhere.
@@ -166,8 +183,9 @@ and `pmox shell web1`.
 
 **The Proxmox URL.**
 - Keep one URL that works at home and away:
-  - with topology A, the LAN address (`https://10.83.17.2:8006`)
-  - with topology B, the host's MagicDNS name (`https://pve.<tailnet>.ts.net:8006`)
+  - the LAN address (`https://10.83.17.2:8006`), with a subnet router (A)
+    or the host advertising its own `/32` (§3)
+  - or the host's MagicDNS name (`https://pve.<tailnet>.ts.net:8006`)
 - Don't add a second context for "away". It would be a second set of pins
   and secrets for the same cluster.
 - A pinned self-signed certificate (`insecure: true` with `tls_pin_sha256`)
@@ -189,15 +207,21 @@ otherwise:
 - `vm ssh-config`
 - `yardo apply` and `yardo verify`
 
-`pmox list` shows the same address. pmox doesn't try both addresses or
-guess where you are:
+`pmox list` shows the same address, marked ` (ts)` for Tailscale or
+` (nb)` for NetBird. `pmox vm info` names it on its `SSH:` line. pmox
+doesn't try both addresses or guess where you are:
 - If the overlay address doesn't answer, the command fails.
 - With `lan` (the default), pmox always picks the LAN address, even on a
   VM that has joined the overlay.
 
-`launch`, and the first start of a stopped VM by `shell` or `exec`, wait on
-the VM's LAN address: the VM has no overlay address yet, or hasn't brought
-it up. Run the command again and it connects to the overlay address.
+**Starting a stopped VM.** When `shell` or `exec` starts one, pmox waits
+for its LAN address, then up to 90 seconds more for its Tailscale or
+NetBird address (Tailscale comes up a few seconds after the network), and
+connects to that.
+- A VM that is logged out of Tailscale never gets one, so pmox uses its
+  LAN address, with a note.
+- `launch` always uses the LAN address: a new VM hasn't joined yet.
+  Launching from away therefore needs a route to the VM bridge (A).
 
 **Host keys.** pmox pins each VM's host key under the address it connects
 to.

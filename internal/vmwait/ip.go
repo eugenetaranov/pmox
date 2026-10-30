@@ -66,6 +66,33 @@ func WaitForIP(ctx context.Context, c *pveclient.Client, node string, vmid int, 
 	}
 }
 
+// WaitForOverlayIP polls the guest agent until the VM reports an IPv4 on
+// an overlay interface (Tailscale, NetBird), and returns it. It returns ""
+// with no error when none appears within timeout: the VM may simply not
+// be on an overlay. Errors are fatal API errors and cancellation only.
+func WaitForOverlayIP(ctx context.Context, c *pveclient.Client, node string, vmid int, timeout time.Duration, opts ...Option) (string, error) {
+	cfg := newConfig(opts)
+	deadline := time.Now().Add(timeout)
+	for {
+		ifaces, err := c.AgentNetwork(ctx, node, vmid)
+		if err != nil {
+			if pveclient.IsFatalPollError(err) {
+				return "", err
+			}
+		} else if ip := firstUsableIPv4(ifaces, func(name string) bool { return hasPrefix(name, overlayPrefixes) }); ip != "" {
+			return ip, nil
+		}
+		if time.Now().After(deadline) {
+			return "", nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(cfg.pollInterval):
+		}
+	}
+}
+
 // PickIPv4 implements the D-T3 heuristic shared between launch and
 // list: skip virtual / container / overlay / loopback interfaces,
 // exclude loopback and link-local addresses, and fall back to any
@@ -99,6 +126,27 @@ func AllIPv4(ifaces []pveclient.AgentIface) []string {
 		out = append(out, usableIPv4s(iface)...)
 	}
 	return out
+}
+
+// OverlayKind names the overlay network ip is on, from the interface
+// that has it: "tailscale" (tailscale*), "netbird" (wt*), or "" for any
+// other interface.
+func OverlayKind(ifaces []pveclient.AgentIface, ip string) string {
+	for _, iface := range ifaces {
+		for _, a := range usableIPv4s(iface) {
+			if a != ip {
+				continue
+			}
+			switch {
+			case strings.HasPrefix(iface.Name, "tailscale"):
+				return "tailscale"
+			case strings.HasPrefix(iface.Name, "wt"):
+				return "netbird"
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // firstUsableIPv4 scans the interfaces keep accepts, in order, and

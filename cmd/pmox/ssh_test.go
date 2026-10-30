@@ -527,3 +527,26 @@ func TestRemoteCommand(t *testing.T) {
 		t.Errorf("plain words quoted needlessly: %q", got)
 	}
 }
+
+func TestOverlayAfterStart(t *testing.T) {
+	orig := waitForOverlayFn
+	t.Cleanup(func() { waitForOverlayFn = orig })
+	ref := &vm.Ref{VMID: 104, Node: "p0", Name: "payzoff"}
+
+	waitForOverlayFn = func(context.Context, *pveclient.Client, string, int) (string, error) { return "100.104.54.92", nil }
+	cmd, _, _ := newTestSSHCmd()
+	ip, err := overlayAfterStart(cmd.Context(), cmd, nil, ref, "192.168.0.171", nil)
+	if err != nil || ip != "100.104.54.92" {
+		t.Fatalf("joined: ip = %q, err = %v", ip, err)
+	}
+
+	waitForOverlayFn = func(context.Context, *pveclient.Client, string, int) (string, error) { return "", nil }
+	cmd, _, errb := newTestSSHCmd()
+	ip, err = overlayAfterStart(cmd.Context(), cmd, nil, ref, "192.168.0.171", nil)
+	if err != nil || ip != "192.168.0.171" {
+		t.Fatalf("never joined: ip = %q, err = %v", ip, err)
+	}
+	if !strings.Contains(errb.String(), "no Tailscale/NetBird address") {
+		t.Errorf("missing fallback note: %q", errb.String())
+	}
+}

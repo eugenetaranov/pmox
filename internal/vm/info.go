@@ -23,6 +23,10 @@ type Info struct {
 	DiskStorage string      `json:"disk_storage,omitempty"`
 	Uptime      int64       `json:"uptime_sec,omitempty"`
 	Interfaces  []Interface `json:"interfaces,omitempty"`
+	// SSH is the address pmox connects to (under the server's address
+	// setting); SSHOverlay its overlay, "tailscale" or "netbird", if any.
+	SSH        string `json:"ssh,omitempty"`
+	SSHOverlay string `json:"ssh_overlay,omitempty"`
 }
 
 // Interface is one guest-agent reported network interface.
@@ -108,5 +112,9 @@ func RenderInfo(w io.Writer, info Info) {
 	}
 	for _, ifc := range info.Interfaces {
 		fmt.Fprintf(w, "Network:  %s %s\n", ifc.Name, strings.Join(ifc.IPs, " "))
+	}
+	if info.SSH != "" {
+		via := map[string]string{"tailscale": " (Tailscale)", "netbird": " (NetBird)"}[info.SSHOverlay]
+		fmt.Fprintf(w, "SSH:      %s%s\n", info.SSH, via)
 	}
 }

@@ -116,3 +116,28 @@ func TestInfo_JSONMode(t *testing.T) {
 		t.Errorf("interfaces = %+v", info.Interfaces)
 	}
 }
+
+func TestInfo_SSHAddressUnderOverlay(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/cluster/resources", pvetest.JSON(oneVMResources))
+	s.Handle("GET", "/status/current", pvetest.JSON(web1StatusRunning))
+	s.Handle("GET", "/qemu/104/config", pvetest.JSON(web1Config))
+	s.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(`{"data":{"result":[`+
+		`{"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.168.0.171"}]},`+
+		`{"name":"tailscale0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"100.104.54.92"}]}]}}`))
+	outputMode = "text"
+	for _, tc := range []struct {
+		overlay bool
+		want    string
+	}{{false, "SSH:      192.168.0.171\n"}, {true, "SSH:      100.104.54.92 (Tailscale)\n"}} {
+		c := s.Client()
+		c.PreferOverlay = tc.overlay
+		cmd, out, _ := newTestInfoCmd()
+		if err := executeInfo(cmd.Context(), cmd, c, "web1"); err != nil {
+			t.Fatalf("executeInfo: %v", err)
+		}
+		if !strings.Contains(out.String(), tc.want) {
+			t.Errorf("overlay=%v: want %q in\n%s", tc.overlay, tc.want, out.String())
+		}
+	}
+}

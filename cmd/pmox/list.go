@@ -95,6 +95,7 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 				return
 			}
 			rows[i].IP = vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
+			rows[i].Overlay = vmwait.OverlayKind(ifaces, rows[i].IP)
 		}(i)
 	}
 	wg.Wait()

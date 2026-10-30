@@ -13,7 +13,13 @@ type Row struct {
 	Node   string `json:"node"`
 	Status string `json:"status"`
 	IP     string `json:"ip"`
+	// Overlay is the network IP is on when it's an overlay: "tailscale"
+	// or "netbird"; empty for a LAN address.
+	Overlay string `json:"overlay,omitempty"`
 }
+
+// overlayTag is the IP cell's suffix for each overlay.
+var overlayTag = map[string]string{"tailscale": " (ts)", "netbird": " (nb)"}
 
 const (
 	nameMax = 40
@@ -25,7 +31,8 @@ const (
 
 // RenderTable writes a fixed five-column table (NAME VMID NODE STATUS IP)
 // to w. Column widths per design D2: NAME max 40, NODE max 20, VMID 6,
-// STATUS 8, IP 15. Blank IP cells render as "-".
+// STATUS 8, IP 15. Blank IP cells render as "-"; an overlay address is
+// followed by " (ts)" (Tailscale) or " (nb)" (NetBird).
 func RenderTable(w io.Writer, rows []Row) {
 	nameW, nodeW := 4, 4
 	for _, r := range rows {
@@ -46,11 +53,12 @@ func RenderTable(w io.Writer, rows []Row) {
 	header := fmt.Sprintf("%%-%ds  %%-%ds  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipCol)
 	fmt.Fprintf(w, header, "NAME", "VMID", "NODE", "STATUS", "IP")
 	for _, r := range rows {
-		ip := r.IP
+		ip := truncate(r.IP, ipCol)
 		if ip == "" {
 			ip = "-"
 		}
-		fmt.Fprintf(w, format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), truncate(ip, ipCol))
+		ip += overlayTag[r.Overlay]
+		fmt.Fprintf(w, format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), ip)
 	}
 }
 

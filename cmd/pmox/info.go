@@ -9,6 +9,7 @@ import (
 
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/vm"
+	"github.com/eugenetaranov/pmox/internal/vmwait"
 )
 
 func newInfoCmd() *cobra.Command {
@@ -67,6 +68,9 @@ func executeInfo(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 		}
 	}
 	info := vm.BuildInfo(ref, status, cfg, ifaces)
+	if info.SSH = vmwait.PickGuestIPv4(ifaces, client.PreferOverlay); info.SSH != "" {
+		info.SSHOverlay = vmwait.OverlayKind(ifaces, info.SSH)
+	}
 	sp.Stop()
 
 	if outputMode == "json" {

@@ -27,6 +27,9 @@ const (
 	sshStartTimeout = 120 * time.Second
 	sshIPTimeout    = 60 * time.Second
 	sshReadyTimeout = 30 * time.Second
+	// sshOverlayTimeout bounds the wait, after a started VM has an IP, for
+	// its overlay (Tailscale/NetBird) address under address: overlay.
+	sshOverlayTimeout = 90 * time.Second
 )
 
 type sshFlags struct {
@@ -385,6 +388,11 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 		if err != nil {
 			return "", err
 		}
+		if client.PreferOverlay {
+			if ip, err = overlayAfterStart(ctx, cmd, client, ref, ip, sp); err != nil {
+				return "", err
+			}
+		}
 
 		progress(cmd, sp, fmt.Sprintf("Waiting for SSH on %s…", ref.Name))
 		if err := vmwait.WaitForSSH(ctx, ip, sshReadyTimeout); err != nil {
@@ -400,6 +408,28 @@ func getOrStartVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Cli
 	ip := vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 	if ip == "" {
 		return "", fmt.Errorf("VM %q is running but guest agent returned no usable IPv4 address", ref.Name)
+	}
+	return ip, nil
+}
+
+// waitForOverlayFn waits for a started VM's overlay address. A seam for
+// tests.
+var waitForOverlayFn = func(ctx context.Context, client *pveclient.Client, node string, vmid int) (string, error) {
+	return vmwait.WaitForOverlayIP(ctx, client, node, vmid, sshOverlayTimeout)
+}
+
+// overlayAfterStart is the address to reach a VM pmox just started, under
+// address: overlay: its overlay address once it comes up (tailscaled
+// starts after DHCP), else lanIP with a note.
+func overlayAfterStart(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref, lanIP string, sp *tui.Spinner) (string, error) {
+	progress(cmd, sp, fmt.Sprintf("Waiting for %s's Tailscale/NetBird address…", ref.Name))
+	ip, err := waitForOverlayFn(ctx, client, ref.Node, ref.VMID)
+	if err != nil {
+		return "", err
+	}
+	if ip == "" {
+		fmt.Fprintf(sp.Writer(cmd.ErrOrStderr()), "note: %s has no Tailscale/NetBird address after %s; using its LAN address %s\n", ref.Name, sshOverlayTimeout, lanIP)
+		return lanIP, nil
 	}
 	return ip, nil
 }

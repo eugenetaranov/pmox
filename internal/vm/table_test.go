@@ -56,3 +56,21 @@ func TestRenderTable_NameCap(t *testing.T) {
 		t.Errorf("long name not truncated to 40: %q", out)
 	}
 }
+
+func TestRenderTable_OverlayTag(t *testing.T) {
+	var buf bytes.Buffer
+	RenderTable(&buf, []Row{
+		{Name: "payzoff", VMID: 104, Node: "p0", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
+		{Name: "nb1", VMID: 105, Node: "p0", Status: "running", IP: "100.88.4.9", Overlay: "netbird"},
+		{Name: "lan1", VMID: 106, Node: "p0", Status: "running", IP: "192.168.0.50"},
+	})
+	out := buf.String()
+	for _, want := range []string{"100.104.54.92 (ts)", "100.88.4.9 (nb)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "192.168.0.50 (") {
+		t.Errorf("LAN address got an overlay tag:\n%s", out)
+	}
+}

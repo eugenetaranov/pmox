@@ -252,3 +252,41 @@ func TestAllIPv4(t *testing.T) {
 		t.Errorf("AllIPv4 = %v", got)
 	}
 }
+
+func TestWaitForOverlayIP(t *testing.T) {
+	lanOnly := `{"data":{"result":[{"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.168.0.171"}]}]}}`
+	joined := `{"data":{"result":[{"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.168.0.171"}]},` +
+		`{"name":"tailscale0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"100.104.54.92"}]}]}}`
+
+	c, stop := agentNetworkServer(t, func(hit int) (int, string) {
+		if hit < 3 {
+			return 200, lanOnly
+		}
+		return 200, joined
+	})
+	defer stop()
+	ip, err := WaitForOverlayIP(context.Background(), c, "pve", 104, 10*time.Second, fastPoll)
+	if err != nil || ip != "100.104.54.92" {
+		t.Fatalf("WaitForOverlayIP = %q, %v; want 100.104.54.92", ip, err)
+	}
+
+	c2, stop2 := agentNetworkServer(t, func(int) (int, string) { return 200, lanOnly })
+	defer stop2()
+	ip, err = WaitForOverlayIP(context.Background(), c2, "pve", 104, 100*time.Millisecond, fastPoll)
+	if err != nil || ip != "" {
+		t.Fatalf("never joined: WaitForOverlayIP = %q, %v; want \"\", nil", ip, err)
+	}
+}
+
+func TestOverlayKind(t *testing.T) {
+	ifaces := []pveclient.AgentIface{
+		{Name: "ens18", IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: "192.168.0.171"}}},
+		{Name: "tailscale0", IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: "100.104.54.92"}}},
+		{Name: "wt0", IPAddresses: []pveclient.AgentIPAddr{{IPAddressType: "ipv4", IPAddress: "100.88.4.9"}}},
+	}
+	for ip, want := range map[string]string{"192.168.0.171": "", "100.104.54.92": "tailscale", "100.88.4.9": "netbird", "": ""} {
+		if got := OverlayKind(ifaces, ip); got != want {
+			t.Errorf("OverlayKind(%q) = %q, want %q", ip, got, want)
+		}
+	}
+}
