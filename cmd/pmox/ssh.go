@@ -344,6 +344,7 @@ func resolveSSHTarget(ctx context.Context, cmd *cobra.Command, client *pveclient
 	sp.Stop()
 
 	waitForLoginsFn(ctx, cmd.ErrOrStderr(), client, ref)
+	refreshGuestHostKeyFn(ctx, cmd.ErrOrStderr(), client, ref, ip)
 
 	user, key, note, err := resolveGuestIdentity(serverURL, ref.VMID, f.user, f.identity, srv)
 	if err != nil {

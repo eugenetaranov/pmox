@@ -19,9 +19,15 @@ func exitErr(code int) error {
 func stubAuthRejected(t *testing.T, rejected bool) *int {
 	t.Helper()
 	probes := 0
-	orig := sshAuthRejectedFn
-	sshAuthRejectedFn = func(context.Context, *sshTarget) bool { probes++; return rejected }
-	t.Cleanup(func() { sshAuthRejectedFn = orig })
+	orig := sshProbeFn
+	sshProbeFn = func(context.Context, *sshTarget) sshFailCause {
+		probes++
+		if rejected {
+			return failAuthRejected
+		}
+		return failOther
+	}
+	t.Cleanup(func() { sshProbeFn = orig })
 	return &probes
 }
 

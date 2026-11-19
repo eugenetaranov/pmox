@@ -25,16 +25,25 @@ type sshAuthError struct{ msg string }
 func (e *sshAuthError) Error() string { return e.msg }
 func (e *sshAuthError) ExitCode() int { return exitcode.ExitSSHAuth }
 
-// sshAuthRejectedFn reports whether the guest refuses target's key. It is
-// a seam: tests never run ssh.
-var sshAuthRejectedFn = sshAuthRejected
+// sshFailCause is what a probe says made ssh fail.
+type sshFailCause int
 
-// sshAuthRejected runs one non-interactive, publickey-only ssh probe and
-// looks for sshd's "Permission denied (publickey…)".
-func sshAuthRejected(ctx context.Context, target *sshTarget) bool {
+const (
+	failOther sshFailCause = iota
+	failAuthRejected
+	failHostKeyChanged
+)
+
+// sshProbeFn reports why ssh to target fails. It is a seam: tests never
+// run ssh.
+var sshProbeFn = sshProbe
+
+// sshProbe runs one non-interactive, publickey-only ssh probe and looks
+// for sshd's "Permission denied (publickey…)" or ssh's host key mismatch.
+func sshProbe(ctx context.Context, target *sshTarget) sshFailCause {
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
-		return false
+		return failOther
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -48,16 +57,22 @@ func sshAuthRejected(ctx context.Context, target *sshTarget) bool {
 	c := exec.CommandContext(ctx, sshPath, args...)
 	c.Stderr = &stderr
 	if c.Run() == nil {
-		return false
+		return failOther
 	}
-	return strings.Contains(stderr.String(), "Permission denied (publickey")
+	switch out := stderr.String(); {
+	case strings.Contains(out, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
+		return failHostKeyChanged
+	case strings.Contains(out, "Permission denied (publickey"):
+		return failAuthRejected
+	}
+	return failOther
 }
 
 // explainSSHFailure turns a failed ssh/scp/rsync/tack run into guidance
-// when the cause is the guest rejecting the caller's key; any other
-// error is returned unchanged. With only255 (plain ssh), only ssh's own
-// failure status triggers the check — any other status is the remote
-// command's.
+// when the cause is the guest rejecting the caller's key or a changed
+// host key; any other error is returned unchanged. With only255 (plain
+// ssh), only ssh's own failure status triggers the check — any other
+// status is the remote command's.
 func explainSSHFailure(ctx context.Context, target *sshTarget, serverURL string, err error, only255 bool) error {
 	if err == nil || target == nil {
 		return err
@@ -66,10 +81,13 @@ func explainSSHFailure(ctx context.Context, target *sshTarget, serverURL string,
 	if !errors.As(err, &ee) || (only255 && ee.ExitCode() != 255) {
 		return err
 	}
-	if !sshAuthRejectedFn(ctx, target) {
-		return err
+	switch sshProbeFn(ctx, target) {
+	case failAuthRejected:
+		return &sshAuthError{msg: authGuidance(ctx, target, serverURL)}
+	case failHostKeyChanged:
+		return &hostKeyChangedError{msg: hostKeyGuidance(target)}
 	}
-	return &sshAuthError{msg: authGuidance(ctx, target, serverURL)}
+	return err
 }
 
 // regStatus is what the registry says about the caller and this VM.
