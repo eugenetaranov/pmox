@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -85,6 +86,13 @@ Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
 		tui.SetColor(!noColor && os.Getenv("NO_COLOR") == "")
 		// Verbose/debug log lines would interleave with a redrawn spinner.
 		tui.SetSpinners(!verbose && !debug)
+	},
+	// A command that changed which VMs exist, or their state, makes the
+	// names shell completion cached stale.
+	PersistentPostRun: func(cmd *cobra.Command, _ []string) {
+		if slices.Contains(completionMutators, cmd.Name()) {
+			invalidateCompletionCache()
+		}
 	},
 	// With RunE set, cobra routes a bare 'pmox' (no positional args —
 	// any subcommand-shaped input still resolves to that subcommand and

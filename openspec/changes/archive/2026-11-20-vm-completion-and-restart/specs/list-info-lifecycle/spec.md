@@ -8,7 +8,7 @@ The CLI SHALL expose `pmox restart [name|vmid ...]`, which stops each named VM (
 #### Scenario: Restart a running VM
 - **WHEN** `pmox restart web1` is invoked against a running VM
 - **THEN** the VM is shut down, started, and pmox waits for its address
-- **AND** prints `restarted web1 (vmid=<id>, ip=<ip>)`
+- **AND** reports that `web1` stopped and then that it started, with its vmid and address
 
 #### Scenario: Hard restart
 - **WHEN** `pmox restart --hard web1` is invoked
@@ -19,7 +19,7 @@ The CLI SHALL expose `pmox restart [name|vmid ...]`, which stops each named VM (
 - **THEN** it is started and no stop call is made
 
 #### Scenario: Shutdown does not finish
-- **WHEN** the guest ignores the shutdown request until the wait budget runs out
+- **WHEN** the shutdown request fails or does not finish in time
 - **THEN** pmox exits non-zero, leaves the VM as it is, and suggests `--hard`
 
 #### Scenario: Pending change applies

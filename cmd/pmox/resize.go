@@ -216,7 +216,7 @@ func executeResizeSetting(ctx context.Context, cmd *cobra.Command, client *pvecl
 		}
 	}
 	if !restart {
-		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s applies when %s is stopped and started: pmox stop %s && pmox start %s\n", what, ref.Name, ref.Name, ref.Name)
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s applies when %s is stopped and started: pmox restart %s\n", what, ref.Name, ref.Name)
 		return nil
 	}
 	return resizeRestartFn(ctx, cmd, client, ref.Name)

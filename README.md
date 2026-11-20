@@ -40,6 +40,28 @@ your password, when the binary's directory isn't writable. It asks before
 upgrading; `--check` only reports, and `--yes` skips the question (needed
 without a terminal).
 
+### Shell completion
+
+`pmox completion zsh|bash|fish` prints the completion script:
+
+```
+# zsh (once; needs compinit in ~/.zshrc)
+pmox completion zsh > "${fpath[1]}/_pmox"
+# bash
+pmox completion bash > /etc/bash_completion.d/pmox
+# fish
+pmox completion fish > ~/.config/fish/completions/pmox.fish
+```
+
+Besides commands and flags, Tab completes the names you'd otherwise copy
+from `pmox list`: VM names (and VMIDs once you type a digit) wherever a
+command takes one, the VM part of `cp`/`sync`/`mount` targets (`web1:`),
+running mounts for `umount`, context names for `--context` and
+`pmox context use`, and templates, nodes, storages and bridges for
+`launch`'s flags. `start` offers stopped VMs and `stop` running ones.
+Completion asks the cluster at most once every ten seconds, gives up
+quietly after two, and never prompts.
+
 ## Proxmox-side setup
 
 pmox needs three things on the cluster:
@@ -152,7 +174,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `launch` | `vm launch` | `pmox launch web1` |
 | `shell` | `vm shell` | `pmox shell web1` |
 | `list`, `ls` | `vm list` | `pmox ls` |
-| `start` / `stop` | `vm start` / `vm stop` | `pmox stop web1 web2` |
+| `start` / `stop` / `restart` | `vm start` / `vm stop` / `vm restart` | `pmox stop web1 web2` |
 | `delete`, `rm` | `vm delete` | `pmox rm web1` |
 | `exec` | `vm exec` | `pmox exec web1 uname -a` |
 | `cp` / `sync` | `vm cp` / `vm sync` | `pmox sync ./src/ web1:/opt/app/` |
@@ -178,6 +200,7 @@ another server and `-o json` (short for `--output json`) prints it as JSON. For 
 | `use` | Set the default VM that `shell`, `exec` and the other everyday commands go to (`--clear` removes it) | `pmox vm use web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
 | `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox vm stop web1 web2` |
+| `restart` | Stop and start one or more VMs (a full stop and start, so pending `resize` changes apply; `--hard` powers off) | `pmox vm restart web1` |
 | `resize ram`, `cpu`, `disk` | Set memory (GiB) or cores (applied at the next stop/start; `--restart` does it now), or grow the disk (`+20` or `60` GiB) and, on a running VM, its filesystem | `pmox vm resize disk web1 +20` |
 | `delete`, `rm` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox vm delete web1` |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox vm shell web1` |

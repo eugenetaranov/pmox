@@ -171,7 +171,8 @@ func newVMCmd() *cobra.Command {
 	g := nounGroup("vm", "All VM commands", `Manage pmox VMs on the current context's cluster.
 
 The most common verbs are also available at the top level:
-pmox launch, list, start, stop, delete, shell, exec, cp, sync, apply.
+pmox launch, list, start, stop, restart, delete, shell, exec, cp, sync,
+apply.
 ('pmox info' shows the Proxmox host; 'pmox vm info <name>' a VM.)
 
 'pmox vm use <name>' sets a default VM: shell, exec and the other
@@ -188,7 +189,7 @@ everyday commands then go to it when no VM is named.`)
 	}
 	add("vm-lifecycle",
 		newLaunchCmd(), newCloneCmd(), rename(newListCmd(), "list", "ls"), newInfoCmd(), newVMUseCmd(),
-		newStartCmd(), newStopCmd(), newResizeCmd(), rename(newDeleteCmd(), "delete", "rm"),
+		newStartCmd(), newStopCmd(), newRestartCmd(), newResizeCmd(), rename(newDeleteCmd(), "delete", "rm"),
 	)
 	add("vm-access",
 		newShellCmd(), newExecCmd(), newCpCmd(), newSyncCmd(), newApplyCmd(), newSSHConfigCmd(),
@@ -250,6 +251,7 @@ func registerCommands(root *cobra.Command) {
 		shortcut(rename(newListCmd(), "list", "ls"), groupCommon, "vm list"),
 		shortcut(newStartCmd(), groupCommon, "vm start"),
 		shortcut(newStopCmd(), groupCommon, "vm stop"),
+		shortcut(newRestartCmd(), groupCommon, "vm restart"),
 		shortcut(rename(newDeleteCmd(), "delete", "rm"), groupCommon, "vm delete"),
 		shortcut(newExecCmd(), groupCommon, "vm exec"),
 		shortcut(newCpCmd(), groupCommon, "vm cp"),
@@ -282,4 +284,6 @@ func registerCommands(root *cobra.Command) {
 		deprecated(newCloneCmd(), "pmox vm clone"),
 		deprecatedConfigureCmd(),
 	)
+
+	wireCompletions(root)
 }

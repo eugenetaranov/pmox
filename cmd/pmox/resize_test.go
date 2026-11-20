@@ -74,7 +74,7 @@ func TestResizeCPURunningVM(t *testing.T) {
 	if err := executeResizeSetting(cmd.Context(), cmd, f.Client(), "web1", "cores", 4, &resizeFlags{}); err != nil {
 		t.Fatal(err)
 	}
-	if restarted != 0 || !strings.Contains(errb.String(), "pmox stop web1 && pmox start web1") || !strings.Contains(out.String(), "cores 2 → 4") {
+	if restarted != 0 || !strings.Contains(errb.String(), "pmox restart web1") || !strings.Contains(out.String(), "cores 2 → 4") {
 		t.Errorf("restarted %d; out %q; err %q", restarted, out.String(), errb.String())
 	}
 	if err := executeResizeSetting(cmd.Context(), cmd, f.Client(), "web1", "cores", 4, &resizeFlags{restart: true}); err != nil {
