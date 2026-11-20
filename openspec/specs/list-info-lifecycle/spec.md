@@ -255,3 +255,10 @@ When the address `pmox list` shows for a VM is on a `tailscale*` interface, the 
 #### Scenario: Overlay connect address
 - **WHEN** `address: overlay` is set and the VM has `ens18` 192.168.0.171 and `tailscale0` 100.104.54.92
 - **THEN** the output SHALL say pmox connects to 100.104.54.92 (Tailscale)
+
+### Requirement: list columns stay aligned
+`pmox list` SHALL size each column to its widest cell, including an overlay label such as `(tailscale)` after an address, so that every row's cells start in the same column.
+
+#### Scenario: Overlay label in the IP column
+- **WHEN** one VM shows `192.168.0.25` and another `100.104.54.92 (tailscale)`
+- **THEN** the IP column is as wide as the longer value and no row has trailing text outside a column

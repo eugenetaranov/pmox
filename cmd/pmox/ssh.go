@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,24 +121,28 @@ keys; -L forwards ports (pmox shell -L 3000 web1).`,
 func newExecCmd() *cobra.Command {
 	f := &sshFlags{}
 	cmd := &cobra.Command{
-		Use:   "exec [name|vmid] -- <command> [args...]",
+		Use:   "exec [name|vmid] [--] <command> [args...]",
 		Short: "Run a command on a VM",
 		Long: `Run a single command on a pmox-managed VM over SSH and return its
-output and exit code. The -- separator is required between the VM
-argument and the remote command.
+output and exit code.
 
-Several words after -- are the command and its exact arguments: each is
-passed through as given, quotes and all, so
-  pmox exec web1 -- sudo sed -i 's/^a.*/b/' /etc/hosts
+The first argument is the VM; everything after it is the command, so
+  pmox exec web1 uname -a
+works as typed. pmox's own flags go before the VM (pmox exec -u root
+web1 ls /root), or anywhere before a "--" separator (pmox exec web1 -A
+-- git pull).
+
+Several words are the command and its exact arguments: each is passed
+through as given, quotes and all, so
+  pmox exec web1 sudo sed -i 's/^a.*/b/' /etc/hosts
 works as typed. One quoted argument is a shell command line instead, for
 pipes, globs and ~:
-  pmox exec web1 -- 'ls ~ | wc -l'
+  pmox exec web1 'ls ~ | wc -l'
 
-The VM argument is optional: when omitted, pmox auto-selects the
-only pmox VM when one exists, or shows an interactive picker when
-there are several. On a terminal, the remote command is also
-optional and prompted for when omitted; non-interactively it must be
-given after "--".
+To leave the VM out, start with "--" (pmox exec -- uname -a): pmox
+auto-selects the only pmox VM when one exists, or shows an interactive
+picker when there are several. On a terminal, the remote command is
+also optional and prompted for when omitted.
 
 If the VM is stopped, exec auto-starts it and waits for SSH
 readiness before running the command.
@@ -149,6 +154,9 @@ The default login user is "pmox". Override with --user / --identity.`,
 			return runExec(cmd, args, f)
 		},
 	}
+	// Stop at the first positional (the VM): what follows is the remote
+	// command, flags and all. See splitExecArgs.
+	cmd.Flags().SetInterspersed(false)
 	addSSHFlags(cmd, f)
 	addForwardFlags(cmd, f, false)
 	return cmd
@@ -248,6 +256,9 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 
 	target, err := resolveSSHTarget(ctx, cmd, client, vmArg, f, resolved.URL, srv)
 	if err != nil {
+		if cmd.ArgsLenAtDash() < 0 && len(vmArgs) == 1 {
+			err = execVMHint(err, args)
+		}
 		return err
 	}
 
@@ -257,21 +268,45 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	return explainSSHFailure(ctx, target, resolved.URL, runRemote(sshPath, sshArgs), true)
 }
 
-// splitExecArgs splits exec's positionals at the literal "--": at most
-// one VM argument before it, and the remote command after. On a
-// terminal, an omitted command is prompted for instead of erroring;
-// non-interactively it is still required after "--".
+// execVMHint explains a not-found VM when exec was given no "--":
+// in 'pmox exec uname -a' the first word was taken for the VM.
+func execVMHint(err error, args []string) error {
+	if !errors.Is(err, pveclient.ErrNotFound) || slices.Contains(args, "--") {
+		return err
+	}
+	return fmt.Errorf("%w — the first argument is the VM; to run this on the default or only VM: pmox exec -- %s", err, strings.Join(args, " "))
+}
+
+// splitExecArgs splits exec's arguments into at most one VM argument and
+// the remote command. exec stops flag parsing at the first positional,
+// so 'exec web1 uname -a' passes "-a" through. Three shapes:
+//
+//	exec [flags] -- cmd...           no VM (picker), cmd after "--"
+//	exec [flags] vm [flags] -- cmd   flags between the VM and "--" are pmox's
+//	exec [flags] vm cmd...           everything after the VM is the command
+//
+// On a terminal, an omitted command is prompted for instead of erroring;
+// non-interactively it is required.
 func splitExecArgs(cmd *cobra.Command, args []string) (vmArgs, remoteArgs []string, err error) {
-	n := cmd.ArgsLenAtDash()
-	if n >= 0 {
-		vmArgs = args[:n]
-		remoteArgs = args[n:]
-	} else {
-		vmArgs = args
+	switch n := cmd.ArgsLenAtDash(); {
+	case n >= 0:
+		vmArgs, remoteArgs = args[:n], args[n:]
+	case len(args) > 0:
+		vmArgs, remoteArgs = args[:1], args[1:]
+		// "vm -flag... -- cmd": pmox flags given after the VM.
+		if d := slices.Index(remoteArgs, "--"); d >= 0 && (d == 0 || strings.HasPrefix(remoteArgs[0], "-")) {
+			if err := cmd.Flags().Parse(remoteArgs[:d]); err != nil {
+				return nil, nil, fmt.Errorf("%w: %w", exitcode.ErrUserInput, err)
+			}
+			if extra := cmd.Flags().Args(); len(extra) > 0 {
+				return nil, nil, fmt.Errorf("%w: unexpected %q before `--`; exec takes one VM, then flags, then `--` and the command", exitcode.ErrUserInput, extra[0])
+			}
+			remoteArgs = remoteArgs[d+1:]
+		}
 	}
 	if len(remoteArgs) == 0 {
 		if !tui.Interactive() || outputMode == "json" {
-			return nil, nil, fmt.Errorf("no command specified; use: pmox exec [name|vmid] -- <command> [args...]")
+			return nil, nil, fmt.Errorf("no command specified; use: pmox exec [name|vmid] <command> [args...]")
 		}
 		line, err := promptRequired(newStdPrompter(cmd.Context()), "Command to run: ", "a command is required")
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +41,19 @@ type cleanupItem struct {
 	Detail   string `json:"detail"`
 	// Error is set (JSON output only) when --apply failed to remove it.
 	Error string `json:"error,omitempty"`
+	// Count is how many things the item removes when that is more than
+	// one (the known_hosts item prunes every stale pin at once).
+	Count int `json:"count,omitempty"`
 	apply func() error
+}
+
+// countItems is how many things items remove in all.
+func countItems(items []cleanupItem) int {
+	n := 0
+	for _, it := range items {
+		n += max(it.Count, 1)
+	}
+	return n
 }
 
 func newCleanupCmd() *cobra.Command {
@@ -55,53 +68,8 @@ func newCleanupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cleanup",
 		Short: "Remove pmox leftovers",
-		Long: `Reclaim cruft pmox can leave behind, in selectable categories:
-
-  snippet       cloud-init snippets on the cluster whose VM is gone
-  mount-record  dead mount records in the local state dir
-  log           orphaned mount logs
-  cloud-init    ~/.config/pmox/cloud-init/<slug>.yaml for removed servers
-  tack-profile  remembered tack profiles for servers/VMs that are gone
-  secret        file-backend secrets.yaml entries for removed servers
-  known-host    guest known_hosts pins for IPs no longer on a pmox VM
-  ssh-key       the pmox-generated bootstrap SSH key, if no server uses it
-  api-token     server-side "pmox*" API tokens not used by any config entry
-  template      pmox-generated templates (DESTRUCTIVE — deletes VMs)
-  vm            pmox-tagged VMs abandoned mid-launch (DESTRUCTIVE — deletes VMs)
-  context       configured server contexts (DESTRUCTIVE — like 'pmox context delete')
-  tack-config   the whole ~/.config/pmox/tack/ dir, playbooks and roles (DESTRUCTIVE)
-
-Dry-run by default. On a terminal it shows a checklist of every
-category above — not just ones with something found: an empty one is
-listed dimmed as "clean" instead of disappearing, so the
-list stays a complete map of what cleanup checks. A populated
-category shows its count and is pre-checked, except the four
-destructive ones, which start unchecked regardless. Then it asks
-"Remove N item(s) now? [y/N]" — say y to delete right there, no need
-to re-run with --apply. Pass --apply to skip that prompt and delete
-unconditionally (for scripts/CI; also skips the checklist
-non-interactively). Non-interactively, use --only / --skip; add
---include <cats> (comma-separated) to enable specific destructive
-categories — --include-templates / --include-vms remain as shorthand
-for --include template / --include vm. Every VM outside the template
-and vm categories is never touched by cleanup (use 'pmox delete').
-
-The vm category flags pmox-tagged VMs missing the "pmox-ready" tag
-(set once a launch/clone completes, right before any post-create
-hook) — either abandoned mid-launch by an earlier failure, or (rarely)
-a launch/clone still running right now. Review the listed VMs before
-removing.
-
-context and tack-config are not leftover cruft — they remove active
-configuration (a configured server, or your hand-edited tack
-playbooks/roles) rather than orphaned artifacts. They exist here so a
-full teardown doesn't need a separate command per piece, but they get
-the same opt-in, review-before-removing treatment as template/vm.
-
-Note: orphaned OS-keychain secrets cannot be enumerated by the OS and so
-are not covered here; they are cleared at removal time by
-'pmox context delete' / 'pmox context delete'.`,
-		Args: cobra.NoArgs,
+		Long:  cleanupLong(),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCleanup(cmd, cleanupOpts{
 				apply: apply, only: only, skip: skip,
@@ -114,8 +82,50 @@ are not covered here; they are cleared at removal time by
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
 	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
 	cmd.Flags().BoolVar(&includeVMs, "include-vms", false, "include the destructive 'vm' category (deletes VMs abandoned mid-launch)")
-	cmd.Flags().StringSliceVar(&include, "include", nil, "include these opt-in destructive categories (comma-separated: template, vm, context, tack-config)")
+	cmd.Flags().StringSliceVar(&include, "include", nil, "include these opt-in categories (comma-separated: "+strings.Join(optInCategoryKeys(), ", ")+")")
 	return cmd
+}
+
+// cleanupLong is cleanup's --help text; the category list comes from
+// cleanupCategories so the two can't drift apart.
+func cleanupLong() string {
+	var b strings.Builder
+	b.WriteString("Reclaim cruft pmox can leave behind, in selectable categories:\n\n")
+	for _, c := range cleanupCategories {
+		optIn := ""
+		if c.destructive {
+			optIn = " [opt-in]"
+		}
+		fmt.Fprintf(&b, "  %-13s %s%s\n", c.key, c.desc, optIn)
+	}
+	b.WriteString(`
+Dry-run by default. On a terminal it shows a checklist of every
+category above — not just ones with something found: an empty one is
+listed dimmed as "clean" instead of disappearing, so the list stays a
+complete map of what cleanup checks. A populated category shows its
+count and is pre-checked, except the opt-in ones, which start
+unchecked. Then it asks "Remove N item(s) now? [y/N]" — say y to delete
+right there. Pass --apply to skip that prompt and delete
+unconditionally (for scripts/CI). Non-interactively, use --only /
+--skip; add --include <cats> (comma-separated) to enable opt-in
+categories — --include-templates / --include-vms are shorthand for
+--include template / --include vm. VMs outside the template and vm
+categories are never touched by cleanup (use 'pmox delete').
+
+The vm category flags pmox-tagged VMs missing the "pmox-ready" tag
+(set once a launch/clone completes, right before any post-create
+hook) — either abandoned mid-launch by an earlier failure, or (rarely)
+a launch/clone still running right now. Review the listed VMs before
+removing.
+
+api-token is opt-in because a token missing from this machine's config
+may be the one another workstation or person uses. context and
+tack-config remove active configuration, not leftovers; they are here
+so a full teardown doesn't need a separate command per piece.
+
+Orphaned OS-keychain secrets cannot be enumerated and so are not
+covered here; 'pmox context delete' clears them at removal time.`)
+	return b.String()
 }
 
 type cleanupOpts struct {
@@ -143,32 +153,44 @@ func (o cleanupOpts) hasSelectionFlags() bool {
 type cleanupCategory struct {
 	key         string
 	title       string
-	destructive bool
+	destructive bool   // opt-in: never selected by default
+	desc        string // one line for --help
 }
 
 // cleanupCategories is the display/order list of all categories.
 var cleanupCategories = []cleanupCategory{
-	{"snippet", "Orphaned snippets", false},
-	{"template", "pmox templates (DESTRUCTIVE)", true},
-	{"vm", "VMs abandoned mid-launch (DESTRUCTIVE)", true},
-	{"mount-record", "Dead mount records", false},
-	{"log", "Orphaned logs", false},
-	{"cloud-init", "Orphaned cloud-init files", false},
-	{"tack-profile", "Stale tack profiles", false},
-	{"vm-identity", "Stale VM identity records", false},
-	{"secret", "Orphaned secrets", false},
-	{"known-host", "Stale known_hosts pins", false},
-	{"ssh-key", "Orphaned pmox SSH bootstrap key", false},
-	{"api-token", "Orphaned pmox API tokens", false},
-	{"access-grant", "Access grants for deleted VMs", false},
-	{"access-key", "Published keys nobody is granted (DESTRUCTIVE)", true},
-	{"context", "Configured server contexts (DESTRUCTIVE)", true},
-	{"tack-config", "~/.config/pmox/tack (playbooks + roles) (DESTRUCTIVE)", true},
+	{"snippet", "Orphaned snippets", false, "cloud-init snippets on the cluster whose VM is gone"},
+	{"template", "pmox templates (DESTRUCTIVE)", true, "pmox-generated templates (deletes VMs)"},
+	{"vm", "VMs abandoned mid-launch (DESTRUCTIVE)", true, "pmox-tagged VMs abandoned mid-launch (deletes VMs)"},
+	{"mount-record", "Dead mount records", false, "dead mount records in the local state dir"},
+	{"log", "Orphaned logs", false, "orphaned mount logs"},
+	{"cloud-init", "Orphaned cloud-init files", false, "~/.config/pmox/cloud-init/<slug>.yaml for removed servers"},
+	{"tack-profile", "Stale tack profiles", false, "remembered tack playbooks for servers/VMs that are gone"},
+	{"vm-identity", "Stale VM identity records", false, "remembered VM identities for VMs that are gone"},
+	{"secret", "Orphaned secrets", false, "file-backend secrets.yaml entries for removed servers"},
+	{"known-host", "Stale known_hosts pins", false, "guest known_hosts pins for IPs no longer on a pmox VM"},
+	{"ssh-key", "Orphaned pmox SSH bootstrap key", false, "the pmox-generated bootstrap SSH key, if no server uses it"},
+	{"api-token", "pmox API tokens not used by this machine — another machine or person may use them (DESTRUCTIVE)", true, `server-side "pmox*" API tokens this machine's config doesn't use (another machine or person may)`},
+	{"access-grant", "Access grants for deleted VMs", false, "access grants for VMs that are gone"},
+	{"access-key", "Published keys nobody is granted (DESTRUCTIVE)", true, "published keys nobody has a grant for"},
+	{"context", "Configured server contexts (DESTRUCTIVE)", true, "configured server contexts (like 'pmox context delete')"},
+	{"tack-config", "~/.config/pmox/tack (playbooks + roles) (DESTRUCTIVE)", true, "the whole ~/.config/pmox/tack/ dir, playbooks and roles"},
 }
 
 // remoteCleanupCategories are the categories found by scanning a
 // configured Proxmox cluster (as opposed to local files).
 var remoteCleanupCategories = []string{"snippet", "template", "vm", "api-token", "access-grant", "access-key"}
+
+// optInCategoryKeys lists the opt-in (destructive) categories.
+func optInCategoryKeys() []string {
+	var out []string
+	for _, c := range cleanupCategories {
+		if c.destructive {
+			out = append(out, c.key)
+		}
+	}
+	return out
+}
 
 func categoryByKey(k string) (cleanupCategory, bool) {
 	for _, c := range cleanupCategories {
@@ -210,7 +232,7 @@ var selectCategoriesFn = tui.SelectMultiChecked
 func resolveSelection(available []string, items []cleanupItem, o cleanupOpts, interactive bool, w io.Writer) (map[string]bool, error) {
 	counts := make(map[string]int, len(cleanupCategories))
 	for _, it := range items {
-		counts[it.Category]++
+		counts[it.Category] += max(it.Count, 1)
 	}
 	toValidate := append(append([]string{}, o.only...), o.skip...)
 	toValidate = append(toValidate, o.include...)
@@ -523,7 +545,7 @@ func apiTokenItems(ctx context.Context, client *pveclient.Client, label, current
 		c, uid, name := client, userid, t.TokenID
 		items = append(items, cleanupItem{
 			Category: "api-token",
-			Detail:   fmt.Sprintf("%s: token %s!%s (not the configured token)", label, uid, name),
+			Detail:   fmt.Sprintf("%s: token %s!%s (not used by this machine; may be in use elsewhere)", label, uid, name),
 			apply:    func() error { return c.DeleteToken(ctx, uid, name) },
 		})
 	}
@@ -843,9 +865,21 @@ func staleKnownHostItems(liveIPs map[string]bool, complete bool, ew io.Writer) [
 	}
 	return []cleanupItem{{
 		Category: "known-host",
-		Detail:   fmt.Sprintf("%d stale pin(s): %s", len(staleHosts), strings.Join(staleHosts, ", ")),
+		Detail:   stalePinsDetail(staleHosts),
+		Count:    len(staleHosts),
 		apply:    func() error { return pruneKnownHosts(path, liveIPs) },
 	}}
+}
+
+// maxPinsListed caps how many stale pins the report names.
+const maxPinsListed = 10
+
+// stalePinsDetail lists the stale hosts, the first maxPinsListed by name.
+func stalePinsDetail(hosts []string) string {
+	if len(hosts) <= maxPinsListed {
+		return strings.Join(hosts, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(hosts[:maxPinsListed], ", "), len(hosts)-maxPinsListed)
 }
 
 // pruneKnownHosts rewrites the known_hosts file, dropping lines whose host
@@ -870,7 +904,7 @@ func printItemsByCategory(w io.Writer, items []cleanupItem) {
 		if len(list) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "%s (%d):\n", c.title, len(list))
+		fmt.Fprintf(w, "%s (%d):\n", c.title, countItems(list))
 		for _, it := range list {
 			fmt.Fprintf(w, "  - %s\n", it.Detail)
 		}
@@ -895,7 +929,7 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive b
 			Items   []cleanupItem `json:"items"`
 			Total   int           `json:"total"`
 			Failed  int           `json:"failed"`
-		}{Applied: apply, Items: items, Total: len(items), Failed: failed}
+		}{Applied: apply, Items: items, Total: countItems(items), Failed: failed}
 		if err := printJSON(w, out); err != nil {
 			return err
 		}
@@ -911,7 +945,7 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive b
 
 	if !apply {
 		if !interactive {
-			fmt.Fprintf(w, "\nDry run — nothing removed. Re-run with --apply to remove %d item(s).\n", len(items))
+			fmt.Fprintf(w, "\nDry run — nothing removed. Re-run with --apply to remove %d item(s).\n", countItems(items))
 			return nil
 		}
 		ok, err := confirmCleanup(cmd, items)
@@ -938,7 +972,7 @@ func reportCleanup(cmd *cobra.Command, items []cleanupItem, apply, interactive b
 	if err := removalError(len(items), failed); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "\nRemoved %d item(s).\n", len(items))
+	fmt.Fprintf(w, "\nRemoved %d item(s).\n", countItems(items))
 	return nil
 }
 
@@ -965,11 +999,24 @@ var cleanupConfirmerFn = func(cmd *cobra.Command) tui.Confirmer {
 // deletion.
 func confirmCleanup(cmd *cobra.Command, items []cleanupItem) (bool, error) {
 	verb := "Remove"
-	if hasDestructiveItem(items) {
+	switch {
+	case hasCategory(items, "template", "vm"):
 		verb = "Remove (including destructive VM deletion)"
+	case hasDestructiveItem(items):
+		verb = "Remove (including opt-in items)"
 	}
-	prompt := fmt.Sprintf("\n%s %d item(s) now? [y/N]: ", verb, len(items))
+	prompt := fmt.Sprintf("\n%s %d item(s) now? [y/N]: ", verb, countItems(items))
 	return cleanupConfirmerFn(cmd).Confirm(cmd.Context(), prompt)
+}
+
+// hasCategory reports whether items includes one of the categories keys.
+func hasCategory(items []cleanupItem, keys ...string) bool {
+	for _, it := range items {
+		if slices.Contains(keys, it.Category) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasDestructiveItem reports whether items includes an entry from a

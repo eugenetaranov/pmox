@@ -5,9 +5,25 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // pmox palette — a Claude-style warm coral accent on neutral text.
+// colorOff is set by --no-color / NO_COLOR.
+var colorOff bool
+
+// SetColor turns color and text styling on or off for everything pmox
+// draws (pickers, the palette, wizards, reports).
+func SetColor(on bool) {
+	colorOff = !on
+	if !on {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
+}
+
+// ColorEnabled reports whether color may be used.
+func ColorEnabled() bool { return !colorOff }
+
 var (
 	Accent = lipgloss.Color("#D97757") // coral
 	subtle = lipgloss.Color("#6C6C6C")

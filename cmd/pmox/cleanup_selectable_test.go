@@ -245,21 +245,21 @@ func TestResolveSelection(t *testing.T) {
 		t.Cleanup(func() { selectCategoriesFn = orig })
 
 		// "template" is declared near the start of cleanupCategories
-		// (destructive, so never pre-checked) and "api-token" (the only
+		// (destructive, so never pre-checked) and "ssh-key" (the only
 		// checked category here) is declared near the end — reproduces
 		// the exact real-world case where a populated destructive
 		// category sat ahead of the first checked one and got scrolled
 		// out of view entirely, despite the earlier "populated before
 		// empty" fix.
-		items := itemsFromCounts(map[string]int{"template": 2, "api-token": 1, "context": 1})
-		if _, err := resolveSelection([]string{"template", "api-token", "context"}, items, cleanupOpts{}, true, io.Discard); err != nil {
+		items := itemsFromCounts(map[string]int{"template": 2, "ssh-key": 1, "context": 1})
+		if _, err := resolveSelection([]string{"template", "ssh-key", "context"}, items, cleanupOpts{}, true, io.Discard); err != nil {
 			t.Fatal(err)
 		}
 		if len(gotOpts) != len(cleanupCategories) {
 			t.Fatalf("checklist has %d options, want all %d categories", len(gotOpts), len(cleanupCategories))
 		}
-		if len(gotOpts) == 0 || gotOpts[0].Value != "api-token" {
-			t.Fatalf("first option = %+v, want the only checked category (api-token) at index 0", gotOpts[0])
+		if len(gotOpts) == 0 || gotOpts[0].Value != "ssh-key" {
+			t.Fatalf("first option = %+v, want the only checked category (ssh-key) at index 0", gotOpts[0])
 		}
 
 		firstEmptyIdx := -1

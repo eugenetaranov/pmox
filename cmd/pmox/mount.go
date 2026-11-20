@@ -243,14 +243,21 @@ func newMountListCmd() *cobra.Command {
 			}
 			tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 			fmt.Fprintln(tw, "VM\tREMOTE\tLOCAL\tPID\tSTATE")
+			stale := false
 			for _, r := range rows {
 				state := "running"
 				if !r.Running {
-					state = "stale ('pmox remount --stale' restarts it; 'pmox mount delete' clears it)"
+					state, stale = "stale", true
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", r.VM, r.RemotePath, r.LocalPath, r.PID, state)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			if stale {
+				fmt.Fprintln(w, "\nA stale mount's process isn't running: 'pmox mount restart --stale' restarts it, 'pmox mount delete' clears it.")
+			}
+			return nil
 		},
 	}
 }
@@ -893,10 +900,11 @@ func umountByRemote(cmd *cobra.Command, vmName, remotePath string) error {
 
 const colorGreen = "\033[32m"
 
-// colorize wraps s in an ANSI color escape when stderr is a TTY.
+// colorize wraps s in an ANSI color escape when stderr is a TTY and
+// color is on.
 // Non-TTY output stays plain so scripts and log files see clean text.
 func colorize(s, color string) string {
-	if !tui.StderrIsTerminal() {
+	if !tui.StderrIsTerminal() || !tui.ColorEnabled() {
 		return s
 	}
 	return color + s + "\033[0m"

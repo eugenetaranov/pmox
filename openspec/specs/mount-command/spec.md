@@ -5,7 +5,9 @@ local directory and streams changes to the VM over rsync/SSH;
 `pmox umount` stops daemonized mounts. Both commands support an
 optional VM prefix so a single-VM workspace does not have to name
 the target on every invocation.
+
 ## Requirements
+
 ### Requirement: `pmox mount` command
 
 The CLI SHALL expose `pmox mount <local_path> [<name|vmid>:]<remote_path>` which watches a local directory for filesystem changes and continuously synchronizes them to a pmox-managed VM using `rsync` over SSH. The source SHALL always be a local directory. The destination SHALL accept both `<name|vmid>:<remote_path>` (explicit form) and a bare `<remote_path>` (picker form).
@@ -268,3 +270,14 @@ The `pmox umount --help` output SHALL document that calling `pmox umount` with n
 - **WHEN** `pmox umount web1:/opt/app` is invoked and the PID file references a dead process
 - **THEN** the command SHALL remove the stale PID file and report that the mount was not running
 
+### Requirement: mount list shows a one-word state
+The STATE column of `pmox mount list` SHALL hold one word: `running` or `stale`. When any mount is stale, pmox SHALL print one line below the table naming the command that restarts stale mounts and the command that clears them. `--output json` SHALL carry the state as a field and no hint.
+
+#### Scenario: A stale mount
+- **WHEN** one mount's process is not running and a user runs `pmox mount list`
+- **THEN** its STATE cell reads `stale`
+- **AND** one hint line follows the table
+
+#### Scenario: All running
+- **WHEN** every mount is running
+- **THEN** no hint line is printed

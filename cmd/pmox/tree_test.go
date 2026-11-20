@@ -13,6 +13,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/mount"
+	"github.com/eugenetaranov/pmox/internal/tui"
 )
 
 func findPath(t *testing.T, path string) *cobra.Command {
@@ -67,6 +68,9 @@ func TestCommandTreeResolves(t *testing.T) {
 func flagSig(c *cobra.Command) []string {
 	var sig []string
 	c.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Name == "help" { // cobra adds it when a command first runs
+			return
+		}
 		sig = append(sig, f.Name+"/"+f.Shorthand+"="+f.DefValue+":"+f.Value.Type())
 	})
 	sort.Strings(sig)
@@ -118,6 +122,7 @@ func execRoot(t *testing.T, args ...string) (stdout, stderr string, err error) {
 		rootCmd.SetErr(nil)
 		rootCmd.SetArgs(nil)
 		outputMode, noInput = "text", false
+		tui.SetNoInput(false)
 	})
 	err = rootCmd.Execute()
 	return out.String(), errb.String(), err

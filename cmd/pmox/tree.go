@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/tui"
@@ -86,6 +87,49 @@ func deprecated(c *cobra.Command, replacement string) *cobra.Command {
 		c.Run = func(cmd *cobra.Command, args []string) { note(cmd); run(cmd, args) }
 	}
 	return c
+}
+
+// optValueAnnotation holds how an optional-value flag's value reads in
+// help, e.g. "[=path]".
+const optValueAnnotation = "pmox.optvalue"
+
+// optionalValue lets flag name be given without a value (it then holds
+// sentinel) and makes help show placeholder instead of the sentinel.
+func optionalValue(cmd *cobra.Command, name, sentinel, placeholder string) {
+	fl := cmd.Flags().Lookup(name)
+	fl.NoOptDefVal = sentinel
+	if fl.Annotations == nil {
+		fl.Annotations = map[string][]string{}
+	}
+	fl.Annotations[optValueAnnotation] = []string{placeholder}
+}
+
+// typedValue overrides the type name pflag prints after a flag.
+type typedValue struct {
+	pflag.Value
+	typ string
+}
+
+func (t typedValue) Type() string { return t.typ }
+
+// flagUsages is fs.FlagUsages() with optional-value flags shown as
+// "--flag [=value]": pflag would print their sentinel.
+func flagUsages(fs *pflag.FlagSet) string {
+	var restore []func()
+	fs.VisitAll(func(fl *pflag.Flag) {
+		ph := fl.Annotations[optValueAnnotation]
+		if len(ph) == 0 {
+			return
+		}
+		val, def := fl.Value, fl.NoOptDefVal
+		restore = append(restore, func() { fl.Value, fl.NoOptDefVal = val, def })
+		fl.Value, fl.NoOptDefVal = typedValue{Value: val, typ: ph[0]}, ""
+	})
+	out := fs.FlagUsages()
+	for _, r := range restore {
+		r()
+	}
+	return out
 }
 
 // errGroupHelp makes a bare noun outside a terminal exit with the
@@ -178,6 +222,12 @@ Examples:
 
 // registerCommands builds the whole tree on root.
 func registerCommands(root *cobra.Command) {
+	cobra.AddTemplateFunc("flagUsages", flagUsages)
+	tmpl := root.UsageTemplate()
+	tmpl = strings.ReplaceAll(tmpl, ".LocalFlags.FlagUsages", "flagUsages .LocalFlags")
+	tmpl = strings.ReplaceAll(tmpl, ".InheritedFlags.FlagUsages", "flagUsages .InheritedFlags")
+	root.SetUsageTemplate(tmpl)
+
 	root.AddGroup(
 		&cobra.Group{ID: groupStart, Title: "Get started:"},
 		&cobra.Group{ID: groupCommon, Title: "Common:"},

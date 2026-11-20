@@ -276,7 +276,7 @@ func renderDoctorReport(cmd *cobra.Command, report doctor.Report) error {
 	if outputMode == "json" {
 		return printJSON(cmd.OutOrStdout(), report)
 	}
-	color := !noColor && tui.StderrIsTerminal() && os.Getenv("NO_COLOR") == ""
+	color := tui.ColorEnabled() && tui.StderrIsTerminal()
 	doctor.RenderText(cmd.OutOrStdout(), report, verbose, color)
 	return nil
 }

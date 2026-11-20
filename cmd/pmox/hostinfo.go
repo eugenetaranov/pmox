@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
 	"github.com/eugenetaranov/pmox/internal/vm"
@@ -79,6 +80,11 @@ func collectHostInfo(ctx context.Context, client *pveclient.Client, resolved *se
 	if resolved.Server != nil {
 		info.Context = resolved.Server.Name
 	}
+	if info.Context == "" {
+		if cfg, err := config.Load(); err == nil {
+			info.Context = cfg.ContextName(resolved.URL)
+		}
+	}
 	v, err := client.GetVersion(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read version: %w", err)
@@ -135,11 +141,11 @@ func uptimeStr(sec int64) string {
 }
 
 func printHostInfo(w io.Writer, info *hostInfo) {
-	ctx := info.Context
-	if ctx == "" {
-		ctx = "(unnamed)"
+	if info.Context == "" {
+		fmt.Fprintf(w, "Context:  %s\n", info.URL)
+	} else {
+		fmt.Fprintf(w, "Context:  %s (%s)\n", info.Context, info.URL)
 	}
-	fmt.Fprintf(w, "Context:  %s (%s)\n", ctx, info.URL)
 	fmt.Fprintf(w, "Proxmox:  VE %s\n", info.Version)
 	for _, n := range info.Nodes {
 		if n.Status != "online" {

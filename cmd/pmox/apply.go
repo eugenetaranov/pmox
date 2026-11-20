@@ -96,7 +96,7 @@ it scaffolds the same fixed default as before.`,
 	cmd.Flags().StringVarP(&f.identity, "identity", "i", "", "path to SSH private key")
 	cmd.Flags().BoolVar(&f.initCfg, "init", false, "set up ~/.config/pmox/tack/ and exit: a starter playbook, or clone a git repo given as the argument (https://…, git@…)")
 	cmd.Flags().StringVar(&f.setDef, "default", "", "set the default playbook (by name; without a name, pick one) and exit")
-	cmd.Flags().Lookup("default").NoOptDefVal = pickDefaultSentinel
+	optionalValue(cmd, "default", pickDefaultSentinel, "[=name]")
 	cmd.Flags().BoolVar(&f.update, "update", false, "git pull the cloned playbook repo and exit")
 	return cmd
 }

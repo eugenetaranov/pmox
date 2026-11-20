@@ -175,12 +175,24 @@ func (c *Config) Contexts() []Context {
 			}
 		}
 		out = append(out, Context{
-			Name:    name,
-			URL:     u,
-			Current: c.CurrentContext != "" && (name == c.CurrentContext || u == c.CurrentContext),
+			Name: name,
+			URL:  u,
+			// A sole context is the one commands use, set or not.
+			Current: len(urls) == 1 || c.CurrentContext != "" && (name == c.CurrentContext || u == c.CurrentContext),
 		})
 	}
 	return out
+}
+
+// ContextName is the name 'pmox context list' shows for the server at
+// canonicalURL ("" when it isn't configured).
+func (c *Config) ContextName(canonicalURL string) string {
+	for _, ctx := range c.Contexts() {
+		if ctx.URL == canonicalURL {
+			return ctx.Name
+		}
+	}
+	return ""
 }
 
 // ContextByName looks up a context by its (effective) name. It also

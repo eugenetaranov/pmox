@@ -154,7 +154,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `list`, `ls` | `vm list` | `pmox ls` |
 | `start` / `stop` | `vm start` / `vm stop` | `pmox stop web1 web2` |
 | `delete`, `rm` | `vm delete` | `pmox rm web1` |
-| `exec` | `vm exec` | `pmox exec web1 -- uname -a` |
+| `exec` | `vm exec` | `pmox exec web1 uname -a` |
 | `cp` / `sync` | `vm cp` / `vm sync` | `pmox sync ./src/ web1:/opt/app/` |
 | `apply` | `vm apply` | `pmox apply web1` |
 | `mount` / `umount` | `mount create` / `mount delete` | `pmox mount ./src web1:/opt/app` |
@@ -164,7 +164,7 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 `pmox info` shows the current context's Proxmox host: its version, each
 node's status, uptime, CPU and memory use, its storage pools with free
 space, and how many VMs run there (pmox's and in all). `--context` picks
-another server and `-o json` prints it as JSON. For one VM, use `pmox vm info
+another server and `-o json` (short for `--output json`) prints it as JSON. For one VM, use `pmox vm info
 <name>`.
 
 ### `pmox vm`: VMs
@@ -180,7 +180,7 @@ another server and `-o json` prints it as JSON. For one VM, use `pmox vm info
 | `resize ram`, `cpu`, `disk` | Set memory (GiB) or cores (applied at the next stop/start; `--restart` does it now), or grow the disk (`+20` or `60` GiB) and, on a running VM, its filesystem | `pmox vm resize disk web1 +20` |
 | `delete`, `rm` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox vm delete web1` |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox vm shell web1` |
-| `exec` | Run one command on a VM over SSH | `pmox vm exec web1 -- uname -a` |
+| `exec` | Run one command on a VM over SSH (`pmox exec -- <cmd>` picks the VM) | `pmox vm exec web1 uname -a` |
 | `cp` | scp-based file copy to or from a VM | `pmox vm cp ./app.tar web1:/tmp/` |
 | `sync` | rsync-based sync to or from a VM | `pmox vm sync ./src/ web1:/opt/app/` |
 | `apply` | Run a tack playbook against a VM (reuses pmox's SSH) | `pmox vm apply web1` |
@@ -230,7 +230,7 @@ shows an **arrow-key picker** when several do:
 - `stop` and `delete` show a **multi-select** picker (space to toggle, enter to confirm) and also accept several names at once.
 - `cp` / `sync` — use a bare `:` (e.g. `pmox cp ./app.tar :/tmp/`) to pick the VM, or omit both arguments entirely and pmox asks for a direction (upload/download), then the local path and the `<vm>:<path>` target (see below).
 - `clone <new-name>` — omit the source to pick it, or omit both source and new name and pmox asks for each in turn.
-- `exec [name|vmid]` — omit the remote command after `--` and pmox asks for it.
+- `exec` — `pmox exec -- <command>` leaves the VM out; omit the remote command and pmox asks for it. With a VM named, `--` is optional: `pmox exec web1 uname -a`.
 - `mount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, give only the local directory (`pmox mount ./src`), or omit both and pmox asks for the local directory and the target.
 - `umount` — omit the argument and pmox lists the running mounts to stop (one running mount is stopped without asking).
 - `context use` — omit the name to pick a context.
@@ -349,8 +349,13 @@ scans every configured context, in selectable categories:
 - **mount-record** / **log** — dead mount records and orphaned mount logs in the local state dir;
 - **cloud-init** — `~/.config/pmox/cloud-init/<slug>.yaml` files for servers removed from your config;
 - **tack-profile** — remembered tack profiles for servers/VMs that no longer exist;
-- **secret** — file-backend `secrets.yaml` entries for removed servers (OS-keychain secrets can't be enumerated, so they're cleared at removal time by `configure --remove` instead);
+- **secret** — file-backend `secrets.yaml` entries for removed servers (OS-keychain secrets can't be enumerated, so they're cleared at removal time by `pmox context delete` instead);
+- **vm-identity** — remembered VM identities for VMs that no longer exist;
 - **known-host** — stale guest `known_hosts` pins (skipped entirely if pmox can't enumerate every running VM's IP, so a valid pin is never dropped);
+- **ssh-key** — the pmox-generated bootstrap SSH key, when no server uses it;
+- **access-grant** — access grants for VMs that no longer exist;
+- **api-token** — server-side `pmox*` API tokens this machine's config doesn't use. Another workstation or person may be using one, so it is opt-in: tick it in the checklist or pass `--include api-token`.
+- **access-key** — published keys nobody has a grant for. Opt-in (`--include access-key`): the person may simply not have been granted anything yet.
 - **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates` (or `--include template`).
 - **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include-vms` (or `--include vm`); review the listed VMs before removing.
 - **context** — a configured server context, exactly what `pmox context delete` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
@@ -360,8 +365,8 @@ On a terminal, `pmox cleanup` shows a **checklist of every category it
 checks**, not just the ones that found something — an empty one is
 listed dimmed with "clean" instead of disappearing, so the
 list stays a complete map of what cleanup covers; one with items shows
-the count and is pre-checked (unless it's one of the four destructive
-categories above, which start unchecked regardless). Then it asks
+the count and is pre-checked (unless it's one of the opt-in categories
+above, which start unchecked). Then it asks
 `Remove N item(s) now? [y/N]` — say `y` to delete right there, no need
 to re-run with `--apply`. Non-interactively, scope with `--only`/`--skip`:
 

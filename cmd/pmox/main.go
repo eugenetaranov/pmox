@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -81,6 +82,7 @@ Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
 	// pmox stays script/CI-safe and never corrupts JSON on stdout.
 	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		tui.SetNoInput(noInput || envBool("PMOX_NO_INPUT") || outputMode == "json")
+		tui.SetColor(!noColor && os.Getenv("NO_COLOR") == "")
 		// Verbose/debug log lines would interleave with a redrawn spinner.
 		tui.SetSpinners(!verbose && !debug)
 	},
@@ -123,8 +125,8 @@ latest release.`,
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable debug output with detailed information")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
-	rootCmd.PersistentFlags().StringVar(&outputMode, "output", "text", "Output format: text or json")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output (env: NO_COLOR)")
+	rootCmd.PersistentFlags().StringVarP(&outputMode, "output", "o", "text", "Output format: text or json")
 	// --server selects which configured server a command targets. Overrides
 	// PMOX_SERVER. `pmox init` ignores both the flag and the env var.
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Server context name or URL to target (overrides PMOX_SERVER)")
@@ -226,6 +228,19 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, stop
 }
 
+// errorLine is err's message for the "Error: ..." line, without the
+// category text of the sentinel it wraps ("user input error: ..."): the
+// exit code carries the category.
+func errorLine(err error) string {
+	msg := err.Error()
+	cat := exitcode.ErrUserInput.Error()
+	msg = strings.ReplaceAll(msg, cat+": ", "")
+	if rest := strings.TrimSuffix(msg, ": "+cat); rest != "" {
+		msg = rest
+	}
+	return msg
+}
+
 func main() {
 	ctx, cancel := signalContext(context.Background())
 	defer cancel()
@@ -241,7 +256,7 @@ func main() {
 		case errors.Is(err, tui.ErrAborted):
 			fmt.Fprintln(os.Stderr, "Interrupted.")
 		default:
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %s\n", errorLine(err))
 		}
 	}
 	os.Exit(exitcode.From(err))

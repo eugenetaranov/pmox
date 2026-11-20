@@ -74,3 +74,23 @@ func TestRenderTable_OverlayTag(t *testing.T) {
 		t.Errorf("LAN address got an overlay tag:\n%s", out)
 	}
 }
+
+// Every row is as long as the header: the IP column is sized to its
+// widest cell, overlay tag included.
+func TestRenderTable_OverlayTagKeepsColumnsAligned(t *testing.T) {
+	var buf bytes.Buffer
+	RenderTable(&buf, []Row{
+		{Name: "moverse", VMID: 103, Node: "p0", Status: "running", IP: "192.168.0.25"},
+		{Name: "payzoff", VMID: 104, Node: "p0", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
+		{Name: "idle", VMID: 105, Node: "p0", Status: "stopped"},
+	})
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	for _, l := range lines[1:] {
+		if len(l) != len(lines[0]) {
+			t.Errorf("row %q is %d wide, header is %d", l, len(l), len(lines[0]))
+		}
+	}
+	if want := len("100.104.54.92 (tailscale)"); !strings.HasSuffix(lines[0], "IP"+strings.Repeat(" ", want-2)) {
+		t.Errorf("IP column should be %d wide: %q", want, lines[0])
+	}
+}

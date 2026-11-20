@@ -140,7 +140,7 @@ func addHookFlags(cmd *cobra.Command, f *launchFlags) {
 	cmd.Flags().StringVar(&f.postCreate, "post-create", "", "path to a script to run after SSH is ready; receives PMOX_IP, PMOX_VMID, PMOX_NAME, PMOX_USER, PMOX_NODE env vars")
 	cmd.Flags().StringVar(&f.tack, "tack", "", "path to a tack playbook; runs 'tack run' against the new VM after SSH is ready (omit the value to use ~/.config/pmox/tack/playbook.yaml)")
 	// Allow `--tack` with no value → default config playbook.
-	cmd.Flags().Lookup("tack").NoOptDefVal = tackDefaultSentinel
+	optionalValue(cmd, "tack", tackDefaultSentinel, "[=path]")
 	cmd.Flags().StringVar(&f.ansible, "ansible", "", "path to an Ansible playbook; runs ansible-playbook against the new VM after SSH is ready")
 	cmd.Flags().BoolVar(&f.strictHooks, "strict-hooks", false, "treat hook failure as fatal (exit ExitHook) instead of a stderr warning")
 }

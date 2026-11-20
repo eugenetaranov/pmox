@@ -29,13 +29,25 @@ const (
 	ipCol   = 15
 )
 
-// RenderTable writes a fixed five-column table (NAME VMID NODE STATUS IP)
-// to w. Column widths per design D2: NAME max 40, NODE max 20, VMID 6,
-// STATUS 8, IP 15. Blank IP cells render as "-"; an overlay address is
-// followed by " (tailscale)" or " (netbird)".
+// ipCell is r's IP cell: "-" when blank, and an overlay address followed
+// by " (tailscale)" or " (netbird)".
+func ipCell(r Row) string {
+	ip := truncate(r.IP, ipCol)
+	if ip == "" {
+		ip = "-"
+	}
+	return ip + overlayTag[r.Overlay]
+}
+
+// RenderTable writes a five-column table (NAME VMID NODE STATUS IP) to w.
+// Column widths per design D2: NAME max 40, NODE max 20, VMID 6,
+// STATUS 8; IP is as wide as its widest cell, overlay tag included.
 func RenderTable(w io.Writer, rows []Row) {
-	nameW, nodeW := 4, 4
+	nameW, nodeW, ipW := 4, 4, 2
 	for _, r := range rows {
+		if n := len(ipCell(r)); n > ipW {
+			ipW = n
+		}
 		if n := len(r.Name); n > nameW {
 			nameW = n
 		}
@@ -49,16 +61,11 @@ func RenderTable(w io.Writer, rows []Row) {
 	if nodeW > nodeMax {
 		nodeW = nodeMax
 	}
-	format := fmt.Sprintf("%%-%ds  %%-%dd  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipCol)
-	header := fmt.Sprintf("%%-%ds  %%-%ds  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipCol)
+	format := fmt.Sprintf("%%-%ds  %%-%dd  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipW)
+	header := fmt.Sprintf("%%-%ds  %%-%ds  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipW)
 	fmt.Fprintf(w, header, "NAME", "VMID", "NODE", "STATUS", "IP")
 	for _, r := range rows {
-		ip := truncate(r.IP, ipCol)
-		if ip == "" {
-			ip = "-"
-		}
-		ip += overlayTag[r.Overlay]
-		fmt.Fprintf(w, format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), ip)
+		fmt.Fprintf(w, format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), ipCell(r))
 	}
 }
 
