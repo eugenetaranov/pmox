@@ -256,7 +256,8 @@ otherwise:
 - `vm ssh-config`
 - `yardo apply` and `yardo verify`
 
-`pmox list` shows the same address, marked ` ts` (Tailscale) or
+`pmox list` shows it after the LAN address
+(`192.168.0.171 / 100.104.54.92 ts`), marked ` ts` (Tailscale) or
 ` nb` (NetBird). `pmox vm info` names it on its `SSH:` line. pmox
 doesn't try both addresses or guess where you are:
 - If the overlay address doesn't answer, the command fails.

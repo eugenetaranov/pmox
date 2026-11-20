@@ -247,3 +247,22 @@ func TestListWatch_StateChangeRereadsTheAddress(t *testing.T) {
 		t.Errorf("db1 now runs and should sort before web1:\n%s", v)
 	}
 }
+
+func TestList_ShowsLANAndOverlayAddresses(t *testing.T) {
+	s := pvetest.New(t)
+	s.Handle("GET", "/cluster/resources", pvetest.JSON(`{"data":[{"vmid":104,"name":"payzoff","node":"p0","status":"running","tags":"pmox"}]}`))
+	s.Handle("GET", "/agent/network-get-interfaces", pvetest.JSON(`{"data":{"result":[
+	  {"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.168.0.171"}]},
+	  {"name":"tailscale0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"100.104.54.92"}]}]}}`))
+	for _, preferOverlay := range []bool{false, true} {
+		client := s.Client()
+		client.PreferOverlay = preferOverlay
+		cmd, out, _ := newTestListCmd()
+		if err := executeList(cmd.Context(), cmd, client, &listFlags{}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(out.String(), "  192.168.0.171 / 100.104.54.92 ts\n") {
+			t.Errorf("preferOverlay=%v:\n%s", preferOverlay, out.String())
+		}
+	}
+}

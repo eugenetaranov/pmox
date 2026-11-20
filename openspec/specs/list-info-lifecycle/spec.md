@@ -260,15 +260,19 @@ Name/VMID resolution, the interactive VM picker, `pmox list`, `access`, the `yar
 
 ### Requirement: list marks overlay addresses
 
-When the address `pmox list` shows for a VM is on a `tailscale*` interface, the table SHALL suffix it with ` ts`; on a `wt*` interface, with ` nb`. JSON output SHALL keep the plain address in `ip` and SHALL add `"overlay": "tailscale"` or `"overlay": "netbird"`.
+`pmox list` SHALL show a running VM's LAN address and, when it has one, its overlay address after it, joined by ` / `. An address on a `tailscale*` interface SHALL be suffixed with ` ts`; on a `wt*` interface, with ` nb`. A VM with only one of the two SHALL show that one alone. JSON output SHALL keep the address pmox connects to in `ip` with `"overlay": "tailscale"` or `"overlay": "netbird"` when that address is an overlay one, and SHALL add `lan_ip`, `overlay_ip` and `overlay_network` for the addresses the VM has.
 
 #### Scenario: Overlay VM in the table
-- **WHEN** `address: overlay` is set and `payzoff` reports `tailscale0` 100.104.54.92
-- **THEN** its IP cell SHALL read `100.104.54.92 ts`
+- **WHEN** `payzoff` reports `ens18` 192.168.0.171 and `tailscale0` 100.104.54.92
+- **THEN** its IP cell SHALL read `192.168.0.171 / 100.104.54.92 ts`, whatever the `address` setting
 
 #### Scenario: LAN address unmarked
-- **WHEN** the address shown is on `ens18`
+- **WHEN** the VM's only address is on `ens18`
 - **THEN** the cell SHALL show the address alone
+
+#### Scenario: Both addresses in JSON
+- **WHEN** `address: overlay` is set and `payzoff` reports both addresses
+- **THEN** its object SHALL have `ip` 100.104.54.92, `overlay` `tailscale`, `lan_ip` 192.168.0.171, `overlay_ip` 100.104.54.92 and `overlay_network` `tailscale`
 
 ### Requirement: vm info names the connect address
 

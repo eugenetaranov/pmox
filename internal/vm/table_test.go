@@ -109,11 +109,13 @@ func TestRenderTable_NameCap(t *testing.T) {
 
 func TestRenderTable_OverlayTag(t *testing.T) {
 	got := strings.Join(render([]Row{
-		{Name: "a", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
-		{Name: "b", Status: "running", IP: "100.90.1.2", Overlay: "netbird"},
-		{Name: "c", Status: "running", IP: "192.168.0.25"},
+		{Name: "a", Status: "running", IP: "100.104.54.92", Overlay: "tailscale", LANIP: "192.168.0.171", OverlayIP: "100.104.54.92", OverlayNet: "tailscale"},
+		{Name: "b", Status: "running", IP: "100.90.1.2", Overlay: "netbird", OverlayIP: "100.90.1.2", OverlayNet: "netbird"},
+		{Name: "c", Status: "running", IP: "192.168.0.25", LANIP: "192.168.0.25"},
+		{Name: "d", Status: "running", IP: "192.168.0.30", LANIP: "192.168.0.30", OverlayIP: "100.64.0.9", OverlayNet: "tailscale"},
+		{Name: "e", Status: "running", IP: "10.0.0.7"},
 	}, TableOpts{}), "\n")
-	for _, want := range []string{"100.104.54.92 ts", "100.90.1.2 nb", "192.168.0.25\n"} {
+	for _, want := range []string{"  192.168.0.171 / 100.104.54.92 ts\n", "  100.90.1.2 nb\n", "  192.168.0.25\n", "  192.168.0.30 / 100.64.0.9 ts\n", "  10.0.0.7\n"} {
 		if !strings.Contains(got+"\n", want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}

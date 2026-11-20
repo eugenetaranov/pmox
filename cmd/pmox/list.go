@@ -54,8 +54,10 @@ func newListCmd() *cobra.Command {
 first, with each one's state, CPU and memory use, disk size, uptime and
 IP; --all lists every VM. A stopped VM shows what it is allocated. A
 running VM's IP comes from its guest agent and is blank while the agent
-isn't up; an address on an overlay network is marked ts (Tailscale) or
-nb (NetBird). The default VM, if one is set, is marked with *.
+isn't up. A VM on an overlay network shows both addresses, LAN first:
+'192.168.0.171 / 100.104.54.92 ts', the overlay one marked ts
+(Tailscale) or nb (NetBird). The default VM, if one is set, is marked
+with *.
 
 On a terminal the table sits under a line per node (uptime, CPU, memory,
 largest storage pool) and above a count of what is listed; a terminal
@@ -126,7 +128,10 @@ type listSnapshot struct {
 }
 
 // listIP is a VM's address as last read, kept across --watch refreshes.
-type listIP struct{ status, ip, overlay string }
+type listIP struct {
+	status string
+	row    vm.Row
+}
 
 // loadList reads the VMs (and, with withNodes, the nodes for the host
 // line). cache, when non-nil, supplies the address of a VM whose state
@@ -170,7 +175,8 @@ func loadList(ctx context.Context, client *pveclient.Client, f *listFlags, withN
 			UptimeSec:   r.Uptime,
 		}
 		if c, ok := cache[r.VMID]; ok && c.status == r.Status {
-			row.IP, row.Overlay = c.ip, c.overlay
+			row.IP, row.Overlay = c.row.IP, c.row.Overlay
+			row.LANIP, row.OverlayIP, row.OverlayNet = c.row.LANIP, c.row.OverlayIP, c.row.OverlayNet
 		}
 		snap.rows = append(snap.rows, row)
 	}
@@ -180,7 +186,7 @@ func loadList(ctx context.Context, client *pveclient.Client, f *listFlags, withN
 		clear(cache)
 		for _, r := range snap.rows {
 			if r.IP != "" {
-				cache[r.VMID] = listIP{r.Status, r.IP, r.Overlay}
+				cache[r.VMID] = listIP{r.Status, r}
 			}
 		}
 	}
@@ -311,6 +317,13 @@ func fetchIPs(ctx context.Context, client *pveclient.Client, rows []vm.Row) {
 			}
 			rows[i].IP = vmwait.PickGuestIPv4(ifaces, client.PreferOverlay)
 			rows[i].Overlay = vmwait.OverlayKind(ifaces, rows[i].IP)
+			// Both addresses, whichever one pmox connects to.
+			if lan := vmwait.PickGuestIPv4(ifaces, false); vmwait.OverlayKind(ifaces, lan) == "" {
+				rows[i].LANIP = lan
+			}
+			if ov := vmwait.PickGuestIPv4(ifaces, true); vmwait.OverlayKind(ifaces, ov) != "" {
+				rows[i].OverlayIP, rows[i].OverlayNet = ov, vmwait.OverlayKind(ifaces, ov)
+			}
 		}(i)
 	}
 	wg.Wait()

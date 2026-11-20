@@ -20,6 +20,12 @@ type Row struct {
 	// Overlay is the network IP is on when it's an overlay: "tailscale"
 	// or "netbird"; empty for a LAN address.
 	Overlay string `json:"overlay,omitempty"`
+	// LANIP and OverlayIP are the VM's address on its LAN and on its
+	// overlay network (OverlayNet: "tailscale" or "netbird"), each empty
+	// when it has none. IP is whichever of them pmox connects to.
+	LANIP      string `json:"lan_ip,omitempty"`
+	OverlayIP  string `json:"overlay_ip,omitempty"`
+	OverlayNet string `json:"overlay_network,omitempty"`
 	// Default marks the context's default VM ('pmox vm use').
 	Default bool `json:"default,omitempty"`
 	// Usage as PVE reports it: CPUUsed is the busy fraction (0..1) of
@@ -56,9 +62,24 @@ var overlayTag = map[string]string{"tailscale": " ts", "netbird": " nb"}
 const (
 	nameMax = 40
 	nodeMax = 20
-	ipCol   = 15
 	gib     = 1 << 30
 )
+
+// ipCell is the IP cell: the LAN address, then the overlay address with
+// its marker, joined by " / " when the VM has both. Empty with no address.
+func ipCell(r Row) string {
+	var parts []string
+	if r.LANIP != "" {
+		parts = append(parts, r.LANIP)
+	}
+	if r.OverlayIP != "" {
+		parts = append(parts, r.OverlayIP+overlayTag[r.OverlayNet])
+	}
+	if len(parts) == 0 && r.IP != "" {
+		parts = append(parts, r.IP+overlayTag[r.Overlay])
+	}
+	return strings.Join(parts, " / ")
+}
 
 // SortRows orders rows running first, then by name.
 func SortRows(rows []Row) {
@@ -141,11 +162,10 @@ func columns(o TableOpts) []column {
 			return Uptime(r.UptimeSec)
 		}},
 		column{"IP", 0, func(r Row) string {
-			ip := truncate(r.IP, ipCol)
-			if ip == "" {
-				return dash
+			if ip := ipCell(r); ip != "" {
+				return ip
 			}
-			return ip + overlayTag[r.Overlay]
+			return dash
 		}},
 	)
 }
