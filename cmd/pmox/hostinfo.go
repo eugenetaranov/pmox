@@ -6,7 +6,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -85,37 +84,14 @@ type hostInfo struct {
 func collectHostInfo(ctx context.Context, client *pveclient.Client, resolved *server.Resolved) (*hostInfo, error) {
 	sp := startSpin("Reading the Proxmox host…")
 	defer sp.Stop()
-	info := &hostInfo{URL: resolved.URL}
-	if resolved.Server != nil {
-		info.Context = resolved.Server.Name
-	}
-	if info.Context == "" {
-		if cfg, err := config.Load(); err == nil {
-			info.Context = cfg.ContextName(resolved.URL)
-		}
-	}
+	info := &hostInfo{URL: resolved.URL, Context: contextLabel(resolved)}
 	v, err := client.GetVersion(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read version: %w", err)
 	}
 	info.Version = v
-	nodes, err := client.ListNodes(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list nodes: %w", err)
-	}
-	for _, n := range nodes {
-		hn := hostNode{Name: n.Node, Status: n.Status, UptimeSec: n.Uptime, Cores: n.MaxCPU, CPUUsed: n.CPU, MemBytes: n.Mem, MaxMemBytes: n.MaxMem}
-		if n.Status == "online" {
-			if pools, err := client.ListStorage(ctx, n.Node); err == nil {
-				for _, s := range pools {
-					if s.Active == 1 && s.Total > 0 {
-						hn.Storage = append(hn.Storage, hostStorage{Name: s.Storage, Type: s.Type, FreeBytes: s.Avail, SizeBytes: s.Total})
-					}
-				}
-				sort.Slice(hn.Storage, func(i, j int) bool { return hn.Storage[i].Name < hn.Storage[j].Name })
-			}
-		}
-		info.Nodes = append(info.Nodes, hn)
+	if info.Nodes, err = collectNodes(ctx, client); err != nil {
+		return nil, err
 	}
 	if res, err := client.QEMUResources(ctx); err == nil {
 		for _, r := range res {
@@ -136,18 +112,48 @@ func collectHostInfo(ctx context.Context, client *pveclient.Client, resolved *se
 	return info, nil
 }
 
+// contextLabel is the name 'pmox context list' shows for the resolved
+// server; empty when it has none.
+func contextLabel(resolved *server.Resolved) string {
+	if resolved.Server != nil && resolved.Server.Name != "" {
+		return resolved.Server.Name
+	}
+	if cfg, err := config.Load(); err == nil {
+		return cfg.ContextName(resolved.URL)
+	}
+	return ""
+}
+
+// collectNodes reads every node's status and usage, and each online
+// node's active storage pools sorted by name.
+func collectNodes(ctx context.Context, client *pveclient.Client) ([]hostNode, error) {
+	nodes, err := client.ListNodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	out := make([]hostNode, 0, len(nodes))
+	for _, n := range nodes {
+		hn := hostNode{Name: n.Node, Status: n.Status, UptimeSec: n.Uptime, Cores: n.MaxCPU, CPUUsed: n.CPU, MemBytes: n.Mem, MaxMemBytes: n.MaxMem}
+		if n.Status == "online" {
+			if pools, err := client.ListStorage(ctx, n.Node); err == nil {
+				for _, s := range pools {
+					if s.Active == 1 && s.Total > 0 {
+						hn.Storage = append(hn.Storage, hostStorage{Name: s.Storage, Type: s.Type, FreeBytes: s.Avail, SizeBytes: s.Total})
+					}
+				}
+				sort.Slice(hn.Storage, func(i, j int) bool { return hn.Storage[i].Name < hn.Storage[j].Name })
+			}
+		}
+		out = append(out, hn)
+	}
+	return out, nil
+}
+
 func gibStr(b int64) string {
 	return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%.1f", float64(b)/(1<<30)), "0"), ".")
 }
 
-func uptimeStr(sec int64) string {
-	d := time.Duration(sec) * time.Second
-	days := int(d.Hours()) / 24
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh", days, int(d.Hours())%24)
-	}
-	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
-}
+func uptimeStr(sec int64) string { return vm.Uptime(sec) }
 
 func printHostInfo(w io.Writer, info *hostInfo) {
 	if info.Context == "" {

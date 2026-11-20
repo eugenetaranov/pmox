@@ -2,95 +2,128 @@ package vm
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-func TestRenderTable_GoldenThreeRows(t *testing.T) {
-	rows := []Row{
-		{Name: "web1", VMID: 104, Node: "pve1", Status: "running", IP: "192.168.1.43"},
-		{Name: "db1", VMID: 105, Node: "pve1", Status: "stopped"},
-		{Name: "worker", VMID: 200, Node: "pve2", Status: "running", IP: "10.0.0.2"},
-	}
-	var buf bytes.Buffer
-	RenderTable(&buf, rows)
-	got := buf.String()
+var sampleRows = []Row{
+	{Name: "web1", VMID: 104, Node: "pve1", Status: "running", IP: "192.168.1.43",
+		CPUs: 4, CPUUsed: 0.04, MemBytes: 21 * gib / 10, MaxMemBytes: 8 * gib, DiskBytes: 40 * gib, UptimeSec: 3*86400 + 4*3600},
+	{Name: "db1", VMID: 105, Node: "pve1", Status: "stopped",
+		CPUs: 2, MaxMemBytes: 4 * gib, DiskBytes: 20 * gib},
+}
 
-	// Header must include the fixed column labels in order.
-	if !strings.Contains(got, "NAME") || !strings.Contains(got, "VMID") ||
-		!strings.Contains(got, "NODE") || !strings.Contains(got, "STATUS") ||
-		!strings.Contains(got, "IP") {
-		t.Errorf("header missing columns: %q", got)
+func render(rows []Row, o TableOpts) []string {
+	var buf bytes.Buffer
+	RenderTable(&buf, rows, o)
+	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+}
+
+func TestRenderTable_Piped(t *testing.T) {
+	want := []string{
+		"NAME  STATE    CPU      MEM          DISK  UP     IP",
+		"web1  running  4% of 4  2.1/8.0 GiB  40G   3d 4h  192.168.1.43",
+		"db1   stopped  - of 2   -/4.0 GiB    20G   -      -",
 	}
-	if !strings.Contains(got, "web1") || !strings.Contains(got, "192.168.1.43") {
-		t.Errorf("row 1 missing: %q", got)
+	got := render(sampleRows, TableOpts{})
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	// Stopped VM renders IP as "-".
-	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
-	var db1Line string
-	for _, l := range lines {
-		if strings.HasPrefix(l, "db1") {
-			db1Line = l
+}
+
+func TestRenderTable_Terminal(t *testing.T) {
+	rows := append([]Row{}, sampleRows...)
+	rows = append(rows, Row{Name: "odd", Status: "paused"})
+	got := render(rows, TableOpts{Terminal: true})
+	for i, want := range []string{"● running  4% of 4", "○ stopped  – of 2   –/4.0 GiB    20G   –      –", "◐ paused   –"} {
+		if !strings.Contains(got[i+1], want) {
+			t.Errorf("row %d = %q, want it to contain %q", i, got[i+1], want)
 		}
 	}
-	if db1Line == "" {
-		t.Fatalf("no db1 line in output: %q", got)
+	if strings.Contains(strings.Join(got, ""), "\x1b") {
+		t.Errorf("no color asked for, got escape codes: %q", got)
 	}
-	if !strings.Contains(db1Line, " - ") && !strings.HasSuffix(strings.TrimRight(db1Line, " "), "-") {
-		t.Errorf("db1 line should render blank IP as '-': %q", db1Line)
+}
+
+func TestRenderTable_ColorKeepsColumnsAligned(t *testing.T) {
+	got := render(sampleRows, TableOpts{Terminal: true, Color: true})
+	if !strings.Contains(got[1], "\x1b[32m● running\x1b[0m") || !strings.Contains(got[2], "\x1b[2m○ stopped\x1b[0m") {
+		t.Fatalf("state cells not colored: %q", got)
 	}
-	// Header + 3 data rows.
-	if n := len(lines); n != 4 {
-		t.Errorf("line count = %d, want 4: %q", n, got)
+	strip := regexp.MustCompile(`\x1b\[[0-9]*m`)
+	col := func(line, cell string) int {
+		line = strip.ReplaceAllString(line, "")
+		return utf8.RuneCountInString(line[:strings.Index(line, cell)])
+	}
+	if a, b := col(got[1], "4% of 4"), col(got[2], "– of 2"); a != b {
+		t.Errorf("CPU cells start at %d and %d:\n%s\n%s", a, b, got[1], got[2])
+	}
+}
+
+func TestRenderTable_WideAndNode(t *testing.T) {
+	if h := render(sampleRows, TableOpts{Wide: true})[0]; !strings.HasPrefix(h, "NAME  VMID  NODE  STATE") {
+		t.Errorf("--wide header = %q", h)
+	}
+	if h := render(sampleRows, TableOpts{ShowNode: true})[0]; !strings.HasPrefix(h, "NAME  NODE  STATE") {
+		t.Errorf("multi-node header = %q", h)
+	}
+}
+
+func TestRenderTable_NarrowDropsColumns(t *testing.T) {
+	full := 0
+	for _, l := range render(sampleRows, TableOpts{Terminal: true}) {
+		full = max(full, utf8.RuneCountInString(l))
+	}
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{0, "NAME STATE CPU MEM DISK UP IP"},
+		{full, "NAME STATE CPU MEM DISK UP IP"},
+		{full - 1, "NAME STATE CPU MEM UP IP"},
+		{full - 7, "NAME STATE CPU MEM IP"},
+		{40, "NAME STATE CPU IP"},
+		{10, "NAME STATE IP"},
+	} {
+		lines := render(sampleRows, TableOpts{Terminal: true, Width: tc.width})
+		if got := strings.Join(strings.Fields(lines[0]), " "); got != tc.want {
+			t.Errorf("width %d: header %q, want %q", tc.width, got, tc.want)
+		}
+		for _, l := range lines {
+			if n := utf8.RuneCountInString(l); tc.width >= 40 && n > tc.width {
+				t.Errorf("width %d: line is %d wide: %q", tc.width, n, l)
+			}
+		}
 	}
 }
 
 func TestRenderTable_NameCap(t *testing.T) {
 	long := strings.Repeat("x", 60)
-	rows := []Row{{Name: long, VMID: 1, Node: "n", Status: "running", IP: "1.2.3.4"}}
-	var buf bytes.Buffer
-	RenderTable(&buf, rows)
-	out := buf.String()
-	// NAME column caps at 40 so the long name is truncated.
-	if strings.Contains(out, strings.Repeat("x", 41)) {
-		t.Errorf("long name not truncated to 40: %q", out)
+	got := render([]Row{{Name: long, VMID: 100, Node: "pve", Status: "stopped"}}, TableOpts{})
+	if strings.Contains(got[1], strings.Repeat("x", 41)) {
+		t.Errorf("name not truncated to 40: %q", got[1])
 	}
 }
 
 func TestRenderTable_OverlayTag(t *testing.T) {
-	var buf bytes.Buffer
-	RenderTable(&buf, []Row{
-		{Name: "payzoff", VMID: 104, Node: "p0", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
-		{Name: "nb1", VMID: 105, Node: "p0", Status: "running", IP: "100.88.4.9", Overlay: "netbird"},
-		{Name: "lan1", VMID: 106, Node: "p0", Status: "running", IP: "192.168.0.50"},
-	})
-	out := buf.String()
-	for _, want := range []string{"100.104.54.92 (tailscale)", "100.88.4.9 (netbird)"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("table missing %q:\n%s", want, out)
+	got := strings.Join(render([]Row{
+		{Name: "a", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
+		{Name: "b", Status: "running", IP: "100.90.1.2", Overlay: "netbird"},
+		{Name: "c", Status: "running", IP: "192.168.0.25"},
+	}, TableOpts{}), "\n")
+	for _, want := range []string{"100.104.54.92 ts", "100.90.1.2 nb", "192.168.0.25\n"} {
+		if !strings.Contains(got+"\n", want) {
+			t.Errorf("missing %q in:\n%s", want, got)
 		}
-	}
-	if strings.Contains(out, "192.168.0.50 (") {
-		t.Errorf("LAN address got an overlay tag:\n%s", out)
 	}
 }
 
-// Every row is as long as the header: the IP column is sized to its
-// widest cell, overlay tag included.
-func TestRenderTable_OverlayTagKeepsColumnsAligned(t *testing.T) {
-	var buf bytes.Buffer
-	RenderTable(&buf, []Row{
-		{Name: "moverse", VMID: 103, Node: "p0", Status: "running", IP: "192.168.0.25"},
-		{Name: "payzoff", VMID: 104, Node: "p0", Status: "running", IP: "100.104.54.92", Overlay: "tailscale"},
-		{Name: "idle", VMID: 105, Node: "p0", Status: "stopped"},
-	})
-	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	for _, l := range lines[1:] {
-		if len(l) != len(lines[0]) {
-			t.Errorf("row %q is %d wide, header is %d", l, len(l), len(lines[0]))
-		}
-	}
-	if want := len("100.104.54.92 (tailscale)"); !strings.HasSuffix(lines[0], "IP"+strings.Repeat(" ", want-2)) {
-		t.Errorf("IP column should be %d wide: %q", want, lines[0])
+func TestSortRows(t *testing.T) {
+	rows := []Row{{Name: "alpha", Status: "stopped"}, {Name: "zeta", Status: "running"}, {Name: "beta", Status: "running"}}
+	SortRows(rows)
+	if got := rows[0].Name + " " + rows[1].Name + " " + rows[2].Name; got != "beta zeta alpha" {
+		t.Errorf("order = %s", got)
 	}
 }

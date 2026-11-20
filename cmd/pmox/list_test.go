@@ -109,4 +109,12 @@ func TestList_JSONOutput(t *testing.T) {
 	if web1.IP != "192.168.1.43" {
 		t.Errorf("web1.IP = %q", web1.IP)
 	}
+	for _, key := range []string{"cpus", "cpu_used", "mem_bytes", "max_mem_bytes", "disk_bytes", "uptime_seconds"} {
+		if !strings.Contains(out.String(), `"`+key+`"`) {
+			t.Errorf("JSON is missing %q: %s", key, out.String())
+		}
+	}
+	if rows[0].Name != "web1" {
+		t.Errorf("running web1 should be first, got %q", rows[0].Name)
+	}
 }

@@ -23,13 +23,20 @@ const (
 // set to empty". Integer fields are decoded leniently (numbers, quoted
 // numbers or bools).
 type Resource struct {
-	VMID     int    `json:"vmid"`
-	Name     string `json:"name"`
-	Node     string `json:"node"`
-	Status   string `json:"status"`
-	Tags     string `json:"tags"`
-	Uptime   int64  `json:"uptime"`   // seconds; free from the same response
-	Template int    `json:"template"` // 1 if this VM is a template
+	VMID   int    `json:"vmid"`
+	Name   string `json:"name"`
+	Node   string `json:"node"`
+	Status string `json:"status"`
+	Tags   string `json:"tags"`
+	Uptime int64  `json:"uptime"` // seconds; free from the same response
+	// Usage, from the same response: CPU is the busy fraction (0..1) of
+	// MaxCPU cores; Mem, MaxMem and MaxDisk are bytes.
+	CPU      float64 `json:"cpu"`
+	MaxCPU   int     `json:"maxcpu"`
+	Mem      int64   `json:"mem"`
+	MaxMem   int64   `json:"maxmem"`
+	MaxDisk  int64   `json:"maxdisk"`
+	Template int     `json:"template"` // 1 if this VM is a template
 	// Type is the guest's type: "qemu" or "lxc" (type=vm lists both).
 	Type string `json:"type"`
 }

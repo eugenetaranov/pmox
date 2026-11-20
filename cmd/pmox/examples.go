@@ -29,7 +29,8 @@ var commandExamples = map[string]string{
 	"vm clone": `  pmox vm clone web1 web2
   pmox vm clone web1 web2 --mem 8`,
 	"vm list": `  pmox vm list
-  pmox vm list --all
+  pmox vm list --all --wide
+  pmox vm list --watch
   pmox vm list -o json`,
 	"vm info": `  pmox vm info web1
   pmox vm info 104 -o json`,

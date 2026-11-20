@@ -214,14 +214,14 @@ func TestListMarksTheDefault(t *testing.T) {
 		{Name: "web1", VMID: 104, Node: "pve1", Status: "running", IP: "10.0.0.1", Default: true},
 		{Name: "db1", VMID: 105, Node: "pve1", Status: "stopped"},
 	}
-	vm.RenderTable(&buf, rows)
+	vm.RenderTable(&buf, rows, vm.TableOpts{})
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if !strings.HasPrefix(lines[0], "  NAME") || !strings.HasPrefix(lines[1], "* web1") || !strings.HasPrefix(lines[2], "  db1") {
 		t.Errorf("table:\n%s", buf.String())
 	}
 	buf.Reset()
 	rows[0].Default = false
-	vm.RenderTable(&buf, rows)
+	vm.RenderTable(&buf, rows, vm.TableOpts{})
 	if !strings.HasPrefix(buf.String(), "NAME") {
 		t.Errorf("no default: the table should have no marker column:\n%s", buf.String())
 	}

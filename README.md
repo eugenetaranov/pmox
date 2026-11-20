@@ -200,7 +200,7 @@ web1`. `--context` picks another server and `-o json` (short for
 | --- | --- | --- |
 | `launch` | Clone the configured template, push cloud-init, wait for SSH | `pmox vm launch web1` |
 | `clone` | Clone an existing VM/template into a new VM (source optional → picker) | `pmox vm clone web1 web2` |
-| `list`, `ls` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox vm list` |
+| `list`, `ls` | List pmox-tagged VMs with state, CPU/memory use, disk, uptime and IP; `--all` for every VM, `--wide` for VMID and NODE, `--watch` to keep it refreshing | `pmox vm list` |
 | `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox vm info web1` |
 | `use` | Set the default VM that `shell`, `exec` and the other everyday commands go to (`--clear` removes it) | `pmox vm use web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
@@ -783,7 +783,7 @@ cloud-init file) before it turns into a `Permission denied (publickey)`.
   address whenever it has one, and the LAN address otherwise. That address
   is the same at home and away, so sessions and mounts survive moving
   between them.
-  - `pmox list` marks overlay addresses ` (tailscale)` or ` (netbird)`, and
+  - `pmox list` marks overlay addresses ` ts` (Tailscale) or ` nb` (NetBird), and
     `pmox vm info` shows which address pmox connects to.
   - When `shell` or `exec` starts a stopped VM, pmox waits up to 90s for
     its overlay address and connects to that.
