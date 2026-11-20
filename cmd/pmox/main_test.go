@@ -188,3 +188,36 @@ func indexOf(s []string, v string) int {
 	}
 	return -1
 }
+
+// The palette's filter pool: every command once, shortcuts under their
+// short name only.
+func TestPaletteAllListsEachCommandOnce(t *testing.T) {
+	all := paletteAll(rootCmd)
+	seen := map[string]int{}
+	for _, it := range all {
+		seen[it.Key]++
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Errorf("%q listed %d times", key, n)
+		}
+	}
+	for _, want := range []string{"list", "resize", "mount autostart", "router route delete", "playbook init", "vm use", "vm clone", "context edit"} {
+		if seen[want] == 0 {
+			t.Errorf("%q is not reachable from the root filter", want)
+		}
+	}
+	for _, dup := range []string{"vm list", "vm resize", "vm shell", "mount delete", "remount", "create-template", "config edit", "vm resize ram"} {
+		if seen[dup] != 0 {
+			t.Errorf("%q should not be listed (a shortcut covers it, or it is hidden)", dup)
+		}
+	}
+	// Inside a group there are no shortcuts to fold.
+	vm := map[string]bool{}
+	for _, it := range paletteAll(findPath(t, "vm")) {
+		vm[it.Key] = true
+	}
+	if !vm["list"] || !vm["resize"] {
+		t.Errorf("vm's pool = %v", vm)
+	}
+}

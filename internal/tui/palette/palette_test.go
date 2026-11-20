@@ -112,3 +112,51 @@ func TestViewFitsWidth(t *testing.T) {
 		}
 	}
 }
+
+// deepResolver has a root whose filter pool reaches into its groups.
+func deepResolver(path []string) Menu {
+	if len(path) > 0 {
+		return Menu{Items: []Item{{Key: "autostart", Desc: "Bring mounts back at login"}}}
+	}
+	items := []Item{
+		{Key: "list", Desc: "List VMs", Hint: "pmox vm list", Section: "Common"},
+		{Key: "mount", Desc: "Keep directories synced", Section: "Resources", Sub: true},
+	}
+	return Menu{Items: items, All: append(append([]Item{}, items...),
+		Item{Key: "mount autostart", Path: []string{"mount", "autostart"}, Desc: "Bring mounts back at login"},
+		Item{Key: "mount list", Path: []string{"mount", "list"}, Desc: "List background mounts"},
+	)}
+}
+
+func keysOf(items []Item) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.Key
+	}
+	return out
+}
+
+func TestFilterSearchesTheWholeTree(t *testing.T) {
+	m := New(nil, deepResolver, Options{Title: "pmox"})
+	if got := keysOf(m.visible()); !slices.Equal(got, []string{"list", "mount"}) {
+		t.Fatalf("no filter: %v, want this level only", got)
+	}
+	press(m, typed("autostart"))
+	if got := keysOf(m.visible()); !slices.Equal(got, []string{"mount autostart"}) {
+		t.Fatalf("filter 'autostart': %v", got)
+	}
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "mount autostart") {
+		t.Errorf("the match should be shown with its full path:\n%s", v)
+	}
+	press(m, enter)
+	if !slices.Equal(m.Chosen(), []string{"mount", "autostart"}) {
+		t.Fatalf("chosen = %v, want the full path", m.Chosen())
+	}
+
+	// This level's match ranks above a deeper one with the same word.
+	m = New(nil, deepResolver, Options{Title: "pmox"})
+	press(m, typed("list"))
+	if got := keysOf(m.visible()); !slices.Equal(got, []string{"list", "mount list"}) {
+		t.Errorf("filter 'list': %v, want this level first", got)
+	}
+}

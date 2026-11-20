@@ -47,3 +47,35 @@ func TestHostInfo(t *testing.T) {
 		t.Errorf("an inactive pool is listed:\n%s", out.String())
 	}
 }
+
+// 'pmox info <vm>' is 'pmox vm info <vm>'; bare, it stays the host report.
+func TestRootInfoTakesAVM(t *testing.T) {
+	c := findPath(t, "info")
+	if err := c.Args(c, []string{"web1"}); err != nil {
+		t.Errorf("info should accept a VM: %v", err)
+	}
+	if err := c.Args(c, []string{"a", "b"}); err == nil {
+		t.Error("info takes at most one VM")
+	}
+	if c.Flags().Lookup("pick") != nil || c.Annotations[canonicalAnnotation] != "" {
+		t.Error("bare info is the host report: no --pick, not a plain shortcut")
+	}
+	if c.ValidArgsFunction == nil {
+		t.Error("info should complete VM names")
+	}
+
+	// The VM report is the one 'vm info' prints.
+	f := newInfoFake(t)
+	outputMode = "text"
+	cmd, viaVM, _ := newTestInfoCmd()
+	if err := executeInfo(cmd.Context(), cmd, f.Client(), "web1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(viaVM.String(), "web1") {
+		t.Errorf("vm report = %q", viaVM.String())
+	}
+	// An unknown VM is a not-found error, not "unknown command".
+	if err := executeInfo(cmd.Context(), cmd, f.Client(), "nosuch"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("unknown VM: err = %v", err)
+	}
+}

@@ -18,18 +18,27 @@ import (
 
 func newHostInfoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info",
-		Short: "Show the Proxmox host: version, nodes, storage, VMs",
-		Long: `Show the current context's Proxmox host: its version, each node's status,
-uptime, CPU and memory use, its storage pools with free space, and how
-many VMs run there (pmox's and in all). --context picks another server;
--o json prints it as JSON. For one VM, use 'pmox vm info <name>'.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "info [name|vmid]",
+		Short: "Show the Proxmox host, or one VM",
+		Long: `Without an argument, show the current context's Proxmox host: its
+version, each node's status, uptime, CPU and memory use, its storage
+pools with free space, and how many VMs run there (pmox's and in all).
+
+With a VM, show that VM, the same report as 'pmox vm info <name>'.
+
+--context picks another server; -o json prints either as JSON.`,
+		Example: `  pmox info
+  pmox info web1
+  pmox info -o json`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			client, resolved, err := buildClient(ctx, cmd)
 			if err != nil {
 				return err
+			}
+			if len(args) == 1 {
+				return executeInfo(ctx, cmd, client, args[0])
 			}
 			info, err := collectHostInfo(ctx, client, resolved)
 			if err != nil {

@@ -19,7 +19,7 @@ pmox SHALL organize commands into singular noun groups:
 | `router` | `create`, `login`, `status`, `delete`/`rm`, `route` (`add`, `list`/`ls`, `delete`/`rm`) |
 | `yardo` | `push`, `apply`, `verify`, `gitkey` |
 
-`ls` and `rm` SHALL be the only verb aliases, and SHALL always alias `list` and `delete`. `init`, `doctor`, `cleanup`, `version` and `completion` SHALL remain root commands. `version` SHALL keep printing the version when run alone, and SHALL have one verb, `upgrade` (see `self-upgrade`). The palette SHALL run `version` directly; `upgrade` is reached as `pmox version upgrade`.
+`ls` and `rm` SHALL be the only verb aliases, and SHALL always alias `list` and `delete`, with three exceptions kept for familiarity: `launch` also answers to `create`, `version upgrade` to `up`, and `access show` to `list`/`ls`. `init`, `doctor`, `cleanup`, `version` and `completion` SHALL remain root commands. `version` SHALL keep printing the version when run alone, and SHALL have one verb, `upgrade` (see `self-upgrade`). The palette SHALL run `version` directly; `upgrade` is reached as `pmox version upgrade`.
 
 #### Scenario: Canonical VM listing
 - **WHEN** a user runs `pmox vm list`

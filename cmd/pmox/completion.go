@@ -35,12 +35,12 @@ const (
 
 // completionVM is one VM as completion needs it.
 type completionVM struct {
-	Name    string `json:"name"`
-	VMID    int    `json:"vmid"`
-	Status  string `json:"status"`
-	Node    string `json:"node"`
-	PMOX    bool   `json:"pmox"`
-	Templ   bool   `json:"template"`
+	Name   string `json:"name"`
+	VMID   int    `json:"vmid"`
+	Status string `json:"status"`
+	Node   string `json:"node"`
+	PMOX   bool   `json:"pmox"`
+	Templ  bool   `json:"template"`
 }
 
 // completionCache is the cached cluster answer for one context.
@@ -373,6 +373,7 @@ func argCompleters() map[string]func(*cobra.Command, []string, string) ([]string
 	one := completeVMs(anyVM, false, noComp())
 	many := completeVMs(anyVM, true, noComp())
 	return map[string]func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective){
+		"info":           one, // the root 'info': a VM, or the host when bare
 		"vm shell":       one,
 		"vm info":        one,
 		"vm ssh-config":  one,
@@ -384,9 +385,7 @@ func argCompleters() map[string]func(*cobra.Command, []string, string) ([]string
 		"vm stop":        completeVMs(runningVM, true, noComp()),
 		"vm restart":     many,
 		"vm delete":      many,
-		"vm resize ram":  one,
-		"vm resize cpu":  one,
-		"vm resize disk": one,
+		"vm resize":      one,
 		"vm cp":          completeVMTargets(0, false),
 		"vm sync":        completeVMTargets(0, false),
 		"mount":          completeVMTargets(1, true),
@@ -404,7 +403,7 @@ func argCompleters() map[string]func(*cobra.Command, []string, string) ([]string
 		"context use":    completeContexts,
 		"context rename": completeContexts,
 		"context delete": completeContexts,
-		"config edit":    completeContexts,
+		"context edit":   completeContexts,
 	}
 }
 
@@ -419,7 +418,8 @@ func wireCompletions(root *cobra.Command) {
 		if canon := c.Annotations[canonicalAnnotation]; canon != "" {
 			path = canon
 		}
-		if c.Hidden { // deprecated forms complete nothing
+		old := c.Annotations[deprecatedAnnotation] != ""
+		if old { // deprecated forms complete nothing
 			path = ""
 		}
 		if fn, ok := args[path]; ok {
@@ -429,7 +429,7 @@ func wireCompletions(root *cobra.Command) {
 			"template": completeTemplateFlag, "node": completeNodeFlag,
 			"storage": completeStorageFlag, "snippet-storage": completeStorageFlag, "bridge": completeBridgeFlag,
 		} {
-			if !c.Hidden && c.Flags().Lookup(flag) != nil {
+			if !old && c.Flags().Lookup(flag) != nil {
 				_ = c.RegisterFlagCompletionFunc(flag, fn)
 			}
 		}

@@ -26,31 +26,25 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Set up a Proxmox connection",
-		Long: `Interactively configure credentials and defaults for a Proxmox VE server.
+		Long: `Set up a Proxmox VE server for pmox: its API URL and token, the default
+node, template, storage, snippet storage and bridge, your SSH public
+key, and SSH access to the node (used to upload cloud-init snippets).
 
-Walks through API URL, token, credential validation against /version, and
-auto-discovery of node, template, storage, snippet storage, and bridge,
-then collects SSH credentials for the PVE node (used by 'pmox template create'
-to upload cloud-init snippets via SFTP) and validates them with a live
-handshake. Snippet storage is picked separately from VM disk storage —
-if no storage on the cluster has the 'snippets' content type, configure
-offers to enable it on an existing directory-backed storage.
-Secrets are stored in the system keychain; everything else is written to
-$XDG_CONFIG_HOME/pmox/config.yaml (or ~/.config/pmox/config.yaml).
+On a terminal this is a single-screen wizard (Connection › Defaults ›
+Access › Review); nothing is written until you confirm on the Review
+page. Esc goes back a page, Ctrl-C quits without saving. Without a
+terminal, or with --no-input, the same questions are asked as plain
+prompts.
 
-Prompts:
-  Proxmox API URL   base URL of the PVE host, e.g. https://192.168.0.185:8006
-                    (the web UI URL with '#v1:...' also works — the path is
-                    stripped automatically)
-  API token ID      in the form 'user@realm!tokenname', e.g. 'root@pam!pmox'
-                    or 'pmox@pve!mytoken'. Create one in the PVE web UI under
-                    Datacenter → Permissions → API Tokens → Add.
-  API token secret  the UUID shown once when the token is created.
-  Node SSH user     Linux user pmox SSHs into on the PVE node (default: root).
-  Node SSH auth     'p' for password or 'k' for a private key file.
-  Node SSH secret   password or key passphrase, stored in the OS keyring.
-                    First-time connections prompt to pin the host key into
-                    ~/.config/pmox/known_hosts (bypass with --ssh-insecure).`,
+The URL can be a bare IP or hostname, host:port, or the address copied
+from the web UI. For the token, paste one made in the web UI
+(Datacenter → Permissions → API Tokens), or let pmox create it: enter
+user@realm and a password, which is used once to log in and never
+stored.
+
+Secrets go to the system keychain; everything else to
+~/.config/pmox/config.yaml. On a machine that is already set up, init
+offers to edit, add or remove a server instead of starting over.`,
 		RunE: func(cmd *cobra.Command, args []string) error { return runInit(cmd, f) },
 	}
 	cmd.Flags().BoolVar(&f.list, "list", false, "List configured server URLs")

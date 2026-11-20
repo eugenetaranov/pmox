@@ -94,20 +94,18 @@ func newShellCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell [name|vmid]",
 		Short: "Open a shell on a VM",
-		Long: `Open an interactive SSH shell on a pmox-managed VM. The argument
-may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If
-omitted, pmox auto-selects the only pmox VM when one exists, or
-shows an interactive picker when there are several.
+		Long: `Open an interactive SSH shell on a VM. A stopped VM is started first.
 
-If the VM is stopped, shell auto-starts it and waits for SSH
-readiness before connecting.
-
-The default login user is "pmox" (the cloud-init user). The default
-identity key is derived from the configured SSH public key by
-stripping the .pub suffix. Override with --user / --identity.
+The login user is the server's configured user (default "pmox") and the
+key is the private half of the configured SSH public key; --user and
+--identity override them.
 
 -A forwards your ssh-agent, so git on the VM can use your laptop's
-keys; -L forwards ports (pmox shell -L 3000 web1).`,
+keys. -L forwards a port: -L 3000 is 3000:localhost:3000, and any
+'ssh -L' spec works.
+
+With no VM named, pmox uses the default VM, or the only pmox VM, or
+shows the picker.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runShell(cmd, args, f)

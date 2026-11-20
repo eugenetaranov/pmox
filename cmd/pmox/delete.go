@@ -52,36 +52,25 @@ func newDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete [name|vmid ...]",
 		Short: "Delete VMs",
-		Long: `Delete one or more VMs on the resolved Proxmox cluster. Each argument
-may be a VM name (e.g. "web1") or numeric VMID (e.g. "104"). If none are
-given, pmox auto-selects the only pmox VM when one exists, or shows a
-multi-select picker (space to toggle, enter to confirm) when several do.
+		Long: `Delete one or more VMs: stop each, destroy it and its disks, and remove
+its cloud-init snippet.
 
-Before issuing any destructive API call the command prints a summary of
-the resolved VM and requires an interactive y/N confirmation (default No).
-Pass --yes / -y or set PMOX_ASSUME_YES=1 to skip the prompt for scripted
-and CI use. When stdin is not a TTY and no bypass is set, the command
-refuses to proceed.
+pmox shows what it is about to delete and asks first (default No).
+--yes or PMOX_ASSUME_YES=1 skips the question; without a terminal and
+without either, delete refuses. A VM that is already gone is reported
+and counts as success.
 
-By default, delete refuses to act on VMs that are not tagged "pmox".
-Since pmox launch tags every VM it creates, this rule means delete
-will only touch VMs pmox launched — hand-managed VMs are protected
-from accidental destruction.
+Only VMs tagged 'pmox' are deleted, so VMs made by hand are safe;
+--force lifts that. --hard powers the VM off instead of shutting it
+down, for a guest that doesn't respond.
 
---force bypasses the tag check, allowing delete on untagged VMs — reach
-for it when the VM is hand-managed. --hard uses a hard "stop" (power off)
-instead of a graceful ACPI "shutdown" — reach for it when the guest is
-not responding to ACPI. The two are independent; either can be used
-alone. Both are orthogonal to --yes: using them alone still prompts.
+With no VM named, pmox picks the only pmox VM or shows a multi-select
+picker. The default VM is never used.
 
-If the VM has already been destroyed, delete exits 0 with a note on
-stderr so scripted loops are idempotent.
-
-When a running VM has credentials yardo created (GitHub keys it
-uploaded, its logins and secret files), delete offers to run
-'yardo forget' on it first, so the keys don't outlive the VM.
---forget does it without asking, --no-forget skips it; with --yes and
-neither flag it is skipped with a hint.`,
+When a running VM holds credentials yardo created (GitHub keys, logins,
+secret files), delete offers to run 'yardo forget' on it first, so the
+keys don't outlive the VM: --forget does that without asking,
+--no-forget skips it, and with --yes alone it is skipped with a hint.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDelete(cmd, args, f)

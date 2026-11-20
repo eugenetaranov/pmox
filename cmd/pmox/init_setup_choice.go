@@ -15,7 +15,7 @@ import (
 // 'pmox init' is first-run setup. On a machine that is already set up it
 // doesn't start over at the URL prompt; it asks what the user meant:
 // change a configured server, add another one, or remove one. The same
-// actions exist as direct commands: 'pmox config edit',
+// actions exist as direct commands: 'pmox context edit',
 // 'pmox context add', 'pmox context delete'.
 
 // setupChoiceFn is a seam over the chooser.
@@ -31,9 +31,9 @@ func runInitConfigured(ctx context.Context, p prompter, cfg *config.Config) erro
 			current = c.Name
 		}
 	}
-	editLabel := "Change settings of " + current + "  (pmox config edit)"
+	editLabel := "Change settings of " + current + "  (pmox context edit)"
 	if len(contexts) > 1 {
-		editLabel = "Change settings of a configured server  (pmox config edit)"
+		editLabel = "Change settings of a configured server  (pmox context edit)"
 	}
 	choice, err := setupChoiceFn(
 		fmt.Sprintf("pmox is already set up for %s. What would you like to do?", strings.Join(names, ", ")),

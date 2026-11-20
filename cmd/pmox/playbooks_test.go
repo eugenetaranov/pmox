@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/eugenetaranov/pmox/internal/config"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -202,5 +203,95 @@ func TestApplyInitFromURLAsksWhichDefault(t *testing.T) {
 	}
 	if cfg, _ := config.Load(); cfg.TackDefaultPlaybook != "web.yml" {
 		t.Errorf("default = %q, want the picked web.yml", cfg.TackDefaultPlaybook)
+	}
+}
+
+// The playbook group: init, list, default and update are commands of
+// their own; apply keeps the old flags as hidden deprecated forms.
+func TestPlaybookGroup(t *testing.T) {
+	isolate(t)
+	if err := (&config.Config{}).Save(); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := tackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "playbook.yaml"), play)
+	writeFile(t, filepath.Join(dir, "playbooks", "db.yaml"), play)
+
+	stdout, _, err := execRoot(t, "playbook", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marked int
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(l, "*") {
+			marked++
+			if !strings.Contains(l, "playbook ") {
+				t.Errorf("default marker on the wrong row: %q", l)
+			}
+		}
+	}
+	if marked != 1 || !strings.Contains(stdout, "playbooks/db") {
+		t.Errorf("list:\n%s", stdout)
+	}
+
+	if _, _, err := execRoot(t, "playbook", "default", "playbooks/db"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _ := defaultPlaybook(); !strings.HasSuffix(p, filepath.Join("playbooks", "db.yaml")) {
+		t.Errorf("default playbook = %q after 'playbook default playbooks/db'", p)
+	}
+	stdout, _, err = execRoot(t, "playbook", "default", "--no-input")
+	if err != nil || !strings.Contains(stdout, "default playbook: playbooks/db") {
+		t.Errorf("bare 'playbook default' without a terminal → %q, err %v", stdout, err)
+	}
+	js, _, err := execRoot(t, "playbook", "list", "-o", "json")
+	if err != nil || !strings.Contains(js, `"name": "playbooks/db"`) || strings.Count(js, `"default": true`) != 1 {
+		t.Errorf("json: %v\n%s", err, js)
+	}
+
+	_, _, err = execRoot(t, "playbook", "default", "nosuch")
+	if exitcode.From(err) != exitcode.ExitUserError || !strings.Contains(err.Error(), "playbooks/db") {
+		t.Errorf("unknown playbook: err = %v (exit %d), want a user error listing the playbooks", err, exitcode.From(err))
+	}
+	_, _, err = execRoot(t, "playbook", "update")
+	if exitcode.From(err) != exitcode.ExitUserError || !strings.Contains(err.Error(), "not a git clone") {
+		t.Errorf("update of a scaffolded dir: err = %v", err)
+	}
+	if _, _, err = execRoot(t, "playbook", "init", "not-a-url"); exitcode.From(err) != exitcode.ExitUserError {
+		t.Errorf("init with a non-URL: err = %v", err)
+	}
+}
+
+func TestPlaybookInitScaffoldsWithoutATerminal(t *testing.T) {
+	isolate(t)
+	stdout, stderr, err := execRoot(t, "playbook", "init", "--no-input")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, stdout, stderr)
+	}
+	dir, _ := tackDir()
+	if _, err := os.Stat(filepath.Join(dir, "playbook.yaml")); err != nil {
+		t.Errorf("starter playbook not written: %v", err)
+	}
+}
+
+func TestApplyManagementFlagsAreDeprecated(t *testing.T) {
+	c := newApplyCmd()
+	if !strings.HasPrefix(c.Use, "apply [name|vmid] [playbook]") {
+		t.Errorf("usage = %q, want the second argument called a playbook", c.Use)
+	}
+	usage := flagUsages(c.Flags())
+	for _, f := range []string{"init", "default", "update"} {
+		if fl := c.Flags().Lookup(f); fl == nil || !fl.Hidden || strings.Contains(usage, "--"+f+" ") {
+			t.Errorf("apply --%s should stay as a hidden flag", f)
+		}
+	}
+
+	isolate(t)
+	_, stderr, err := execRoot(t, "apply", "--update")
+	if exitcode.From(err) != exitcode.ExitUserError || !strings.Contains(stderr, "pmox playbook update") {
+		t.Errorf("apply --update: err = %v, stderr = %q; want the old behaviour plus a note", err, stderr)
 	}
 }

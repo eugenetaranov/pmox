@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"slices"
@@ -81,9 +82,10 @@ Run ` + "`pmox --help`" + ` to see available commands. On a terminal, running
 	// Resolve the interactive-input policy once, before any command runs:
 	// --no-input, PMOX_NO_INPUT, and --output json all disable prompts so
 	// pmox stays script/CI-safe and never corrupts JSON on stdout.
-	PersistentPreRun: func(_ *cobra.Command, _ []string) {
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 		tui.SetNoInput(noInput || envBool("PMOX_NO_INPUT") || outputMode == "json")
 		tui.SetColor(!noColor && os.Getenv("NO_COLOR") == "")
+		warnDeprecatedServer(cmd.ErrOrStderr())
 		// Verbose/debug log lines would interleave with a redrawn spinner.
 		tui.SetSpinners(!verbose && !debug)
 	},
@@ -135,10 +137,12 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output (env: NO_COLOR)")
 	rootCmd.PersistentFlags().StringVarP(&outputMode, "output", "o", "text", "Output format: text or json")
-	// --server selects which configured server a command targets. Overrides
-	// PMOX_SERVER. `pmox init` ignores both the flag and the env var.
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Server context name or URL to target (overrides PMOX_SERVER)")
-	rootCmd.PersistentFlags().StringVar(&contextFlag, "context", "", "Context (configured server) to target by name (env: PMOX_CONTEXT)")
+	// --context selects which configured server a command targets;
+	// --server and PMOX_SERVER are its deprecated spellings. `pmox init`
+	// ignores them all.
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "deprecated: use --context")
+	_ = rootCmd.PersistentFlags().MarkHidden("server")
+	rootCmd.PersistentFlags().StringVar(&contextFlag, "context", "", "Context (configured server) to target, by name or URL (env: PMOX_CONTEXT)")
 	rootCmd.PersistentFlags().BoolVar(&sshInsecure, "ssh-insecure", envBool("PMOX_SSH_INSECURE"), "Skip SSH host-key verification (env: PMOX_SSH_INSECURE)")
 	rootCmd.PersistentFlags().BoolVar(&noInput, "no-input", false, "Never prompt; error instead of showing an interactive picker (env: PMOX_NO_INPUT)")
 
@@ -234,6 +238,16 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 		}
 	}()
 	return ctx, stop
+}
+
+// warnDeprecatedServer notes, on stderr, a use of --server or PMOX_SERVER.
+func warnDeprecatedServer(w io.Writer) {
+	if serverFlag != "" {
+		fmt.Fprintln(w, "note: '--server' is deprecated and will be removed — use '--context'")
+	}
+	if os.Getenv("PMOX_SERVER") != "" {
+		fmt.Fprintln(w, "note: 'PMOX_SERVER' is deprecated and will be removed — use 'PMOX_CONTEXT'")
+	}
 }
 
 // errorLine is err's message for the "Error: ..." line, without the

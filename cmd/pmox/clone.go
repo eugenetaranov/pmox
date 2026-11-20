@@ -19,27 +19,15 @@ func newCloneCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clone [source-name|vmid] <new-name>",
 		Short: "Clone a VM into a new one",
-		Long: `Clone an existing VM (template or regular VM) into a new VM. This is
-conceptually 'pmox launch', except the template is the resolved
-source VM instead of the configured template.
-
-The same --cpu/--mem/--disk/--wait/--no-wait-ssh flags are accepted
-and are applied to the clone. Flags unset on the command line fall
-back to the configured defaults, same as launch.
+		Long: `Clone an existing VM or template into a new VM: 'pmox launch' with the
+named VM as the source instead of the configured template. The sizing,
+storage, wait and hook flags are the same as launch's.
 
 Cloud-init user-data comes from
-~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
-writes on first run. Edit that file to customize the new VM, or run
-'pmox config cloud-init --regenerate' to rewrite it.
+~/.config/pmox/cloud-init/<host>-<port>.yaml, as for launch.
 
---storage and --snippet-storage are independent: the first targets
-the new VM's disk, the second targets the cloud-init snippet upload
-(must support 'snippets'). --snippet-storage falls back to the
-configured snippet_storage, then to --storage with a warning.
-
-On a terminal, 'pmox vm clone' alone prompts for the source VM (the
-shared picker) and the new name; 'pmox vm clone web1' skips straight to
-the new-name prompt.`,
+On a terminal, 'pmox vm clone' alone asks for the source VM and the new
+name; 'pmox vm clone web1' asks only for the new name.`,
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var src, newName string
@@ -53,7 +41,7 @@ the new-name prompt.`,
 		},
 	}
 	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPU cores (default 2)")
-	cmd.Flags().IntVar(&f.memGB, "mem", 0, "memory in GiB (default 2)")
+	cmd.Flags().Float64Var(&f.memGB, "mem", 0, "memory in GiB, e.g. 4 or 1.5 (default 2)")
 	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "disk size in GiB (default 20)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
 	cmd.Flags().StringVar(&f.snippetStorage, "snippet-storage", "", "storage pool for the cloud-init snippet (falls back to configured snippet_storage, then storage)")

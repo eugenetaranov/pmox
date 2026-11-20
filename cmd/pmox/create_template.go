@@ -36,19 +36,14 @@ func newCreateTemplateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create-template",
 		Short: "Build an Ubuntu template",
-		Long: `Interactively build a Proxmox template from an Ubuntu cloud image.
+		Long: `Build a template from an Ubuntu cloud image, interactively: pick the
+image and the storage, and pmox downloads it, boots a throw-away VM
+that installs qemu-guest-agent, and converts the result to a template
+with a VMID in 9000–9099.
 
-Fetches the latest Ubuntu images from Canonical's simplestreams feed,
-lets you pick one, downloads it to a storage via PVE's download-url,
-boots a throw-away VM with a cloud-init snippet that installs
-qemu-guest-agent, waits for shutdown, detaches cloud-init, and
-converts the result to a template in the 9000–9099 VMID range.
+'pmox init' offers the same build at its template step.
 
-'pmox init' also offers to run this build inline, at its own template
-picker step — pick "Build a new Ubuntu template now" there instead of
-running this command separately afterward.
-
-Requires PVE 8.0+ and an interactive TTY.`,
+Needs Proxmox VE 8.0 or later, node SSH, and a terminal.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCreateTemplate(cmd, f)
 		},

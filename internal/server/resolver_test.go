@@ -248,7 +248,7 @@ func TestResolve_NonTTYAmbiguity(t *testing.T) {
 		t.Errorf("err = %v, want ErrUserInput", err)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "--server") || !strings.Contains(msg, "PMOX_SERVER") {
+	if !strings.Contains(msg, "--context") || !strings.Contains(msg, "PMOX_CONTEXT") {
 		t.Errorf("error missing hints: %q", msg)
 	}
 	if !strings.Contains(msg, urlA) || !strings.Contains(msg, urlB) {
@@ -536,5 +536,33 @@ func TestMatchInput_NoPrefixMatching(t *testing.T) {
 	_, _, err := matchInput("pve", cfg) // prefix only — should NOT match
 	if err == nil {
 		t.Fatal("expected error for prefix input, got nil")
+	}
+}
+
+// --context (and PMOX_CONTEXT) take a context name or a URL in any form
+// --server accepted; the two flags together must name the same server.
+func TestResolve_ContextAcceptsNameOrURL(t *testing.T) {
+	cfg := setupCfg(t, 2)
+	cfg.Servers[urlA].Name, cfg.Servers[urlB].Name = "lab", "prod"
+	for _, in := range []string{"lab", "pve1.lan", "pve1.lan:8006", urlA} {
+		r, err := Resolve(context.Background(), Options{Cfg: cfg, Context: in})
+		if err != nil || r.URL != urlA {
+			t.Errorf("--context %q → %v, err %v; want %s", in, r, err, urlA)
+		}
+		r, err = Resolve(context.Background(), Options{Cfg: cfg, ContextEnv: in})
+		if err != nil || r.URL != urlA {
+			t.Errorf("PMOX_CONTEXT=%q → %v, err %v; want %s", in, r, err, urlA)
+		}
+	}
+	if _, err := Resolve(context.Background(), Options{Cfg: cfg, Context: "nosuch"}); !errors.Is(err, exitcode.ErrUserInput) && !errors.Is(err, exitcode.ErrNotFound) {
+		t.Errorf("unknown --context: err = %v", err)
+	}
+
+	_, err := Resolve(context.Background(), Options{Cfg: cfg, Context: "lab", Flag: "prod"})
+	if !errors.Is(err, exitcode.ErrUserInput) || !strings.Contains(err.Error(), "different servers") {
+		t.Errorf("conflicting --context/--server: err = %v", err)
+	}
+	if r, err := Resolve(context.Background(), Options{Cfg: cfg, Context: "lab", Flag: urlA}); err != nil || r.URL != urlA {
+		t.Errorf("--context and --server naming the same server should work: %v, %v", r, err)
 	}
 }

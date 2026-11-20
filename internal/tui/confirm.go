@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -34,6 +35,40 @@ func (c *ttyConfirmer) Confirm(_ context.Context, prompt string) (bool, error) {
 	}
 	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return answer == "y" || answer == "yes", nil
+}
+
+// confirmIn and confirmOut are ConfirmLine's terminal; tests replace them.
+var (
+	confirmIn  io.Reader = os.Stdin
+	confirmOut io.Writer = os.Stderr
+)
+
+// ConfirmLine asks a yes/no question as one typed line, "title [y/N]: "
+// (or "[Y/n]" when the default is yes). It is the confirmation every
+// command uses; only the full-screen wizards use the button-style
+// Confirm. An empty answer takes the default; end of input (Ctrl-D)
+// returns ErrAborted.
+func ConfirmLine(title string, defaultYes bool) (bool, error) {
+	hint := "[y/N]"
+	if defaultYes {
+		hint = "[Y/n]"
+	}
+	_, _ = fmt.Fprintf(confirmOut, "%s %s: ", title, hint)
+	scanner := bufio.NewScanner(confirmIn)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return false, err
+		}
+		_, _ = fmt.Fprintln(confirmOut)
+		return false, ErrAborted
+	}
+	switch strings.TrimSpace(strings.ToLower(scanner.Text())) {
+	case "":
+		return defaultYes, nil
+	case "y", "yes":
+		return true, nil
+	}
+	return false, nil
 }
 
 type AlwaysConfirmer struct{}

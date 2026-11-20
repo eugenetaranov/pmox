@@ -41,52 +41,36 @@ const pickDefaultSentinel = "\x00pmox-pick-default"
 func newApplyCmd() *cobra.Command {
 	f := &applyFlags{}
 	cmd := &cobra.Command{
-		Use:   "apply [name|vmid] [profile]",
+		Use:   "apply [name|vmid] [playbook]",
 		Short: "Run a tack playbook on a VM",
 		Long: `Run a tack playbook (github.com/tackhq/tack) against a pmox VM,
 reusing the SSH user and key pmox already knows.
 
-Playbooks live under ~/.config/pmox/tack/. The playbook is resolved in
-order: --playbook <path>, then a playbook name argument (e.g. web,
-playbooks/db), then the one last used for that VM, then the default
-(set with --default; otherwise playbook.yaml). A named playbook is
-remembered per VM so a later bare 'pmox apply <vm>' reuses it.
+Playbooks live under ~/.config/pmox/tack/ ('pmox playbook init' sets
+that up; 'pmox playbook list' shows them). The playbook is resolved in
+order: --playbook <path>, then the playbook named as the second
+argument (e.g. web, playbooks/db), then the one last used for that VM,
+then the default ('pmox playbook default'). A named playbook is
+remembered per VM, so a later bare 'pmox apply <vm>' reuses it.
 
-The VM is auto-started if stopped. tack's own plan/apply confirmation is
-shown; pass -y to auto-approve, or --check to plan only. --output json
-also auto-approves (there is no terminal to confirm on), so a scripted
-caller relying on -y alone for that gate should know --output json has
-the same effect on its own. tack verifies the host key against
-~/.ssh/known_hosts (independently of pmox's own known_hosts_guests);
-apply pins an unknown key there itself before invoking tack, the same
-trust-on-first-connect model every other pmox SSH command already
-applies, so this is normally invisible. --ssh-insecure skips both tack's
-own verification and this pinning.
+The VM is started if it is stopped. tack shows its plan and asks before
+applying; -y approves, --check only plans, and --output json approves
+too (there is no terminal to ask on).
 
-Every pmox-managed VM has passwordless sudo (the cloud-init template
-grants it) and key-based SSH, so tack is told (via TACK_SUDO_NO_PROMPT /
-TACK_SSH_NO_PROMPT — env, not a flag, so nothing sensitive ever lands in
-argv) to never block waiting on a password it doesn't need.
-
-Playbooks can come from a git repo: 'pmox apply --init <url>' clones it
-into ~/.config/pmox/tack/ (moving any existing dir aside after asking, or
-with -y), finds its playbooks and sets the default — asking which one
-when there are several. 'pmox apply --default [name]' changes the
-default; 'pmox apply --update' pulls the repo. Run another playbook once
-with 'pmox apply <vm> <name>' (e.g. web, playbooks/db).
-
-Run 'pmox apply --init' to scaffold a starter ~/.config/pmox/tack/. On
-a terminal it offers a checklist of the roles published in
-github.com/tackhq/tack-roles (space to toggle, enter to confirm; none
-= a bare starter) and writes the scaffolded playbook with those roles
-already wired in; non-interactively (or if the list can't be fetched)
-it scaffolds the same fixed default as before.`,
+tack checks the VM's host key against ~/.ssh/known_hosts; pmox pins an
+unknown key there first, trust-on-first-connect like its other SSH
+commands. --ssh-insecure skips both. pmox VMs have passwordless sudo and
+key-based SSH, so tack is told never to wait for a password.`,
+		Example: `  pmox apply web1
+  pmox apply web1 playbooks/db
+  pmox apply web1 --check
+  pmox apply web1 --tags docker -y`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runApply(cmd, args, f)
 		},
 	}
-	cmd.Flags().StringVar(&f.playbook, "playbook", "", "explicit playbook path (overrides profile/default resolution)")
+	cmd.Flags().StringVar(&f.playbook, "playbook", "", "explicit playbook path (overrides the named, remembered and default playbook)")
 	cmd.Flags().BoolVar(&f.check, "check", false, "plan only; show changes without applying (tack --check)")
 	cmd.Flags().StringSliceVarP(&f.tags, "tags", "t", nil, "only run tasks with these tags (repeatable/comma-separated)")
 	cmd.Flags().StringSliceVar(&f.skipTags, "skip-tags", nil, "skip tasks with these tags")
@@ -98,6 +82,10 @@ it scaffolds the same fixed default as before.`,
 	cmd.Flags().StringVar(&f.setDef, "default", "", "set the default playbook (by name; without a name, pick one) and exit")
 	optionalValue(cmd, "default", pickDefaultSentinel, "[=name]")
 	cmd.Flags().BoolVar(&f.update, "update", false, "git pull the cloned playbook repo and exit")
+	// The playbook-management flags moved to 'pmox playbook'.
+	deprecatedFlag(cmd, "init", "pmox playbook init", "")
+	deprecatedFlag(cmd, "default", "pmox playbook default", "")
+	deprecatedFlag(cmd, "update", "pmox playbook update", "")
 	addPickFlag(cmd)
 	return cmd
 }
@@ -304,7 +292,7 @@ func resolvePlaybook(f *applyFlags, profileArg, serverURL string, vmid int) (pla
 	// which used to sail through here and only fail after the VM was
 	// already started and SSH-ready, wasting a boot cycle.
 	if _, statErr := os.Stat(playbook); statErr != nil {
-		hint := "create it or run 'pmox apply --init [git-url]' to set up ~/.config/pmox/tack/"
+		hint := "create it or run 'pmox playbook init [git-url]' to set up ~/.config/pmox/tack/"
 		if names := knownPlaybookNames(); len(names) > 0 {
 			hint = "available: " + strings.Join(names, ", ")
 		}

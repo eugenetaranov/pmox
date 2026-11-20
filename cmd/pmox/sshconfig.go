@@ -32,21 +32,15 @@ func newSSHConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssh-config [name|vmid]",
 		Short: "Print SSH config for a VM",
-		Long: `Print how to connect to a pmox VM over SSH — an OpenSSH config
-block by default, or the full ssh command with --command.
+		Long: `Print how to reach a VM over SSH: an OpenSSH config block, or with
+--command the full ssh command. --output json prints the fields.
 
-The config block can be appended to ~/.ssh/config, used directly with
-'ssh -F <(pmox vm ssh-config web1) <name>', or consumed by VS Code
-Remote-SSH, rsync, and Ansible. Use --output json for a structured form.
+Append the block to ~/.ssh/config, use it in place with
+'ssh -F <(pmox vm ssh-config web1) web1', or give it to VS Code
+Remote-SSH, rsync or Ansible.
 
-The VM must be running — ssh-config never starts it. The default login
-user is the cloud-init user ("pmox") and the identity key is derived
-from the configured SSH public key; override with --user / --identity.
-
-Examples:
-  pmox vm ssh-config web1
-  pmox vm ssh-config web1 --command
-  pmox vm ssh-config web1 --output json | jq -r .hostname`,
+The VM must be running; ssh-config never starts it. The login user and
+key are the ones 'pmox shell' uses; --user and --identity override them.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSSHConfig(cmd, args, f, asCommand)

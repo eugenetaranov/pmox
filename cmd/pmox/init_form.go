@@ -54,7 +54,7 @@ type accessAnswers struct {
 	generateKey bool
 }
 
-// establishEditConnectionFn is a seam so 'config edit' tests needn't dial.
+// establishEditConnectionFn is a seam so 'context edit' tests needn't dial.
 var establishEditConnectionFn = establishEditConnection
 
 // runInteractiveForm is the TTY init experience: one persistent
@@ -70,7 +70,7 @@ func runInteractiveForm(ctx context.Context, p prompter) error {
 
 // runEditForm reopens the wizard for an already-configured context,
 // landing straight on Review instead of the Connection stage —
-// 'pmox config edit's whole point is never re-typing a URL/token that
+// 'pmox context edit's whole point is never re-typing a URL/token that
 // already works. establishEditConnectionFn re-verifies the stored
 // credentials (reachability + a live token check) without asking for
 // anything; defaults/access are pre-seeded from the server's current
@@ -110,7 +110,7 @@ func runEditForm(ctx context.Context, p prompter, cfg *config.Config, canonical 
 	st.haveDefs, st.haveAccess = true, true
 	st.prevConn = connInputs{urlRaw: canonical, tokenSource: "paste", tokenID: conn.tokenID, tokenSecret: conn.secret}
 	st.confirmed[canonical] = true
-	return runWizard(ctx, p, st, "pmox config edit · "+contextName(cfg, canonical), "review")
+	return runWizard(ctx, p, st, "pmox context edit · "+contextName(cfg, canonical), "review")
 }
 
 // errOverwriteDeclined signals that the user chose not to overwrite an
@@ -120,7 +120,7 @@ var errOverwriteDeclined = errors.New("overwrite declined")
 
 // establishEditConnection re-verifies an already-configured context's
 // stored credentials — reachability, then a live token check — without
-// asking for anything. This is 'pmox config edit's answer to "always
+// asking for anything. This is 'pmox context edit's answer to "always
 // re-probe + re-auth, but never re-ask for credentials that already
 // work": any failure names the specific problem and points at
 // 'pmox init' to fix it, since repairing a broken connection isn't

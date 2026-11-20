@@ -152,8 +152,8 @@ func TestResolvePlaybookDefault(t *testing.T) {
 func TestResolvePlaybookMissingIsFriendly(t *testing.T) {
 	setupTackDir(t) // no files
 	_, _, _, err := resolvePlaybook(&applyFlags{}, "", testURL, 101)
-	if err == nil || !strings.Contains(err.Error(), "--init") {
-		t.Fatalf("want friendly error mentioning --init, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "pmox playbook init") {
+		t.Fatalf("want friendly error mentioning pmox playbook init, got %v", err)
 	}
 	if !errors.Is(err, exitcode.ErrUserInput) {
 		t.Errorf("missing playbook should map to ErrUserInput, got %v", err)

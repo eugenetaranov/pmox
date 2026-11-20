@@ -127,7 +127,7 @@ func newTestLaunchFlagsCmd() (*cobra.Command, *launchFlags) {
 	f := &launchFlags{}
 	cmd := &cobra.Command{Use: "launch"}
 	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "")
-	cmd.Flags().IntVar(&f.memGB, "mem", 0, "")
+	cmd.Flags().Float64Var(&f.memGB, "mem", 0, "")
 	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "")
 	return cmd, f
 }
@@ -180,7 +180,7 @@ func TestPromptLaunchSizing(t *testing.T) {
 			t.Fatalf("promptLaunchSizing: %v", err)
 		}
 		if f.cpu != defaultCPU || f.memGB != defaultMemGB || f.diskGB != defaultDiskGB {
-			t.Errorf("cpu/mem/disk = %d/%d/%d, want the built-in defaults %d/%d/%d",
+			t.Errorf("cpu/mem/disk = %d/%v/%d, want the built-in defaults %d/%d/%d",
 				f.cpu, f.memGB, f.diskGB, defaultCPU, defaultMemGB, defaultDiskGB)
 		}
 		wantPrompts := []string{
@@ -210,7 +210,7 @@ func TestPromptLaunchSizing(t *testing.T) {
 			t.Error("must not prompt for --cpu once it's already been set")
 		}
 		if f.memGB != defaultMemGB || f.diskGB != defaultDiskGB {
-			t.Errorf("mem/disk = %d/%d, want the built-in defaults", f.memGB, f.diskGB)
+			t.Errorf("mem/disk = %v/%d, want the built-in defaults", f.memGB, f.diskGB)
 		}
 	})
 	t.Run("a typed value overrides the shown default", func(t *testing.T) {
@@ -220,7 +220,7 @@ func TestPromptLaunchSizing(t *testing.T) {
 			t.Fatalf("promptLaunchSizing: %v", err)
 		}
 		if f.cpu != 4 || f.memGB != 8 || f.diskGB != 100 {
-			t.Errorf("cpu/mem/disk = %d/%d/%d, want 4/8/100", f.cpu, f.memGB, f.diskGB)
+			t.Errorf("cpu/mem/disk = %d/%v/%d, want 4/8/100", f.cpu, f.memGB, f.diskGB)
 		}
 	})
 }
@@ -340,14 +340,14 @@ func TestResolveHook_SingleFlag(t *testing.T) {
 // would fully provision a VM — clone, resize, cloud-init, boot, wait for
 // SSH — before tack itself finally failed with a generic "playbook not
 // found". resolveHook runs first, before any config load or PVE call, so
-// this must fail immediately and mention 'pmox apply --init'.
+// this must fail immediately and mention 'pmox playbook init'.
 func TestResolveHook_TackMissingPlaybook(t *testing.T) {
 	t.Run("default sentinel, nothing scaffolded", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		f := &launchFlags{tack: tackDefaultSentinel}
 		_, err := resolveHook(f)
-		if err == nil || !strings.Contains(err.Error(), "--init") {
-			t.Fatalf("want a friendly error mentioning --init, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "pmox playbook init") {
+			t.Fatalf("want a friendly error mentioning pmox playbook init, got %v", err)
 		}
 		if !errors.Is(err, exitcode.ErrUserInput) {
 			t.Errorf("missing tack playbook should map to ErrUserInput, got %v", err)

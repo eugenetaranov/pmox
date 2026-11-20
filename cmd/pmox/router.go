@@ -366,11 +366,12 @@ autoApprovers entry in your policy covers it.`,
 		},
 	}
 	rm := &cobra.Command{
-		Use:   "rm <cidr>...",
+		Use:   "delete <cidr>...",
 		Short: "Stop advertising routes",
 		Long: `Remove routes the router advertises. Removing the node's own /32 needs
 --force: without it, pmox can't reach the API away from home.`,
-		Aliases: []string{"delete"},
+		Aliases: []string{"rm"},
+		Example: `  pmox router route delete 192.168.0.171/32`,
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRouteChange(cmd, args, false, force)

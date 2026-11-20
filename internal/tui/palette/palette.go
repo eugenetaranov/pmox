@@ -24,11 +24,26 @@ type Item struct {
 	Hint    string // shown for the selected row, e.g. "pmox vm list"
 	Section string // section header the item is listed under
 	Sub     bool   // opens a nested menu instead of running
+	// Path is where the item lives below the menu it is listed in, for
+	// the deeper commands in Menu.All (e.g. ["vm", "resize"], with Key
+	// "vm resize"). Empty means [Key].
+	Path []string
+}
+
+// path is the item's path below its menu.
+func (it Item) path() []string {
+	if len(it.Path) > 0 {
+		return it.Path
+	}
+	return []string{it.Key}
 }
 
 // Menu is one level of the palette.
 type Menu struct {
 	Items []Item
+	// All is every runnable command at any depth below this menu, each
+	// once: what a filter searches. Empty means Items.
+	All []Item
 }
 
 // Resolver returns the menu for a group path (e.g. ["vm"]).
@@ -104,24 +119,33 @@ func (m *Model) Path() []string { return m.path }
 
 func (m *Model) Init() tea.Cmd { return nil }
 
-// visible returns the items matching the filter. Name-prefix matches
-// rank above name or description matches.
+// visible returns the items to list: the menu's own with no filter;
+// with one, every command below the menu that matches it. Matches at
+// this level rank first, then name-prefix matches, then the rest.
 func (m *Model) visible() []Item {
 	f := strings.ToLower(strings.TrimSpace(m.filter))
 	if f == "" {
 		return m.menu.Items
 	}
-	var prefix, other []Item
-	for _, it := range m.menu.Items {
+	pool := m.menu.All
+	if len(pool) == 0 {
+		pool = m.menu.Items
+	}
+	var own, prefix, other []Item
+	for _, it := range pool {
 		key, desc := strings.ToLower(it.Key), strings.ToLower(it.Desc+" "+it.Hint)
+		path := it.path()
+		last := strings.ToLower(path[len(path)-1])
 		switch {
-		case strings.HasPrefix(key, f):
+		case len(path) == 1 && strings.HasPrefix(key, f):
+			own = append(own, it)
+		case strings.HasPrefix(key, f) || strings.HasPrefix(last, f):
 			prefix = append(prefix, it)
 		case strings.Contains(key, f) || strings.Contains(desc, f):
 			other = append(other, it)
 		}
 	}
-	return append(prefix, other...)
+	return append(append(own, prefix...), other...)
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -170,7 +194,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyRight:
 		if len(vis) > 0 && vis[m.cursor].Sub {
-			m.push(vis[m.cursor].Key)
+			m.push(vis[m.cursor].path()...)
 		}
 	case tea.KeyEnter:
 		if len(vis) == 0 {
@@ -178,10 +202,10 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		it := vis[m.cursor]
 		if it.Sub {
-			m.push(it.Key)
+			m.push(it.path()...)
 			return m, nil
 		}
-		return m.quit(append(append([]string{}, m.path...), it.Key))
+		return m.quit(append(append([]string{}, m.path...), it.path()...))
 	case tea.KeyBackspace:
 		if m.filter != "" {
 			r := []rune(m.filter)
@@ -200,8 +224,8 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) push(key string) {
-	m.path = append(m.path, key)
+func (m *Model) push(keys ...string) {
+	m.path = append(m.path, keys...)
 	m.menu, m.filter, m.cursor = m.resolve(m.path), "", 0
 }
 

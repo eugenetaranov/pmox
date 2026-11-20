@@ -71,7 +71,7 @@ func remoteParent(p string) string { return path.Dir(p) }
 func localParent(p string) string  { return filepath.Dir(p) }
 
 // confirmMkdirFn asks before creating a missing directory. A seam for tests.
-var confirmMkdirFn = tui.Confirm
+var confirmMkdirFn = tui.ConfirmLine
 
 // remoteSSHFn runs a shell command on the target and returns its exit
 // code and combined output. A seam for tests.

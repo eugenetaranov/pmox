@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -25,7 +26,7 @@ import (
 )
 
 // Playbooks for 'pmox apply' live under ~/.config/pmox/tack — either a
-// scaffolded starter or a git repo cloned with 'pmox apply --init <url>'.
+// scaffolded starter or a git repo cloned with 'pmox playbook init <url>'.
 // A repo may hold several playbooks; one is the default (remembered in
 // pmox's config as tack_default_playbook), run by a bare 'pmox apply
 // <vm>' and by 'launch --tack'. Other playbooks are run by name
@@ -200,7 +201,7 @@ func gitOrigin(dir string) string {
 }
 
 // confirmBackupFn is a seam over the backup confirmation.
-var confirmBackupFn = tui.Confirm
+var confirmBackupFn = tui.ConfirmLine
 
 // runApplyInitFromURL clones url into the tack dir — moving any existing
 // dir aside first, after asking (or with -y) — then sets the default
@@ -215,7 +216,7 @@ func runApplyInitFromURL(cmd *cobra.Command, url string, yes bool) error {
 		return err
 	}
 	if origin := gitOrigin(dir); origin == url {
-		fmt.Fprintf(out, "%s is already cloned from %s — run 'pmox apply --update' to pull changes\n", dir, url)
+		fmt.Fprintf(out, "%s is already cloned from %s — run 'pmox playbook update' to pull changes\n", dir, url)
 		return nil
 	}
 
@@ -268,7 +269,7 @@ func settleDefaultPlaybook(cmd *cobra.Command, dir, current string) error {
 		return err
 	}
 	if len(found) == 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), tui.Warnf("warning: no playbooks found (YAML files with a 'hosts:' play); add one, then set it with 'pmox apply --default <name>'"))
+		fmt.Fprintln(cmd.ErrOrStderr(), tui.Warnf("warning: no playbooks found (YAML files with a 'hosts:' play); add one, then set it with 'pmox playbook default <name>'"))
 		return nil
 	}
 	interactive := tui.Interactive() && outputMode != "json"
@@ -281,7 +282,7 @@ func settleDefaultPlaybook(cmd *cobra.Command, dir, current string) error {
 	}
 	fmt.Fprintf(out, "found %d playbook(s); default: %s\n", len(found), playbookName(chosen))
 	if len(found) > 1 {
-		fmt.Fprintf(out, "change it with 'pmox apply --default <name>'; run another with 'pmox apply <vm> <name>'\n")
+		fmt.Fprintf(out, "change it with 'pmox playbook default <name>'; run another with 'pmox apply <vm> <name>'\n")
 	}
 	return nil
 }
@@ -298,7 +299,7 @@ func runApplySetDefault(cmd *cobra.Command, name string) error {
 		return err
 	}
 	if len(found) == 0 {
-		return fmt.Errorf("%w: no playbooks in %s — run 'pmox apply --init [url]' first", exitcode.ErrNotFound, displayHome(dir))
+		return fmt.Errorf("%w: no playbooks in %s — run 'pmox playbook init [url]' first", exitcode.ErrNotFound, displayHome(dir))
 	}
 	names := make([]string, len(found))
 	for i, f := range found {
@@ -313,7 +314,7 @@ func runApplySetDefault(cmd *cobra.Command, name string) error {
 			}
 		}
 		if chosen == "" {
-			return fmt.Errorf("%w: no playbook named %q; available: %s", exitcode.ErrNotFound, name, strings.Join(names, ", "))
+			return fmt.Errorf("%w: no playbook named %q; available: %s", exitcode.ErrUserInput, name, strings.Join(names, ", "))
 		}
 	case tui.Interactive() && outputMode != "json":
 		cfg, _ := config.Load()
@@ -325,7 +326,7 @@ func runApplySetDefault(cmd *cobra.Command, name string) error {
 			return err
 		}
 	default:
-		return fmt.Errorf("%w: name the default playbook: pmox apply --default <name> (available: %s)", exitcode.ErrUserInput, strings.Join(names, ", "))
+		return fmt.Errorf("%w: name the default playbook: pmox playbook default <name> (available: %s)", exitcode.ErrUserInput, strings.Join(names, ", "))
 	}
 	if err := saveDefaultPlaybook(chosen); err != nil {
 		return err
@@ -343,7 +344,7 @@ func runApplyUpdate(cmd *cobra.Command) error {
 	}
 	origin := gitOrigin(dir)
 	if origin == "" {
-		return fmt.Errorf("%w: %s is not a git clone — 'pmox apply --init <url>' clones a playbook repo", exitcode.ErrUserInput, displayHome(dir))
+		return fmt.Errorf("%w: %s is not a git clone — 'pmox playbook init <url>' clones a playbook repo", exitcode.ErrUserInput, displayHome(dir))
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "pulling %s …\n", origin)
 	if err := gitFn(cmd.ErrOrStderr(), "-C", dir, "pull", "--ff-only"); err != nil {
@@ -381,4 +382,149 @@ func knownPlaybookNames() []string {
 		names = append(names, playbookName(f))
 	}
 	return slices.Compact(names)
+}
+
+func newPlaybookCmd() *cobra.Command {
+	return nounGroup("playbook", "Set up and choose the playbooks 'pmox apply' runs", `Manage the tack playbooks under ~/.config/pmox/tack/ that 'pmox apply'
+runs: scaffold a starter or clone a git repo, list them, choose the
+default, and pull the repo.
+
+Examples:
+  pmox playbook init
+  pmox playbook init https://github.com/acme/playbooks.git
+  pmox playbook list
+  pmox playbook default web
+  pmox playbook update`,
+		newPlaybookInitCmd(), newPlaybookListCmd(), newPlaybookDefaultCmd(), newPlaybookUpdateCmd(),
+	)
+}
+
+func newPlaybookInitCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "init [git-url]",
+		Short: "Scaffold a starter playbook, or clone a playbook repo",
+		Long: `Set up ~/.config/pmox/tack/.
+
+Without an argument, write a starter playbook: on a terminal pmox offers
+a checklist of the roles published in github.com/tackhq/tack-roles and
+wires the chosen ones in; otherwise it writes a fixed starter.
+
+With a git URL (https://…, ssh://…, git@host:path), clone that repo
+there instead, find its playbooks and set the default, asking which one
+when there are several. An existing directory is moved aside after
+asking, or with --yes.`,
+		Example: `  pmox playbook init
+  pmox playbook init https://github.com/acme/playbooks.git
+  pmox playbook init git@github.com:acme/playbooks.git --yes`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return runApplyInit(cmd, false)
+			}
+			if !isGitURL(args[0]) {
+				return fmt.Errorf("%w: %q is not a git URL (https://…, ssh://…, git@host:path)", exitcode.ErrUserInput, args[0])
+			}
+			return runApplyInitFromURL(cmd, args[0], yes || envBool("PMOX_ASSUME_YES"))
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "move an existing playbook directory aside without asking (env: PMOX_ASSUME_YES)")
+	return cmd
+}
+
+func newPlaybookListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List playbooks",
+		Example: `  pmox playbook list
+  pmox playbook list -o json`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runPlaybookList(cmd) },
+	}
+}
+
+func runPlaybookList(cmd *cobra.Command) error {
+	dir, err := tackDir()
+	if err != nil {
+		return err
+	}
+	found, err := discoverPlaybooks(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	def, _, _ := defaultPlaybook()
+	type row struct {
+		Name    string `json:"name"`
+		Path    string `json:"path"`
+		Default bool   `json:"default"`
+	}
+	rows := []row{}
+	for _, f := range found {
+		path := filepath.Join(dir, f)
+		rows = append(rows, row{Name: playbookName(f), Path: path, Default: path == def})
+	}
+	w := cmd.OutOrStdout()
+	if outputMode == "json" {
+		return printJSON(w, rows)
+	}
+	if len(rows) == 0 {
+		fmt.Fprintf(w, "no playbooks in %s — run 'pmox playbook init'\n", displayHome(dir))
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, "DEFAULT\tNAME\tPATH")
+	for _, r := range rows {
+		mark := ""
+		if r.Default {
+			mark = "*"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", mark, r.Name, displayHome(r.Path))
+	}
+	return tw.Flush()
+}
+
+func newPlaybookDefaultCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "default [name]",
+		Short: "Show or set the default playbook",
+		Long: `Set the playbook a bare 'pmox apply <vm>' runs on a VM that has no
+remembered playbook. Without a name, pick one on a terminal; without a
+terminal, print the current default.`,
+		Example: `  pmox playbook default web
+  pmox playbook default`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return runApplySetDefault(cmd, args[0])
+			}
+			if tui.Interactive() && outputMode != "json" {
+				return runApplySetDefault(cmd, "")
+			}
+			def, _, err := defaultPlaybook()
+			if err != nil {
+				return err
+			}
+			dir, err := tackDir()
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(dir, def)
+			if err != nil {
+				rel = def
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "default playbook: %s\n", playbookName(rel))
+			return nil
+		},
+	}
+}
+
+func newPlaybookUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "update",
+		Short:   "Pull the cloned playbook repo",
+		Example: `  pmox playbook update`,
+		Args:    cobra.NoArgs,
+		RunE:    func(cmd *cobra.Command, _ []string) error { return runApplyUpdate(cmd) },
+	}
 }

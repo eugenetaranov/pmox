@@ -40,7 +40,7 @@ const (
 // test runs.
 type launchFlags struct {
 	cpu            int
-	memGB          int
+	memGB          float64 // GiB; fractions allowed (1.5)
 	diskGB         int
 	template       string
 	storage        string
@@ -67,37 +67,28 @@ func newLaunchCmd() *cobra.Command {
 		Use:     "launch [name]",
 		Aliases: []string{"create"},
 		Short:   "Launch a new VM",
-		Long: `Launch a new VM on the resolved Proxmox cluster from a cloud-init-
-enabled template. Clones the template, tags the new VM, resizes its
-disk, uploads the per-server cloud-init snippet, starts the VM, waits
-for the qemu-guest-agent to report an IP, then runs an SSH handshake
-to confirm the VM is reachable.
+		Long: `Launch a new VM from a cloud-init template: clone it, size it, attach
+the cloud-init snippet, start it, and wait until it has an IP and
+answers SSH.
 
-On a terminal, any of the name, --cpu, --mem, and --disk you didn't
-pass are prompted for (a blank reply keeps the built-in default shown
-in brackets) — 'pmox launch' alone asks for all four; 'pmox launch
-web1' skips the name and asks only for whichever sizing flags you
-didn't set. Non-interactively (scripts, CI, --output json), a missing
-name is still an error and unset sizing flags still silently use their
-built-in default, exactly as before.
+On a terminal, a missing name and whichever of --cpu, --mem and --disk
+weren't passed are asked for (a blank reply keeps the default shown in
+brackets). Without a terminal a missing name is an error, and unset
+sizes use the defaults: 2 cores, 2 GiB, 20 GiB.
 
-The cloud-init user-data is read from
-~/.config/pmox/cloud-init/<host>-<port>.yaml, which 'pmox init'
-writes on first run. Edit that file to customize packages, users,
-runcmd, or anything else cloud-init supports. To regenerate a fresh
-default, run 'pmox config cloud-init --regenerate'.
+The cloud-init user-data comes from
+~/.config/pmox/cloud-init/<host>-<port>.yaml, written by 'pmox init'.
+Edit it to change packages, users or runcmd;
+'pmox config cloud-init --regenerate' writes a fresh one.
 
-The VM disk and the cloud-init snippet may live on different storage
-pools. --storage targets the disk; --snippet-storage targets the
-snippet (which must support the 'snippets' content type). Either
-falls back to the matching configured default; --snippet-storage
-additionally falls back to --storage with a one-shot warning when
-no snippet_storage is configured.
+--storage places the VM's disk and --snippet-storage the cloud-init
+snippet (it needs the 'snippets' content type). Each falls back to its
+configured default; --snippet-storage then falls back to --storage,
+with a warning.
 
-The VM is tagged with 'pmox' immediately after clone so that any
-later failure leaves a cleanable VM on the cluster — there is no
-automatic rollback. If anything after clone fails, run
-'pmox delete <vmid>' to remove it.`,
+The VM is tagged 'pmox' right after the clone. There is no rollback:
+if a later step fails, the VM stays, and 'pmox delete <name>' removes
+it.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return fmt.Errorf("too many arguments: pmox launch takes at most one VM name, got %d", len(args))
@@ -113,7 +104,7 @@ automatic rollback. If anything after clone fails, run
 		},
 	}
 	cmd.Flags().IntVar(&f.cpu, "cpu", 0, "number of vCPU cores (default 2)")
-	cmd.Flags().IntVar(&f.memGB, "mem", 0, "memory in GiB (default 2)")
+	cmd.Flags().Float64Var(&f.memGB, "mem", 0, "memory in GiB, e.g. 4 or 1.5 (default 2)")
 	cmd.Flags().IntVar(&f.diskGB, "disk", 0, "disk size in GiB (default 20)")
 	cmd.Flags().StringVar(&f.template, "template", "", "template VMID or name (falls back to configured default)")
 	cmd.Flags().StringVar(&f.storage, "storage", "", "storage pool for the VM disk (falls back to configured default)")
@@ -177,13 +168,13 @@ func resolveHook(f *launchFlags) (hook.Hook, error) {
 		}
 		// Checked here, before any config load or PVE call, so a missing
 		// playbook (most commonly: --tack was never scaffolded with
-		// 'pmox apply --init') fails immediately instead of after a full
+		// 'pmox playbook init') fails immediately instead of after a full
 		// VM provision and SSH wait, which is where it used to surface —
 		// as tack's own generic "playbook not found" error, well after
 		// the point apply's own onboarding guard would have caught it.
 		if _, err := os.Stat(path); err != nil {
 			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("%w: tack playbook %s not found — create it or run 'pmox apply --init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, path)
+				return nil, fmt.Errorf("%w: tack playbook %s not found — create it or run 'pmox playbook init' to scaffold ~/.config/pmox/tack/", exitcode.ErrUserInput, path)
 			}
 			return nil, fmt.Errorf("stat %s: %w", path, err)
 		}
@@ -343,7 +334,7 @@ func promptLaunchSizing(cmd *cobra.Command, p prompter, f *launchFlags) error {
 		f.cpu = n
 	}
 	if !cmd.Flags().Changed("mem") {
-		n, err := promptIntDefault(p, "Memory in GiB", defaultMemGB)
+		n, err := promptGiBDefault(p, "Memory in GiB", defaultMemGB)
 		if err != nil {
 			return err
 		}
@@ -379,6 +370,36 @@ func promptIntDefault(p prompter, label string, def int) (int, error) {
 		}
 		return n, nil
 	}
+}
+
+// promptGiBDefault is promptIntDefault for a size in GiB that may be a
+// fraction (1.5).
+func promptGiBDefault(p prompter, label string, def float64) (float64, error) {
+	for {
+		raw, err := p.Prompt(fmt.Sprintf("%s [%v]: ", label, def))
+		if err != nil {
+			return 0, err
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return def, nil
+		}
+		mib, err := parseGiB(raw)
+		if err != nil {
+			p.Errf("enter a size in GiB like 4 or 1.5, or press enter for %v\n", def)
+			continue
+		}
+		return float64(mib) / 1024, nil
+	}
+}
+
+// memMiB converts --mem (GiB, possibly fractional; 0 = the default) to
+// whole MiB.
+func memMiB(memGB float64) (int, error) {
+	if memGB == 0 {
+		memGB = defaultMemGB
+	}
+	return parseGiB(strconv.FormatFloat(memGB, 'f', -1, 64))
 }
 
 // newSnippetUploader returns a closure that lazily dials pvessh on
@@ -462,9 +483,9 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 	if cpu == 0 {
 		cpu = defaultCPU
 	}
-	memGB := f.memGB
-	if memGB == 0 {
-		memGB = defaultMemGB
+	memMB, err := memMiB(f.memGB)
+	if err != nil {
+		return launch.Options{}, err
 	}
 	diskGB := f.diskGB
 	if diskGB == 0 {
@@ -477,7 +498,7 @@ func resolveVMSpec(f *launchFlags, resolved *server.Resolved, stderr io.Writer) 
 
 	return launch.Options{
 		CPU:            cpu,
-		MemMB:          memGB * 1024,
+		MemMB:          memMB,
 		DiskSize:       fmt.Sprintf("%dG", diskGB),
 		Storage:        storage,
 		SnippetStorage: snippetStorage,

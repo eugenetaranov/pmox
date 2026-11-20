@@ -40,9 +40,9 @@ import (
 type Options struct {
 	Cfg        *config.Config
 	Flag       string // value of --server (URL or context name), empty if unset
-	Context    string // value of --context (context name), empty if unset
+	Context    string // value of --context (context name or URL), empty if unset
 	Env        string // value of PMOX_SERVER (URL or context name)
-	ContextEnv string // value of PMOX_CONTEXT (context name)
+	ContextEnv string // value of PMOX_CONTEXT (context name or URL)
 
 	// Pick draws the interactive context picker (rung 7) and returns the
 	// chosen Choice.Value. Callers set it only when a picker may be shown
@@ -146,6 +146,16 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return nil, fmt.Errorf("%w: no server configured; run 'pmox init' to add one", exitcode.ErrNotFound)
 	}
 
+	// --server is the deprecated spelling of --context: both may be
+	// given only when they name the same server.
+	if opts.Flag != "" && opts.Context != "" {
+		u1, _, err1 := matchNameOrURL(opts.Flag, opts.Cfg)
+		u2, _, err2 := matchNameOrURL(opts.Context, opts.Cfg)
+		if err1 == nil && err2 == nil && u1 != u2 {
+			return nil, fmt.Errorf("%w: --context %q and --server %q name different servers; pass only --context", exitcode.ErrUserInput, opts.Context, opts.Flag)
+		}
+	}
+
 	// Rung 1: --server flag (context name or URL)
 	if opts.Flag != "" {
 		url, srv, err := matchNameOrURL(opts.Flag, opts.Cfg)
@@ -155,9 +165,9 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(url, srv, "--server flag")
 	}
 
-	// Rung 2: --context flag (context name)
+	// Rung 2: --context flag (context name or URL)
 	if opts.Context != "" {
-		url, srv, err := matchName(opts.Context, opts.Cfg)
+		url, srv, err := matchNameOrURL(opts.Context, opts.Cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -173,9 +183,9 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 		return hydrate(url, srv, "PMOX_SERVER env var")
 	}
 
-	// Rung 4: PMOX_CONTEXT env var (context name)
+	// Rung 4: PMOX_CONTEXT env var (context name or URL)
 	if opts.ContextEnv != "" {
-		url, srv, err := matchName(opts.ContextEnv, opts.Cfg)
+		url, srv, err := matchNameOrURL(opts.ContextEnv, opts.Cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +234,7 @@ func Resolve(ctx context.Context, opts Options) (*Resolved, error) {
 	}
 
 	// Rung 8: non-TTY ambiguity
-	return nil, fmt.Errorf("%w: multiple contexts configured; pick one with --context/--server, PMOX_CONTEXT/PMOX_SERVER, or set one with 'pmox context use'\n%s",
+	return nil, fmt.Errorf("%w: multiple contexts configured; pick one with --context or PMOX_CONTEXT, or set one with 'pmox context use'\n%s",
 		exitcode.ErrUserInput, candidateList(contextLabels(opts.Cfg)))
 }
 
@@ -235,17 +245,6 @@ func matchNameOrURL(input string, cfg *config.Config) (string, *config.Server, e
 		return c.URL, cfg.Servers[c.URL], nil
 	}
 	return matchInput(in, cfg)
-}
-
-// matchName resolves input strictly as a context name.
-func matchName(input string, cfg *config.Config) (string, *config.Server, error) {
-	in := strings.TrimSpace(input)
-	c, ok := cfg.ContextByName(in)
-	if !ok {
-		return "", nil, fmt.Errorf("%w: no context named %q\n%s",
-			exitcode.ErrUserInput, in, candidateList(contextLabels(cfg)))
-	}
-	return c.URL, cfg.Servers[c.URL], nil
 }
 
 // contextLabels renders "name (url)" for each configured context, for

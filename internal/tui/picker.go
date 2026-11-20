@@ -57,7 +57,7 @@ func Interactive() bool {
 // accepts the default; standalone target pickers should use Select.
 //
 // When fallback matches one of opts' values, the picker opens with that
-// option already highlighted — e.g. 'pmox config edit' seeding it with
+// option already highlighted — e.g. 'pmox context edit' seeding it with
 // the currently configured value, so revisiting a choice starts from
 // what's already set instead of always the first listed option.
 func SelectOne(title string, opts []huh.Option[string], fallback string) (string, error) {

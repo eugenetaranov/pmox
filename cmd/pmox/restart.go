@@ -76,7 +76,7 @@ func runRestart(cmd *cobra.Command, args []string, f *restartFlags) error {
 // again. A VM left running by a shutdown that didn't finish is not
 // touched further.
 func executeRestart(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, arg string, f *restartFlags) error {
-	if err := executeStop(ctx, cmd, client, arg, &stopFlags{force: f.hard}); err != nil {
+	if err := executeStop(ctx, cmd, client, arg, &stopFlags{hard: f.hard}); err != nil {
 		if !f.hard {
 			return fmt.Errorf("%w — the VM was left as it is; 'pmox restart --hard %s' powers it off instead", err, arg)
 		}

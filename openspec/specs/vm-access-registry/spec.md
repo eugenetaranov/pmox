@@ -6,6 +6,7 @@ kept on the cluster in /etc/pve/pmox, how pmox writes them into each
 VM's authorized_keys, and the guidance shown when a VM rejects a key.
 
 ## Requirements
+
 ### Requirement: Publish a public key to the cluster registry
 
 `pmox key publish` SHALL upload the caller's configured SSH public key to `/etc/pve/pmox/keys/<name>.pub` on the selected Proxmox clusters, using the node SSH connection pmox already has. `<name>` SHALL default to the caller's local OS username and MAY be overridden with `--name`. pmox SHALL never publish, read or transmit a private key.
@@ -136,3 +137,17 @@ When an SSH-based pmox command (shell, exec, cp, sync, mount, apply) fails becau
 - **WHEN** `access.yaml` lists a VMID that no longer exists
 - **THEN** cleanup lists it under the access-grant category and removes it when applied
 
+### Requirement: revoke names the person with `--from`
+`pmox access revoke [vm...] --from <name>` SHALL remove that person's access. `--to` SHALL keep working on `revoke` as a deprecated spelling and SHALL NOT appear in its help. `grant` keeps `--to`.
+
+#### Scenario: New spelling
+- **WHEN** a user runs `pmox access revoke web1 --from bob`
+- **THEN** bob's access to `web1` is removed
+
+#### Scenario: Old spelling
+- **WHEN** a user runs `pmox access revoke web1 --to bob`
+- **THEN** bob's access to `web1` is removed and stderr shows one line naming `--from`
+
+#### Scenario: Both given
+- **WHEN** a user runs `pmox access revoke web1 --from bob --to carol`
+- **THEN** pmox exits with a user-input error

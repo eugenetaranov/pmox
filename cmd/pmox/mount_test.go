@@ -279,7 +279,7 @@ func TestMountChildArgs(t *testing.T) {
 	t.Run("forwards resolved server and omits unset user", func(t *testing.T) {
 		f := &mountFlags{debounce: 300 * time.Millisecond}
 		args := mountChildArgs("/bin/pmox", f, url, "./src", "web1", "/opt/app", false, nil)
-		assert.Equal(t, []string{"/bin/pmox", "mount", "--foreground", "--server", url, "./src", "web1:/opt/app"}, args)
+		assert.Equal(t, []string{"/bin/pmox", "mount", "--foreground", "--context", url, "./src", "web1:/opt/app"}, args)
 		assert.NotContains(t, args, "--user")
 	})
 
@@ -309,7 +309,7 @@ func TestMountChildArgs(t *testing.T) {
 		require.NotEqual(t, -1, dash)
 		assert.Equal(t, []string{"--bwlimit=1000"}, args[dash+1:])
 		head := strings.Join(args[:dash], " ")
-		for _, want := range []string{"--server " + url, "--identity /k", "--force", "--ssh-insecure", "--gitignore", "--no-delete", "--debounce 1s", "--exclude=*.log", "./src web1:/opt/app"} {
+		for _, want := range []string{"--context " + url, "--identity /k", "--force", "--ssh-insecure", "--gitignore", "--no-delete", "--debounce 1s", "--exclude=*.log", "./src web1:/opt/app"} {
 			assert.Contains(t, head, want)
 		}
 	})
@@ -335,7 +335,7 @@ func TestRunMountDaemon_SpawnsWithResolvedServer(t *testing.T) {
 	f := &mountFlags{debounce: 300 * time.Millisecond}
 	require.NoError(t, runMountDaemon(cmd, "./src", "web1", "/opt/app", url, f))
 
-	assert.Contains(t, strings.Join(gotArgs, " "), "--server "+url)
+	assert.Contains(t, strings.Join(gotArgs, " "), "--context "+url)
 	assert.NotContains(t, gotArgs, "--user")
 	assert.Equal(t, mount.LogPath(testMountStateDir(t), "web1", "./src", "/opt/app"), gotRec.LogPath)
 	assert.Contains(t, errbuf.String(), "mount started in background (pid 4242)")
@@ -630,10 +630,10 @@ func TestRunUmount_AllFlag_RoutesToUmountAll(t *testing.T) {
 // Task 3.6: help-text includes the new bare-form examples for both
 // mount and umount.
 func TestMountUmountHelpIncludesBareExamples(t *testing.T) {
-	mountHelp := newMountCmd().Long
+	mountHelp := findPath(t, "mount").Example
 	assert.Contains(t, mountHelp, "pmox mount ./src /opt/app", "mount --help must show bare-path example")
 
-	umountHelp := newUmountCmd().Long
+	umountHelp := findPath(t, "umount").Example
 	assert.Contains(t, umountHelp, "pmox umount\n", "umount --help must show zero-arg example")
 }
 

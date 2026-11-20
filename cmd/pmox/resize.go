@@ -24,22 +24,184 @@ import (
 const resizeDisk = "scsi0"
 
 func newResizeCmd() *cobra.Command {
-	return nounGroup("resize", "Change a VM's memory, CPU cores or disk size (ram, cpu, disk)",
-		`Change a VM's memory (ram), CPU cores (cpu) or disk size (disk).
+	f := &resizeFlags{}
+	cmd := &cobra.Command{
+		Use:   "resize [name|vmid]",
+		Short: "Change a VM's CPU cores, memory or disk size",
+		Long: `Change a VM's CPU cores (--cpu), memory (--mem) or disk size (--disk),
+in any combination, with the same flag names 'pmox launch' takes.
 
-Memory and cores take effect when the VM is stopped and started (a reboot
-from inside isn't enough): on a running VM pmox asks to do that now,
---restart does it without asking, and --no-restart leaves it for later.
-A disk only grows (Proxmox can't shrink one); on a running VM pmox grows
-the partition and filesystem too, with no restart.`,
-		newResizeRAMCmd(), newResizeCPUCmd(), newResizeDiskCmd(),
+Cores and memory take effect when the VM is stopped and started (a
+reboot from inside isn't enough): on a running VM pmox asks to do that
+now, --restart does it without asking, and --no-restart leaves it for
+later.
+
+A disk only grows (Proxmox can't shrink one): --disk +20 grows it by
+20 GiB, --disk 60 grows it to 60 GiB. On a running VM pmox grows the
+partition and filesystem too, with no restart; on a stopped one they
+grow at its next boot.
+
+With no VM named, pmox picks the only pmox VM or shows the picker. The
+default VM is not used.`,
+		Example: `  pmox resize web1 --mem 8
+  pmox resize web1 --cpu 4 --mem 16 --restart
+  pmox resize web1 --disk +20`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runResize(cmd, args, f)
+		},
+	}
+	cmd.Flags().StringVar(&f.cpu, "cpu", "", "number of vCPU cores")
+	cmd.Flags().StringVar(&f.mem, "mem", "", "memory in GiB, e.g. 8 or 1.5")
+	cmd.Flags().StringVar(&f.disk, "disk", "", "grow the disk: +N by N GiB, N to N GiB")
+	addRestartFlags(cmd, f)
+	addSSHFlags(cmd, &f.ssh)
+	// The old 'resize cpu|ram|disk <vm> <value>' forms.
+	cmd.AddCommand(
+		deprecated(newResizeRAMCmd(), "pmox resize <vm> --mem <GiB>"),
+		deprecated(newResizeCPUCmd(), "pmox resize <vm> --cpu <cores>"),
+		deprecated(newResizeDiskCmd(), "pmox resize <vm> --disk <+GiB|GiB>"),
 	)
+	return cmd
+}
+
+// resizeSelectFn asks which setting to change. A seam for tests.
+var resizeSelectFn = tui.Select
+
+// runResize is 'pmox resize [vm] --cpu/--mem/--disk': every value is
+// checked before anything changes, the disk too (a refused shrink leaves
+// cores and memory alone), and a running VM is restarted at most once.
+func runResize(cmd *cobra.Command, args []string, f *resizeFlags) error {
+	ctx := cmd.Context()
+	if f.cpu == "" && f.mem == "" && f.disk == "" {
+		if !tui.Interactive() {
+			return fmt.Errorf("%w: nothing to change — pass --cpu <cores>, --mem <GiB> and/or --disk <+GiB|GiB> (example: pmox resize web1 --mem 8)", exitcode.ErrUserInput)
+		}
+		// From the command palette: ask what to change, then the value.
+		which, err := resizeSelectFn("What to change", []huh.Option[string]{
+			huh.NewOption("Memory", "mem"), huh.NewOption("CPU cores", "cpu"), huh.NewOption("Disk size", "disk"),
+		})
+		if err != nil {
+			return err
+		}
+		ask := map[string]string{"mem": "Memory in GiB (e.g. 8)", "cpu": "CPU cores", "disk": "Disk: +GiB to grow by, or GiB to grow to"}[which]
+		v, err := askTextFn(ask)
+		if err != nil {
+			return err
+		}
+		v = strings.TrimSpace(v)
+		switch which {
+		case "mem":
+			f.mem = v
+		case "cpu":
+			f.cpu = v
+		default:
+			f.disk = v
+		}
+	}
+	var cores, memMiB int
+	var err error
+	if f.cpu != "" {
+		if cores, err = parseCores(f.cpu); err != nil {
+			return err
+		}
+	}
+	if f.mem != "" {
+		if memMiB, err = parseGiB(f.mem); err != nil {
+			return err
+		}
+	}
+	if f.disk != "" && diskSizeRe.FindStringSubmatch(strings.TrimSpace(f.disk)) == nil {
+		return fmt.Errorf("%w: disk size %q: want +N (grow by N GiB) or N (grow to N GiB)", exitcode.ErrUserInput, f.disk)
+	}
+
+	client, resolved, err := buildClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	vmArg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	return executeResize(ctx, cmd, client, resolved, vmArg, cores, memMiB, f.disk, f)
+}
+
+// executeResize applies the requested changes (0 / "" = leave alone).
+func executeResize(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, resolved *server.Resolved, vmArg string, cores, memMiB int, disk string, f *resizeFlags) error {
+	if disk != "" {
+		if err := checkDiskGrow(ctx, client, vmArg, disk, f); err != nil {
+			return err
+		}
+	}
+	var pending []string // settings changed on a running VM
+	var ref *vm.Ref
+	for _, c := range []struct {
+		key  string
+		want int
+	}{{"cores", cores}, {"memory", memMiB}} {
+		if c.want == 0 {
+			continue
+		}
+		r, needsRestart, err := applyResizeSetting(ctx, cmd, client, vmArg, c.key, c.want, f)
+		if err != nil {
+			return err
+		}
+		ref = r
+		if needsRestart {
+			pending = append(pending, c.key)
+		}
+	}
+	if disk != "" {
+		if err := executeResizeDisk(ctx, cmd, client, resolved, vmArg, disk, f); err != nil {
+			return err
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	return finishResizeRestart(ctx, cmd, client, ref, strings.Join(pending, " and "), f)
+}
+
+// checkDiskGrow refuses, before anything is changed, a disk size below
+// the current one.
+func checkDiskGrow(ctx context.Context, client *pveclient.Client, vmArg, value string, f *resizeFlags) error {
+	m := diskSizeRe.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil || m[1] == "+" {
+		return nil // executeResizeDisk reports a malformed size
+	}
+	n, _ := strconv.Atoi(m[2])
+	ref, err := vm.Resolve(ctx, client, vmArg)
+	if err != nil {
+		return err
+	}
+	if err := ref.RequirePMOXTag("resize", f.ssh.force); err != nil {
+		return err
+	}
+	cfg, err := client.GetConfig(ctx, ref.Node, ref.VMID)
+	if err != nil {
+		return fmt.Errorf("read vm %d config: %w", ref.VMID, err)
+	}
+	if cur, known := diskGiB(cfg[resizeDisk]); known && float64(n) < cur {
+		return fmt.Errorf("%w: %s's disk is %s GiB; Proxmox can't shrink a disk (grow it, or make a new VM)", exitcode.ErrUserInput, ref.Name, strconv.FormatFloat(cur, 'f', -1, 64))
+	}
+	return nil
+}
+
+// parseCores reads a core count.
+func parseCores(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 512 {
+		return 0, fmt.Errorf("%w: cores %q: want a whole number, 1 or more", exitcode.ErrUserInput, s)
+	}
+	return n, nil
 }
 
 type resizeFlags struct {
 	ssh       sshFlags
 	restart   bool
 	noRestart bool
+	// The flag form's values, as typed ("" = not given).
+	cpu, mem, disk string
 }
 
 // resizeArgs splits [vm] [value]: the VM is optional (the only pmox VM,
@@ -144,7 +306,7 @@ var resizeRestartFn = func(ctx context.Context, cmd *cobra.Command, client *pvec
 }
 
 // resizeConfirmFn asks whether to restart now. A seam for tests.
-var resizeConfirmFn = func(q string) (bool, error) { return tui.Confirm(q, false) }
+var resizeConfirmFn = func(q string) (bool, error) { return tui.ConfirmLine(q, false) }
 
 func runResizeSetting(cmd *cobra.Command, args []string, f *resizeFlags, key string) error {
 	ctx := cmd.Context()
@@ -162,23 +324,34 @@ func runResizeSetting(cmd *cobra.Command, args []string, f *resizeFlags, key str
 		if want, err = parseGiB(value); err != nil {
 			return err
 		}
-	} else if want, err = strconv.Atoi(value); err != nil || want < 1 || want > 512 {
-		return fmt.Errorf("%w: cores %q: want a whole number, 1 or more", exitcode.ErrUserInput, value)
+	} else if want, err = parseCores(value); err != nil {
+		return err
 	}
 	return executeResizeSetting(ctx, cmd, client, vmArg, key, want, f)
 }
 
 func executeResizeSetting(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, vmArg, key string, want int, f *resizeFlags) error {
-	ref, err := vm.Resolve(ctx, client, vmArg)
-	if err != nil {
+	ref, needsRestart, err := applyResizeSetting(ctx, cmd, client, vmArg, key, want, f)
+	if err != nil || !needsRestart {
 		return err
 	}
+	return finishResizeRestart(ctx, cmd, client, ref, key, f)
+}
+
+// applyResizeSetting sets cores or memory. needsRestart reports that the
+// value changed on a running VM, where it applies only after a stop and
+// start.
+func applyResizeSetting(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, vmArg, key string, want int, f *resizeFlags) (ref *vm.Ref, needsRestart bool, err error) {
+	ref, err = vm.Resolve(ctx, client, vmArg)
+	if err != nil {
+		return nil, false, err
+	}
 	if err := ref.RequirePMOXTag("resize", f.ssh.force); err != nil {
-		return err
+		return nil, false, err
 	}
 	cfg, err := client.GetConfig(ctx, ref.Node, ref.VMID)
 	if err != nil {
-		return fmt.Errorf("read vm %d config: %w", ref.VMID, err)
+		return nil, false, fmt.Errorf("read vm %d config: %w", ref.VMID, err)
 	}
 	cur, _ := strconv.Atoi(strings.TrimSpace(cfg[key]))
 	show := func(v int) string {
@@ -191,7 +364,7 @@ func executeResizeSetting(ctx context.Context, cmd *cobra.Command, client *pvecl
 	out := cmd.OutOrStdout()
 	if cur == want {
 		fmt.Fprintf(out, "%s%s already has %s %s\n", doneMark(true), ref.Name, what, show(want))
-		return nil
+		return ref, false, nil
 	}
 	kv := map[string]string{key: strconv.Itoa(want)}
 	if key == "memory" {
@@ -201,16 +374,24 @@ func executeResizeSetting(ctx context.Context, cmd *cobra.Command, client *pvecl
 		}
 	}
 	if err := client.SetConfig(ctx, ref.Node, ref.VMID, kv); err != nil {
-		return fmt.Errorf("set %s on vm %d: %w", what, ref.VMID, err)
+		return nil, false, fmt.Errorf("set %s on vm %d: %w", what, ref.VMID, err)
 	}
 	fmt.Fprintf(out, "%s%s: %s %s → %s\n", doneMark(true), ref.Name, what, show(cur), show(want))
 
 	st, err := client.GetStatus(ctx, ref.Node, ref.VMID)
 	if err != nil || !st.IsRunning() {
-		return nil // a stopped VM gets it at its next start
+		return ref, false, nil // a stopped VM gets it at its next start
 	}
+	return ref, true, nil
+}
+
+// finishResizeRestart stops and starts a running VM so that what (e.g.
+// "cores and memory") applies: asked once on a terminal, at once with
+// --restart, left for later with --no-restart or without a terminal.
+func finishResizeRestart(ctx context.Context, cmd *cobra.Command, client *pveclient.Client, ref *vm.Ref, what string, f *resizeFlags) error {
 	restart := f.restart
 	if !f.restart && !f.noRestart && tui.Interactive() {
+		var err error
 		if restart, err = resizeConfirmFn(fmt.Sprintf("%s is running: stop and start it now so the new %s applies?", ref.Name, what)); err != nil {
 			return err
 		}

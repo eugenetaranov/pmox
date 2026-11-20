@@ -42,7 +42,7 @@ func TestStop_DefaultRoutesToShutdown(t *testing.T) {
 func TestStop_ForceRoutesToStop(t *testing.T) {
 	f := newStopFake(t)
 	cmd, out, _ := newTestInfoCmd()
-	if err := executeStop(cmd.Context(), cmd, f.Client(), "web1", &stopFlags{force: true}); err != nil {
+	if err := executeStop(cmd.Context(), cmd, f.Client(), "web1", &stopFlags{hard: true}); err != nil {
 		t.Fatalf("executeStop: %v", err)
 	}
 	if f.Count("POST", "/status/stop") != 1 {

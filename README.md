@@ -104,7 +104,9 @@ On a terminal, running `pmox` with no command at all shows an
 arrow-key (or type-to-filter) picker of every command, grouped the
 same way `pmox --help` is; picking one runs it with no further
 arguments, so that command's own prompts (a VM picker, `launch`'s
-name/sizing prompts, etc.) take over from there. Non-interactively
+name/sizing prompts, etc.) take over from there. Typing searches every
+command, not only the ones on screen: `autostart` finds `mount
+autostart`. Non-interactively
 this still just prints help, as before.
 
 `pmox init` walks through everything: API URL, token, node SSH
@@ -127,7 +129,7 @@ goes back a page, **Ctrl-C** quits without saving. Piped, `--no-input`
 and CI runs fall back to plain prompts.
 
 Already set up? `pmox init` won't start over. It asks whether to change
-a configured server (`pmox config edit`), add another one
+a configured server (`pmox context edit`), add another one
 (`pmox context add`) or remove one (`pmox context delete`).
 
 `pmox launch` on a terminal with no default template settles one before
@@ -175,19 +177,22 @@ noun alone (`pmox vm`) on a terminal shows its verbs to pick from.
 | `shell` | `vm shell` | `pmox shell web1` |
 | `list`, `ls` | `vm list` | `pmox ls` |
 | `start` / `stop` / `restart` | `vm start` / `vm stop` / `vm restart` | `pmox stop web1 web2` |
+| `resize` | `vm resize` | `pmox resize web1 --mem 8` |
+| `info` | the Proxmox host; with a VM, `vm info` | `pmox info web1` |
 | `delete`, `rm` | `vm delete` | `pmox rm web1` |
 | `exec` | `vm exec` | `pmox exec web1 uname -a` |
 | `cp` / `sync` | `vm cp` / `vm sync` | `pmox sync ./src/ web1:/opt/app/` |
 | `apply` | `vm apply` | `pmox apply web1` |
 | `mount` / `umount` | `mount create` / `mount delete` | `pmox mount ./src web1:/opt/app` |
 
-### `pmox info`: the Proxmox host
+### `pmox info`: the Proxmox host, or a VM
 
 `pmox info` shows the current context's Proxmox host: its version, each
 node's status, uptime, CPU and memory use, its storage pools with free
-space, and how many VMs run there (pmox's and in all). `--context` picks
-another server and `-o json` (short for `--output json`) prints it as JSON. For one VM, use `pmox vm info
-<name>`.
+space, and how many VMs run there (pmox's and in all). With a VM
+(`pmox info web1`) it shows that VM, the same report as `pmox vm info
+web1`. `--context` picks another server and `-o json` (short for
+`--output json`) prints either as JSON.
 
 ### `pmox vm`: VMs
 
@@ -199,9 +204,9 @@ another server and `-o json` (short for `--output json`) prints it as JSON. For 
 | `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox vm info web1` |
 | `use` | Set the default VM that `shell`, `exec` and the other everyday commands go to (`--clear` removes it) | `pmox vm use web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
-| `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox vm stop web1 web2` |
+| `stop` | Graceful shutdown of one or more VMs (`--hard` powers off) | `pmox vm stop web1 web2` |
 | `restart` | Stop and start one or more VMs (a full stop and start, so pending `resize` changes apply; `--hard` powers off) | `pmox vm restart web1` |
-| `resize ram`, `cpu`, `disk` | Set memory (GiB) or cores (applied at the next stop/start; `--restart` does it now), or grow the disk (`+20` or `60` GiB) and, on a running VM, its filesystem | `pmox vm resize disk web1 +20` |
+| `resize` | Set cores (`--cpu`), memory (`--mem`, GiB) and grow the disk (`--disk +20` or `60`), in any combination. Cores and memory apply at the next stop/start (`--restart` does it now); a running VM's filesystem grows with the disk | `pmox vm resize web1 --mem 8 --disk +20` |
 | `delete`, `rm` | Stop + destroy one or more VMs with y/N confirmation (`--yes` to skip) | `pmox vm delete web1` |
 | `shell` | Interactive SSH session; auto-starts a stopped VM | `pmox vm shell web1` |
 | `exec` | Run one command on a VM over SSH (`pmox exec -- <cmd>` picks the VM) | `pmox vm exec web1 uname -a` |
@@ -215,12 +220,13 @@ another server and `-o json` (short for `--output json`) prints it as JSON. For 
 | Command | Summary | Example |
 | --- | --- | --- |
 | `template create` / `list` | Build an Ubuntu cloud-image template (9000–9099) / list templates | `pmox template create` |
-| `context list` / `add` / `use` / `current` / `rename` / `delete` | Add and switch between Proxmox servers | `pmox context add` |
-| `config edit` / `path` / `cloud-init` | Edit a context; config file path; show or `--regenerate` the cloud-init template | `pmox config edit prod` |
+| `context list` / `add` / `use` / `current` / `edit` / `rename` / `delete` | Add, switch between and edit Proxmox servers | `pmox context add` |
+| `config path` / `cloud-init` | Config file path; show or `--regenerate` the cloud-init template | `pmox config path` |
+| `playbook init` / `list` / `default` / `update` | Set up, list and choose the tack playbooks `pmox apply` runs; pull a cloned playbook repo | `pmox playbook init` |
 | `mount create` / `list` / `delete` | Continuous one-way rsync of a local dir to a VM, `.git` and gitignored files included (`--gitignore` leaves those out); changes on the VM are overwritten, so commit locally; list or stop background mounts | `pmox mount list` |
 | `key list` / `publish` / `unpublish` / `show` | Published keys on the cluster; publish or remove yours | `pmox key list` |
 | `access setup` / `grant` / `revoke` / `show` / `sync` | Share VMs with other people (`setup` is interactive) | `pmox access grant web1 --to bob` |
-| `router create` / `login` / `status` / `route add`/`rm`/`list` / `delete` | A Tailscale router container that puts the node on your tailnet ([docs/remote-access.md](./docs/remote-access.md)) | `pmox router create --auth-key-file ~/ts.key` |
+| `router create` / `login` / `status` / `route add`/`delete`/`list` / `delete` | A Tailscale router container that puts the node on your tailnet ([docs/remote-access.md](./docs/remote-access.md)) | `pmox router create --auth-key-file ~/ts.key` |
 | `yardo push` / `apply` / `verify` / `gitkey` | Install yardo on a VM; apply profiles across VMs (4 at a time); check them for drift; send an SSH key for git | `pmox yardo gitkey web1 ~/.ssh/deploy_key` |
 
 ### Maintenance
@@ -243,6 +249,13 @@ least two more minor releases:
 | `pmox init --list` / `--remove <url>` | `pmox context list` / `delete <name>` |
 | `pmox init --regen-cloud-init` | `pmox config cloud-init --regenerate` |
 | `pmox ssh-config`, `pmox clone` | `pmox vm ssh-config`, `pmox vm clone` |
+| `pmox config edit` | `pmox context edit` |
+| `pmox vm resize ram\|cpu\|disk <vm> <value>` | `pmox resize <vm> --mem\|--cpu\|--disk <value>` |
+| `pmox apply --init` / `--default` / `--update` | `pmox playbook init` / `default` / `update` |
+| `pmox stop --force` | `pmox stop --hard` |
+| `--server`, `PMOX_SERVER` | `--context`, `PMOX_CONTEXT` (both take a name or URL) |
+| `pmox cleanup --include-templates` / `--include-vms` | `pmox cleanup --include template` / `--include vm` |
+| `pmox access revoke --to <name>` | `pmox access revoke --from <name>` |
 
 ### Interactive selection
 
@@ -345,7 +358,7 @@ stay with their owner.
    alice$ pmox access setup                   # People › VMs › Review, full-screen
    alice$ pmox access grant web1 db1 --to bob
    alice$ pmox access grant --all-vms --to carol   # every pmox VM, including future ones
-   alice$ pmox access revoke web1 --to bob
+   alice$ pmox access revoke web1 --from bob
    alice$ pmox access show                    # who can reach what, and whether each VM matches
    ```
 
@@ -396,8 +409,8 @@ scans every configured context, in selectable categories:
 - **access-grant** — access grants for VMs that no longer exist;
 - **api-token** — server-side `pmox*` API tokens this machine's config doesn't use. Another workstation or person may be using one, so it is opt-in: tick it in the checklist or pass `--include api-token`.
 - **access-key** — published keys nobody has a grant for. Opt-in (`--include access-key`): the person may simply not have been granted anything yet.
-- **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include-templates` (or `--include template`).
-- **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include-vms` (or `--include vm`); review the listed VMs before removing.
+- **template** — pmox-generated templates (`ubuntu-…-pmox-…`, 9000–9099). **Destructive: this deletes VMs.** It is never selected by default — tick it in the checklist or pass `--include template`.
+- **vm** — pmox-tagged VMs missing the `pmox-ready` tag (set once a launch/clone completes, right before any post-create hook) — either abandoned mid-launch by an earlier failure, or (rarely) one still provisioning right now. **Destructive: this deletes VMs.** Also never selected by default — tick it in the checklist or pass `--include vm`; review the listed VMs before removing.
 - **context** — a configured server context, exactly what `pmox context delete` removes (config entry + keychain secret). Not leftover cruft — this is active configuration — so it's opt-in only: tick it in the checklist or pass `--include context`.
 - **tack-config** — the entire `~/.config/pmox/tack/` directory: every playbook and role, hand-edited or scaffolded. Also active configuration, not cruft; opt-in only via the checklist or `--include tack-config`.
 
@@ -415,8 +428,8 @@ pmox cleanup                          # checklist, report, then y/N to remove no
 pmox cleanup --apply                  # skip the checklist/prompt, remove unconditionally
 pmox cleanup --only snippet,log       # just these
 pmox cleanup --skip known-host        # everything safe except this
-pmox cleanup --include-templates --apply   # also delete pmox templates
-pmox cleanup --include-vms --apply         # also delete VMs abandoned mid-launch
+pmox cleanup --include template --apply    # also delete pmox templates
+pmox cleanup --include vm --yes            # also delete VMs abandoned mid-launch (--yes = --apply)
 pmox cleanup --include context,tack-config --apply   # full teardown of config + tack
 pmox cleanup --output json
 ```
@@ -640,21 +653,21 @@ Playbooks and roles live under `~/.config/pmox/tack/`:
 
 ```
 ~/.config/pmox/tack/
-  playbook.yaml     # default, used by `pmox apply <vm>` (or set one with --default)
-  web.yaml          # a named profile: `pmox apply <vm> web`
+  playbook.yaml     # default, used by `pmox apply <vm>` (or set one with `pmox playbook default`)
+  web.yaml          # a named playbook: `pmox apply <vm> web`
   roles/            # local roles (or reference tack-roles remotely)
 ```
 
-Run `pmox apply --init` to scaffold that layout with a starter playbook.
+Run `pmox playbook init` to scaffold that layout with a starter playbook.
 On a terminal it fetches the role list from
 [tackhq/tack-roles](https://github.com/tackhq/tack-roles) and shows a
 checklist (space to toggle, enter to confirm) so you pick what to
 bootstrap with instead of getting a single hardcoded example role;
 picking none scaffolds a bare starter with a commented example.
-Non-interactively, or if the list can't be fetched, it scaffolds the
-same fixed default as always.
+Non-interactively, or if the list can't be fetched, it scaffolds a fixed
+starter.
 
-**Playbooks from a git repo.** `pmox apply --init <url>` clones a repo
+**Playbooks from a git repo.** `pmox playbook init <url>` clones a repo
 (`https://…`, `git@host:path`, `ssh://…`) into `~/.config/pmox/tack/`
 instead. Any existing directory is first moved aside to
 `tack.bak-<timestamp>`, after asking (or with `-y`). pmox then finds the
@@ -663,9 +676,10 @@ With exactly one, it becomes the default. With several, you pick the
 default on a terminal; scripts get `site`/`playbook`/`main` if present.
 
 ```
-pmox apply --init git@github.com:me/infra.git
-pmox apply --default web        # change the default (no name: pick one)
-pmox apply --update             # git pull; re-pick if the default vanished
+pmox playbook init git@github.com:me/infra.git
+pmox playbook list              # what's there; the default is marked
+pmox playbook default web       # change the default (no name: pick one)
+pmox playbook update            # git pull; re-pick if the default vanished
 pmox apply web1 playbooks/db    # run another playbook by name, once
 ```
 
@@ -673,7 +687,7 @@ The playbook is resolved in order:
 1. `--playbook <path>`;
 2. a playbook name argument (`web`, `playbooks/db`);
 3. the playbook last used for that VM (remembered per VM);
-4. the default (`pmox apply --default`, else `playbook.yaml`).
+4. the default (`pmox playbook default`, else `playbook.yaml`).
 
 `launch --tack` uses the same default.
 
@@ -780,48 +794,42 @@ See [docs/remote-access.md](./docs/remote-access.md).
 
 Each configured server is a **context** (kubectl-style), addressed by a
 short name. When you have more than one, switch between them instead of
-passing `--server` every time:
+passing `--context` every time:
 
 ```
 pmox context list             # table of contexts; current marked *
 pmox context use prod         # switch the current context
 pmox context current          # print the current context
 pmox context rename 192.168.0.185 prod
-pmox config edit prod                # change its defaults/access, no re-auth
+pmox context edit prod        # change its defaults/access, no re-auth
 pmox context delete lab       # forget a context + its secrets
 pmox config path                     # print the config file location
 ```
 
-A new context's name defaults to its host; `rename-context` gives it a
+A new context's name defaults to its host; `context rename` gives it a
 friendly name. Target a specific context for one command with `--context
-<name>` (or `--server <name|url>`).
+<name|url>`.
 
-`pmox config edit [context]` is the one interactive command in this
-group — it reopens the `pmox init` wizard for an already-configured
-context, landing straight on the **Review** screen instead of redoing
-the whole connection/token dance. The stored token is reused as-is;
-reachability and the token are re-verified first (nothing re-typed) —
-either failing points you at `pmox init` to fix the connection, since
-repairing it isn't what `edit` is for. From Review you can jump back to
-Defaults (node/template/storage/snippet-storage/bridge) or Access (SSH
-key/user/node SSH) and change anything; every field starts pre-filled
-with its current value instead of a blank re-discovery, and nothing is
-written until you confirm. Omit `[context]` to pick one interactively
-when more than one is configured.
+`pmox context edit [context]` reopens the `pmox init` wizard for a
+configured context on its **Review** screen. The stored token is reused,
+after pmox has checked that the server still answers and accepts it; if
+it doesn't, `pmox init` sets the connection up again. From Review you
+can jump back to Defaults (node/template/storage/snippet-storage/bridge)
+or Access (SSH key/user/node SSH); every field starts with its current
+value, and nothing is written until you confirm. Omit `[context]` to
+pick one when several are configured.
 
-Each command resolves its target in this order: `--server` (name or URL)
-→ `--context` (name) → `PMOX_SERVER` → `PMOX_CONTEXT` → the current
-context (`pmox context use`) → the only configured context → an interactive
-picker. (`pmox context list` / `--remove` still work.)
+Each command resolves its target in this order: `--context` (name or
+URL) → `PMOX_CONTEXT` → the current context (`pmox context use`) → the
+only configured context → an interactive picker.
 
 ## Environment variables
 
 | Variable | Effect |
 | --- | --- |
-| `PMOX_SERVER` | Select the target context by name or URL (overridden by `--server`) |
-| `PMOX_CONTEXT` | Select the target context by name (overridden by `--context`) |
+| `PMOX_CONTEXT` | Select the target context by name or URL (overridden by `--context`) |
 | `PMOX_SSH_INSECURE` | Skip SSH host-key verification; equivalent to `--ssh-insecure` |
-| `PMOX_ASSUME_YES` | Skip the `pmox delete` confirmation; equivalent to `--yes` |
+| `PMOX_ASSUME_YES` | Skip confirmations (`delete`, `router delete`, `apply`, `doctor` fixes); equivalent to `--yes`. Not honoured by `cleanup`, which needs `--apply`/`--yes` |
 | `PMOX_NO_INPUT` | Never prompt; error instead of showing a picker; equivalent to `--no-input` |
 | `PMOX_SECRET_STORE` | Secret backend: `auto` (default), `keychain`, or `file` (`~/.config/pmox/secrets.yaml`, 0600) |
 
@@ -916,7 +924,7 @@ A running mount rides out sleep and network changes: a failed sync is
 retried (5 s, doubling to 2 min) until the VM is reachable again, and
 from the second failure on it asks Proxmox for the VM's current address.
 A mount whose process ended (a reboot, or the VM or Proxmox unreachable
-when it started) shows as `stale`: `pmox remount --stale` starts it again
+when it started) shows as `stale`: `pmox mount restart --stale` (or `pmox remount --stale`) starts it again
 with its options, and `pmox mount autostart on` does that for you at login
 and every five minutes (a launchd agent on macOS, a systemd user timer on
 Linux). `pmox remount <vm>:<path> --exclude=…` restarts a mount with

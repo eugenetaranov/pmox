@@ -47,7 +47,7 @@ var (
 		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return c.Run()
 	}
-	confirmUpgradeFn = tui.Confirm
+	confirmUpgradeFn = tui.ConfirmLine
 	// brewVersionsFn lists the installed versions of a formula.
 	brewVersionsFn = func(brew, formula string) ([]string, error) {
 		out, err := exec.Command(brew, "list", "--versions", formula).Output()

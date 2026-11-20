@@ -286,7 +286,7 @@ func checkRenamedKeys(data []byte) error {
 	for _, u := range urls {
 		for old, now := range renamedKeys {
 			if _, ok := raw.Servers[u][old]; ok {
-				return fmt.Errorf("server %s: %q is now %q; rename it (pmox config edit)", u, old, now)
+				return fmt.Errorf("server %s: %q is now %q; rename it (pmox context edit)", u, old, now)
 			}
 		}
 	}

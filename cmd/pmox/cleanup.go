@@ -59,6 +59,7 @@ func countItems(items []cleanupItem) int {
 func newCleanupCmd() *cobra.Command {
 	var (
 		apply            bool
+		yes              bool
 		only             []string
 		skip             []string
 		includeTemplates bool
@@ -72,16 +73,19 @@ func newCleanupCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCleanup(cmd, cleanupOpts{
-				apply: apply, only: only, skip: skip,
+				apply: apply || yes, only: only, skip: skip,
 				includeTemplates: includeTemplates, includeVMs: includeVMs, include: include,
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "remove without asking (default: dry-run report; on a terminal, asks y/N instead of requiring a re-run)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "same as --apply")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "only these categories (comma-separated)")
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "skip these categories (comma-separated)")
 	cmd.Flags().BoolVar(&includeTemplates, "include-templates", false, "include the destructive 'template' category (deletes pmox templates)")
 	cmd.Flags().BoolVar(&includeVMs, "include-vms", false, "include the destructive 'vm' category (deletes VMs abandoned mid-launch)")
+	deprecatedFlag(cmd, "include-templates", "--include template", "")
+	deprecatedFlag(cmd, "include-vms", "--include vm", "")
 	cmd.Flags().StringSliceVar(&include, "include", nil, "include these opt-in categories (comma-separated: "+strings.Join(optInCategoryKeys(), ", ")+")")
 	return cmd
 }
@@ -105,12 +109,11 @@ listed dimmed as "clean" instead of disappearing, so the list stays a
 complete map of what cleanup checks. A populated category shows its
 count and is pre-checked, except the opt-in ones, which start
 unchecked. Then it asks "Remove N item(s) now? [y/N]" — say y to delete
-right there. Pass --apply to skip that prompt and delete
+right there. Pass --apply (or --yes) to skip that prompt and delete
 unconditionally (for scripts/CI). Non-interactively, use --only /
 --skip; add --include <cats> (comma-separated) to enable opt-in
-categories — --include-templates / --include-vms are shorthand for
---include template / --include vm. VMs outside the template and vm
-categories are never touched by cleanup (use 'pmox delete').
+categories. VMs outside the template and vm categories are never
+touched by cleanup (use 'pmox delete').
 
 The vm category flags pmox-tagged VMs missing the "pmox-ready" tag
 (set once a launch/clone completes, right before any post-create
@@ -719,7 +722,7 @@ func contextItems(cfg *config.Config) []cleanupItem {
 
 // tackConfigItems returns a single item that removes the entire
 // ~/.config/pmox/tack/ directory — every playbook and role, hand-edited
-// or scaffolded by 'pmox apply --init'. Unlike every other category,
+// or scaffolded by 'pmox playbook init'. Unlike every other category,
 // this isn't orphaned leftovers either; it exists for the same
 // full-teardown reason as contextItems.
 func tackConfigItems() []cleanupItem {

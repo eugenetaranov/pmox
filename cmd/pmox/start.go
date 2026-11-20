@@ -25,15 +25,13 @@ func newStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start [name|vmid]",
 		Short: "Start a stopped VM",
-		Long: `Start a VM on the resolved Proxmox cluster. By default, pmox waits
-for the start task to complete and then polls the qemu-guest-agent
-until it reports a usable IPv4 address, mirroring 'pmox launch'.
+		Long: `Start a VM and wait until its guest agent reports an IP.
 
-If the argument is omitted, pmox auto-selects the only pmox VM when
-one exists, or shows an interactive picker when there are several.
+--no-wait returns as soon as the VM is started. --wait sets how long to
+wait for the IP (default 3m).
 
---no-wait returns as soon as the start task finishes and skips the
-IP-wait loop. --wait overrides the default 3m budget for the IP poll.`,
+With no VM named, pmox starts the default VM, or the only pmox VM, or
+shows the picker.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStart(cmd, args, f)

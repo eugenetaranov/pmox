@@ -73,7 +73,6 @@ func TestOptionalValueFlagsHideTheirSentinel(t *testing.T) {
 	}{
 		{"launch", newLaunchCmd(), "--tack [=path]"},
 		{"vm clone", newCloneCmd(), "--tack [=path]"},
-		{"apply", newApplyCmd(), "--default [=name]"},
 	}
 	for _, tc := range cases {
 		usage := flagUsages(tc.cmd.Flags())
@@ -271,5 +270,48 @@ func TestColorSwitch(t *testing.T) {
 	}
 	if got := colorize("ok", colorGreen); got != "ok" {
 		t.Errorf("colorize with color off = %q", got)
+	}
+}
+
+func TestCleanupYesAndDeprecatedIncludes(t *testing.T) {
+	c := newCleanupCmd()
+	if f := c.Flags().Lookup("yes"); f == nil || f.Shorthand != "y" {
+		t.Fatal("cleanup should take -y/--yes")
+	}
+	for _, old := range []string{"include-templates", "include-vms"} {
+		if f := c.Flags().Lookup(old); f == nil || !f.Hidden {
+			t.Errorf("--%s should remain as a hidden flag", old)
+		}
+	}
+	if help := cleanupLong(); strings.Contains(help, "--include-templates") {
+		t.Error("--help still documents the deprecated shorthands")
+	}
+	// The old shorthand still selects its category.
+	items := itemsFromCounts(map[string]int{"vm": 1, "log": 1})
+	sel, err := resolveSelection([]string{"vm", "log"}, items, cleanupOpts{includeVMs: true}, false, io.Discard)
+	if err != nil || !sel["vm"] {
+		t.Errorf("--include-vms selection = %v, err %v", sel, err)
+	}
+}
+
+// Outside the full-screen wizards, a yes/no question is one typed line:
+// no command file uses the button-style tui.Confirm.
+func TestNoButtonConfirmOutsideWizards(t *testing.T) {
+	wizard := map[string]bool{"init_setup_choice.go": true, "init_conn.go": true}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || wizard[f] {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "tui.Confirm(") || strings.Contains(string(src), "= tui.Confirm\n") {
+			t.Errorf("%s uses the button-style tui.Confirm; use tui.ConfirmLine", f)
+		}
 	}
 }

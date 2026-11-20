@@ -62,36 +62,20 @@ func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check that pmox is ready to use",
-		Long: `Run checks that validate your pmox configuration, Proxmox API and
-SSH connectivity, storage and template readiness, and local tooling,
-then report whether the tool is ready to launch VMs.
+		Long: `Check that pmox is ready to launch VMs: the config, the Proxmox API and
+the token's privileges, the node, storage and template, node SSH, VM
+access sharing, and local tools. Each check passes, warns or fails, with
+a hint on how to fix it.
 
-When a check fails or warns and pmox knows how to repair it, doctor
-offers to fix it right there — confirmed one at a time — then
-automatically re-runs every check afterward so you see confirmation
-the problem is actually gone, instead of being told to re-run
-'pmox doctor' yourself. Pass -y (or PMOX_ASSUME_YES=1) to apply fixes
-without asking; that works without a terminal too (e.g. in CI), except
-for a fix that itself needs one (like rebuilding a template, which
-reuses 'pmox template create's own image/storage pickers) — that one
-is only ever offered on a real terminal. Pass --no-fix to see only the
-report. Without a terminal and without -y, nothing is ever offered or
-changed — same as a plain report.
+When pmox can repair a failed or warning check itself, it offers to,
+one check at a time, then runs every check again. -y applies the fixes
+without asking, also without a terminal (except one that needs a
+terminal itself, like rebuilding a template). --no-fix only reports.
+Without a terminal and without -y, nothing is offered or changed.
 
-Aside from an explicitly accepted fix, doctor never changes anything
-on its own: no prompts, no pinned host keys, no modified config. Each
-check reports pass/warn/fail with a remediation hint. The process
-exits non-zero if any check fails (or, with --strict, if any warning
-is present), using the same exit-code taxonomy as other commands so CI
-can gate on it. Use --output json for machine-readable output (never
-offers a fix); --verbose to also list passing checks.
-
-Examples:
-  pmox doctor
-  pmox doctor --strict
-  pmox doctor -y
-  pmox doctor --no-fix
-  pmox doctor --output json | jq '.checks[] | select(.status=="fail")'`,
+doctor exits non-zero when a check fails, and with --strict also when
+one warns, so CI can gate on it. --verbose lists passing checks too,
+and --output json prints the report (and never offers a fix).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDoctor(cmd, f)
@@ -180,7 +164,7 @@ func runDoctor(cmd *cobra.Command, f *doctorFlags) error {
 		Pick:       nil, // doctor never prompts for a context: no interactive picker
 	})
 	if err != nil {
-		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --server / set PMOX_SERVER", exitcode.ExitUserError)
+		cl.Fail("config.server", "config", "no server resolved: "+err.Error(), "run 'pmox init', or pass --context / set PMOX_CONTEXT", exitcode.ExitUserError)
 		return renderAndFinish(parent, cmd, f, cl.Finalize("", "", f.strict), nil)
 	}
 	cl.Pass("config.server", "config", "server resolves: "+resolved.URL)
@@ -577,7 +561,7 @@ func doctorTack(cl *doctor.Checklist, deps doctorDeps) {
 	}
 	if _, err := os.Stat(pb); err != nil {
 		cl.Warn("tooling.tack", "tooling", "tack available but no default playbook at "+pb,
-			"run 'pmox apply --init [git-url]' to set one up, or use a profile/--playbook")
+			"run 'pmox playbook init [git-url]' to set one up, or use a profile/--playbook")
 		return
 	}
 	cl.Pass("tooling.tack", "tooling", "tack available; "+source+" present")

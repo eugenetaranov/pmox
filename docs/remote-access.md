@@ -132,7 +132,7 @@ other way round), so consider NetBird (§4).
      { "src": ["autogroup:member"], "dst": ["10.83.17.2/32"], "ip": ["tcp:8006", "tcp:22"], "via": ["tag:pmox-router"] }
      ```
    - **Other machines:** `pmox router route add 10.83.17.20/32`
-     advertises a VM (or any LAN host) too, and `pmox router route rm`
+     advertises a VM (or any LAN host) too, and `pmox router route delete`
      takes it away again. Routes must be private and no wider than `/16`.
      Removing the node's own route needs `--force`.
    - **At home:** the `/32` also wins over your LAN, so the Mac reaches
@@ -162,7 +162,7 @@ other way round), so consider NetBird (§4).
 3. **VMs (B).**
    - In `sudo yardo` on the VM, pick **Tailscale**, then **Tailscale
      login**, and paste an auth key.
-   - Or add tack's `tailscale` role to your playbook (`pmox apply --init`)
+   - Or add tack's `tailscale` role to your playbook (`pmox playbook init`)
      and run `pmox apply web1`.
    - Mint the keys in the admin console as **tagged** (`tag:pmox-vm`) and
      **pre-approved**. Make them **ephemeral** for throwaway VMs, so a

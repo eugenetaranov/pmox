@@ -139,7 +139,7 @@ func runKeyPublish(cmd *cobra.Command, f *keyFlags) error {
 }
 
 // confirmReplaceFn asks before replacing a different published key.
-var confirmReplaceFn = tui.Confirm
+var confirmReplaceFn = tui.ConfirmLine
 
 func publishTo(cmd *cobra.Command, r *server.Resolved, label, name string, replace bool) error {
 	ctx := cmd.Context()

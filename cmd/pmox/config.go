@@ -18,20 +18,21 @@ import (
 // '*-context' verbs stay here as deprecated forms for the deprecation
 // window.
 func newConfigCmd() *cobra.Command {
-	g := nounGroup("config", "Edit configuration", `Edit pmox's configuration.
+	g := nounGroup("config", "Config file path and cloud-init template", `pmox's configuration files.
 
 First-time setup lives in 'pmox init'; switching between servers in
 'pmox context'.
 
+Changing a configured server's settings is 'pmox context edit'.
+
 Examples:
-  pmox config edit prod
   pmox config path
   pmox config cloud-init --regenerate`,
-		newEditContextCmd(),
 		newConfigPathCmd(),
 		newConfigCloudInitCmd(),
 	)
 	g.AddCommand(
+		deprecated(newEditContextCmd(), "pmox context edit"),
 		deprecated(newGetContextsCmd(), "pmox context list"),
 		deprecated(newUseContextCmd(), "pmox context use"),
 		deprecated(newCurrentContextCmd(), "pmox context current"),
@@ -304,20 +305,17 @@ func newEditContextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit [context]",
 		Short: "Change a configured server's settings",
-		Long: `Reopens the 'pmox init' wizard for an already-configured context,
-landing straight on the Review screen instead of redoing the whole
-connection/token setup. The stored token is reused as-is; reachability
-and the token are re-verified first, with nothing re-typed — if either
-is broken, this points you at 'pmox init' to fix the connection
-instead, since that isn't what edit is for.
+		Long: `Change a configured server's defaults (node, template, storage, snippet
+storage, bridge) and access settings (SSH key, user, node SSH).
 
-From Review you can jump back to Defaults (node/template/storage/
-snippet-storage/bridge) or Access (SSH key/user/node SSH) and change
-anything; every field starts pre-filled with its current value instead
-of a blank re-discovery. Nothing is written until you confirm.
+This opens the 'pmox init' wizard on its Review page, with every field
+holding its current value; nothing is written until you confirm. The
+stored token is reused, after pmox has checked that the server still
+answers and accepts it. If it doesn't, 'pmox init' sets up the
+connection again.
 
-With no argument, picks the context interactively when more than one
-is configured. Requires an interactive terminal.`,
+With no context named, pick one when several are configured. Needs a
+terminal.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigEdit(cmd, args)
@@ -327,7 +325,7 @@ is configured. Requires an interactive terminal.`,
 
 func runConfigEdit(cmd *cobra.Command, args []string) error {
 	if !interactiveFn() {
-		return fmt.Errorf("%w: 'pmox config edit' requires an interactive terminal", exitcode.ErrUserInput)
+		return fmt.Errorf("%w: 'pmox context edit' requires an interactive terminal", exitcode.ErrUserInput)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -372,7 +370,7 @@ func pickContextToDelete(cfg *config.Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ok, err := tui.Confirm(fmt.Sprintf("Forget %s and its secrets (token, node SSH password)?", name), false)
+	ok, err := tui.ConfirmLine(fmt.Sprintf("Forget %s and its secrets (token, node SSH password)?", name), false)
 	if err != nil {
 		return "", err
 	}

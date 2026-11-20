@@ -23,14 +23,11 @@ func newListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List VMs",
-		Long: `List VMs on the resolved Proxmox cluster. By default only VMs tagged
-'pmox' are shown — pass --all to include every VM.
-
-For running VMs, pmox queries the qemu-guest-agent for an IPv4 address
-in parallel (capped at 8 concurrent calls). If the agent is not up,
-the IP column is left blank.
-
-Use --output json for machine-readable output.`,
+		Long: `List the cluster's pmox VMs (the ones tagged 'pmox') with their node,
+status and IP; --all lists every VM. A running VM's IP comes from its
+guest agent and is blank while the agent isn't up. An address on an
+overlay network is marked (tailscale) or (netbird). The default VM, if
+one is set, is marked with *.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runListCmd(cmd, f)

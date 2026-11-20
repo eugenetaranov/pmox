@@ -22,7 +22,7 @@ func discoveryCtx(parent context.Context) (context.Context, context.CancelFunc) 
 // discoverDefaults runs the node/template/storage/snippet/bridge pickers
 // in order. current seeds each picker's highlighted option with the
 // value from a previous pass through this stage — either earlier in
-// this same wizard run, or (for 'pmox config edit') what's already
+// this same wizard run, or (for 'pmox context edit') what's already
 // configured on disk — so revisiting a choice starts from what's
 // already set instead of always the first listed option. A zero-value
 // current picks exactly as before: no option pre-highlighted beyond

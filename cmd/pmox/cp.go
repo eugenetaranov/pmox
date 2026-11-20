@@ -185,23 +185,17 @@ func newCpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cp <source> <destination>",
 		Short: "Copy files to or from a VM",
-		Long: `Copy files between the local host and a pmox-managed VM using scp.
-Exactly one of source or destination must use <name>:<path> syntax
-to identify the remote side.
+		Long: `Copy files between this machine and a VM with scp. Exactly one of
+the two arguments names the VM side, as <vm>:<path>; ":<path>" uses the
+default VM, the only pmox VM, or the picker.
 
-Examples:
-  pmox cp ./app.tar.gz web1:/tmp/
-  pmox cp web1:/var/log/syslog ./logs/
-  pmox cp -r ./config/ web1:/etc/app/
-  pmox cp ./big.tar web1:/tmp/ -- -l 1000
+A remote path that starts with neither / nor ~/ is relative to the
+login user's home. A missing destination directory is created after
+asking; --mkdir creates it without asking.
 
-On a terminal, 'pmox cp' alone asks for a direction, then the local
-path and the <vm>:<path> target (Tab completes the VM and remote
-directories; one pmox VM is filled in for you). A remote path not
-starting with / or ~/ is relative to the login home.
-
-A missing destination directory is confirmed and created; --mkdir
-creates it without asking.`,
+On a terminal, 'pmox cp' alone asks for the direction, the local path
+and the <vm>:<path> target, with Tab completing the VM and remote
+directories.`,
 		Args:               zeroOrExactArgs(2, "pmox cp <source> <destination>", "pmox cp ./app.tar web1:/tmp/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -274,24 +268,20 @@ func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync <source> <destination>",
 		Short: "Sync a directory to or from a VM",
-		Long: `Synchronize files between the local host and a pmox-managed VM using
-rsync over SSH. Exactly one of source or destination must use
-<name>:<path> syntax to identify the remote side.
+		Long: `Sync a directory between this machine and a VM with rsync. Exactly one of
+the two arguments names the VM side, as <vm>:<path>; ":<path>" uses the
+default VM, the only pmox VM, or the picker.
 
-Examples:
-  pmox sync ./src/ web1:/opt/app/
-  pmox sync web1:/var/log/ ./logs/
-  pmox sync ./src/ web1:/opt/app/ -- --delete --exclude .git
+rsync runs with -a (recursive, keeps attributes) unless --no-archive;
+pass more rsync flags after "--".
 
-rsync runs with -a (recursive, keeps attributes) unless --no-archive.
+A remote path that starts with neither / nor ~/ is relative to the
+login user's home. A missing destination directory is created after
+asking; --mkdir creates it without asking.
 
-On a terminal, 'pmox sync' alone asks for a direction, then the local
-path and the <vm>:<path> target (Tab completes the VM and remote
-directories; one pmox VM is filled in for you). A remote path not
-starting with / or ~/ is relative to the login home.
-
-A missing destination directory is confirmed and created; --mkdir
-creates it without asking.`,
+On a terminal, 'pmox sync' alone asks for the direction, the local path
+and the <vm>:<path> target, with Tab completing the VM and remote
+directories.`,
 		Args:               zeroOrExactArgs(2, "pmox sync <source> <destination>", "pmox sync ./src/ web1:/opt/app/"),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {

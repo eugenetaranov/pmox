@@ -100,55 +100,33 @@ func newMountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mount <local_path> [<name|vmid>:]<remote_path>",
 		Short: "Keep a local directory synced to a VM",
-		Long: `Watch a local directory for filesystem changes and continuously
-synchronize them to a pmox-managed VM using rsync over SSH.
+		Long: `Keep a local directory mirrored to a VM: watch it for changes and rsync
+them over SSH as they happen. The sync is one way, from this machine to
+the VM, and what changes on the VM is overwritten.
 
-The source is always a local directory. The destination may use
-<name>:<path> syntax to pin a specific VM, or a bare <remote_path>
-in which case pmox resolves the VM via the shared target picker
-(auto-selecting when exactly one pmox VM exists, or prompting when
-several do).
+The mount runs in the background and logs to a file; -F keeps it in
+the foreground. 'pmox umount' stops it, 'pmox mount list' shows the
+running ones.
 
-By default, pmox mount runs in the background, writes a PID file,
-and streams sync activity to a log file. Pass --foreground / -F to
-run attached to the terminal instead; stop background mounts with
-pmox umount.
+The target is <vm>:<path>. A bare <path> uses the default VM, the only
+pmox VM, or the picker. A remote path that starts with neither / nor
+~/ is relative to the login user's home. A missing remote directory is
+created after asking (with sudo when its parent isn't writable, as for
+/mnt); --mkdir creates it without asking.
 
-Default rsync flags: -az --partial --delete plus built-in excludes
-(node_modules, .venv, etc.). Files .gitignore lists (.env, data, build
-output) sync too; --gitignore leaves them out.
+rsync runs with -az --partial --delete. .git is synced, so git status,
+log and diff work on the VM; commit and switch branches locally. Files
+that .gitignore lists are synced too; --gitignore leaves them out.
 
-The sync is one way, from this machine to the VM.
-
-Built-in default excludes (replaced by --exclude or config mount_excludes):
+These are excluded, and left alone on the VM (--exclude or the config's
+mount_excludes replaces the list):
   .venv  .terraform  .terraform.*  node_modules  __pycache__  .mypy_cache
   .pytest_cache  .ruff_cache  .tox  .direnv  .next  .turbo  .claude
   .python-version  .DS_Store  *.swp  *.swo  *~
-Excluded paths are also left alone on the VM (never deleted there), so
-the VM keeps its own .claude/ and .python-version.
-
-.git is synced, so git status, log and diff work on the VM. The VM copy
-is a mirror of yours: commit and switch branches locally, since the next
-sync overwrites what changed on the VM (--delete included). To leave
-.git out, pass --exclude=.git (with the other excludes you want).
-
-Examples:
-  pmox mount ./src /opt/app
-  pmox mount ./src web1:/opt/app
-  pmox mount -F ./src web1:/opt/app
-  pmox mount --no-delete --gitignore ./src web1:/opt/app
-  pmox mount --exclude=.git --exclude=node_modules ./src web1:/opt/app
-  pmox mount ./src web1:/opt/app -- --bwlimit=1000
 
 On a terminal, 'pmox mount' alone asks for the local directory and the
-<vm>:<path> target; 'pmox mount ./src' asks only for the target. The
-target suggests <vm>:/mnt/<local dir>; Tab completes the VM and remote
-directories, and one pmox VM is filled in for you. A remote path not
-starting with / or ~/ is relative to the login home.
-
-A missing remote directory is confirmed and created (with sudo when
-its parent isn't writable, as for /mnt); --mkdir creates it without
-asking.`,
+target; 'pmox mount ./src' asks only for the target, suggesting
+<vm>:/mnt/<directory name>.`,
 		Args: atMostArgs(2, "pmox mount <local_path> [<name|vmid>:]<remote_path>", "pmox mount ./src web1:/opt/app"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMount(cmd, args, f)
@@ -268,17 +246,11 @@ func newUmountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "umount [<name|vmid>:<remote_path>]",
 		Short: "Stop background mounts",
-		Long: `Stop running daemon-mode mounts by finding their PID files and
-sending SIGTERM to each process.
+		Long: `Stop background mounts.
 
-Called with no arguments, umount offers the mounts that are running
-and stops the ones you pick (one running mount is stopped without
-asking; none is reported as success).
-
-Examples:
-  pmox umount
-  pmox umount web1:/opt/app
-  pmox umount --all web1`,
+With <vm>:<path>, stop that mount; with --all <vm>, every mount of that
+VM. With no argument, pmox stops the only running mount, or offers the
+running ones to pick from. Nothing running counts as success.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUmount(cmd, args, all)
@@ -660,14 +632,14 @@ var mountStartDaemonFn = mount.Spawn
 
 // mountChildArgs builds the argv for the detached daemon. The child
 // runs `pmox mount --foreground` with the parent's flags, and is pinned
-// to the server the parent already resolved via --server <URL> so it
+// to the server the parent already resolved via --context <URL> so it
 // cannot pick a different (or ambiguous) server — e.g. when the parent
 // was targeted with --context. Global flags go before the positional
 // args so they never land after `--` among the rsync pass-through args.
 func mountChildArgs(exe string, f *mountFlags, serverURL, localPath, vmName, remotePath string, insecure bool, extra []string) []string {
 	args := []string{exe, "mount", "--foreground"}
 	if serverURL != "" {
-		args = append(args, "--server", serverURL)
+		args = append(args, "--context", serverURL)
 	}
 	if f.user != "" {
 		args = append(args, "--user", f.user)

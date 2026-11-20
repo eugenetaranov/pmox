@@ -69,7 +69,7 @@ func TestCompleteVMNames(t *testing.T) {
 		{"restart", nil, "", "web1 web2 db1"},
 		{"vm use", nil, "", "web1 web2 db1"},
 		{"shell", nil, "10", "104 106 105"}, // digits: VMIDs
-		{"vm resize cpu", nil, "", "web1 web2 db1"},
+		{"resize", nil, "", "web1 web2 db1"},
 		{"access grant", []string{"web1"}, "", "web2 db1"},
 	}
 	for _, tc := range cases {
@@ -231,10 +231,10 @@ func TestCompletionIsSilentWhenTheClusterIsNot(t *testing.T) {
 func TestEveryVMCommandCompletes(t *testing.T) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if strings.Contains(c.Use, "name|vmid") && !c.Hidden && c.ValidArgsFunction == nil {
+		if strings.Contains(c.Use, "name|vmid") && c.Annotations[deprecatedAnnotation] == "" && c.ValidArgsFunction == nil {
 			t.Errorf("%q takes a VM but has no completion", c.CommandPath())
 		}
-		if c.Hidden && c.ValidArgsFunction != nil {
+		if c.Annotations[deprecatedAnnotation] != "" && c.ValidArgsFunction != nil {
 			t.Errorf("deprecated %q should not complete", c.CommandPath())
 		}
 		for _, sub := range c.Commands() {

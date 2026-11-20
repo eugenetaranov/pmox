@@ -220,7 +220,8 @@ func printOutcomes(w io.Writer, outcomes []syncOutcome) error {
 // --- commands ---
 
 type accessFlags struct {
-	to     string
+	to     string // the person: grant's --to, revoke's --from
+	toFlag string // --to as typed
 	allVMs bool
 	force  bool
 }
@@ -263,18 +264,28 @@ func newAccessGrantCmd() *cobra.Command {
 func newAccessRevokeCmd() *cobra.Command {
 	f := &accessFlags{}
 	cmd := &cobra.Command{
-		Use:   "revoke [vm...] --to <name>",
+		Use:   "revoke [vm...] --from <name>",
 		Short: "Remove a person's SSH access to VMs",
-		Example: `  pmox access revoke web1 --to bob
-  pmox access revoke --all-vms --to bob     # remove all of bob's access`,
+		Example: `  pmox access revoke web1 --from bob
+  pmox access revoke --all-vms --from bob     # remove all of bob's access`,
 		RunE: func(cmd *cobra.Command, args []string) error { return runAccessChange(cmd, args, f, false) },
 	}
 	addAccessChangeFlags(cmd, f)
+	// revoke names the person with --from; --to is the old spelling.
+	cmd.Flags().StringVar(&f.to, "from", "", "registry name of the person (as published with 'pmox key publish')")
+	deprecatedFlag(cmd, "to", "--from", "from")
+	forward := cmd.PreRunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("to") && cmd.Flags().Changed("from") {
+			return fmt.Errorf("%w: pass --from only (--to is its old name)", exitcode.ErrUserInput)
+		}
+		return forward(cmd, args)
+	}
 	return cmd
 }
 
 func addAccessChangeFlags(cmd *cobra.Command, f *accessFlags) {
-	cmd.Flags().StringVar(&f.to, "to", "", "registry name of the person (as published with 'pmox key publish')")
+	cmd.Flags().StringVar(&f.toFlag, "to", "", "registry name of the person (as published with 'pmox key publish')")
 	cmd.Flags().BoolVar(&f.allVMs, "all-vms", false, "every pmox VM, including ones launched later")
 	cmd.Flags().BoolVar(&f.force, "force", false, "allow VMs without the pmox tag")
 }
@@ -283,10 +294,17 @@ func runAccessChange(cmd *cobra.Command, args []string, f *accessFlags, grant bo
 	ctx := cmd.Context()
 	// On a terminal, whatever wasn't given is asked for (the palette runs
 	// 'access grant' with no arguments); scripts must pass it.
+	if f.to == "" {
+		f.to = f.toFlag
+	}
+	who := "--to"
+	if !grant {
+		who = "--from"
+	}
 	prompt := tui.Interactive() && (f.to == "" || (!f.allVMs && len(args) == 0))
 	if !prompt {
 		if f.to == "" {
-			return fmt.Errorf("%w: --to <name> is required", exitcode.ErrUserInput)
+			return fmt.Errorf("%w: %s <name> is required", exitcode.ErrUserInput, who)
 		}
 		if f.allVMs == (len(args) > 0) {
 			return fmt.Errorf("%w: name one or more VMs, or pass --all-vms", exitcode.ErrUserInput)

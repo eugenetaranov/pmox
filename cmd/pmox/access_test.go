@@ -14,6 +14,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/accessreg"
 	"github.com/eugenetaranov/pmox/internal/config"
 	"github.com/eugenetaranov/pmox/internal/credstore"
+	"github.com/eugenetaranov/pmox/internal/exitcode"
 	"github.com/eugenetaranov/pmox/internal/guestkeys"
 	"github.com/eugenetaranov/pmox/internal/pveclient"
 	"github.com/eugenetaranov/pmox/internal/server"
@@ -395,4 +396,36 @@ func forceInteractive(t *testing.T) {
 	tui.StdinIsTerminal = func() bool { return true }
 	tui.StderrIsTerminal = func() bool { return true }
 	t.Cleanup(func() { tui.StdinIsTerminal, tui.StderrIsTerminal = in, errT })
+}
+
+// revoke names the person with --from; --to still works, with a note.
+func TestAccessRevokeFrom(t *testing.T) {
+	reg, guests := setupAccessEnv(t)
+	publishAs(t.Context(), t, reg, "bob", testKeyA)
+
+	if out, err := runCmd(t, "access", "grant", "web1", "102", "--to", "bob"); err != nil {
+		t.Fatalf("grant: %v\n%s", err, out)
+	}
+	out, err := runCmd(t, "access", "revoke", "web1", "--from", "bob")
+	if err != nil || len(guests.managed(101)) != 0 || strings.Contains(out, "deprecated") {
+		t.Fatalf("revoke --from: err %v, web1 keys %v\n%s", err, guests.managed(101), out)
+	}
+	out, err = runCmd(t, "access", "revoke", "102", "--to", "bob")
+	if err != nil || len(guests.managed(102)) != 0 || !strings.Contains(out, "'--to' is deprecated") || !strings.Contains(out, "'--from'") {
+		t.Fatalf("revoke --to: err %v, vm 102 keys %v\n%s", err, guests.managed(102), out)
+	}
+	if _, err := runCmd(t, "access", "revoke", "web1", "--from", "bob", "--to", "carol"); !errors.Is(err, exitcode.ErrUserInput) {
+		t.Errorf("both flags: err = %v, want a user-input error", err)
+	}
+	if _, err := runCmd(t, "access", "revoke", "web1"); err == nil || !strings.Contains(err.Error(), "--from <name> is required") {
+		t.Errorf("no person: err = %v", err)
+	}
+	// grant keeps --to and has no --from.
+	g := newAccessGrantCmd()
+	if g.Flags().Lookup("from") != nil || g.Flags().Lookup("to").Hidden {
+		t.Error("grant takes --to, visibly, and no --from")
+	}
+	if r := newAccessRevokeCmd(); !r.Flags().Lookup("to").Hidden || strings.Contains(r.Use, "--to") {
+		t.Error("revoke --to should be hidden and gone from the usage line")
+	}
 }

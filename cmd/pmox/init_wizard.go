@@ -21,7 +21,7 @@ import (
 	"github.com/eugenetaranov/pmox/internal/tui/wizard"
 )
 
-// The interactive 'pmox init' / 'pmox config edit' experience: one
+// The interactive 'pmox init' / 'pmox context edit' experience: one
 // persistent bubbletea program (internal/tui/wizard) with Connection,
 // Defaults, Access and Review stages plus a hidden save step. Every
 // network/SSH/disk side effect goes through wizardOps inside a tea.Cmd;

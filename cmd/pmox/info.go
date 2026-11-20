@@ -16,12 +16,12 @@ func newInfoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info [name|vmid]",
 		Short: "Show details of a VM",
-		Long: `Print the configured and runtime state of a single VM: cpu, memory,
-primary disk, status, uptime, tags, and guest-agent-reported network
-interfaces. Use --output json for machine-readable output.
+		Long: `Show one VM: its cores, memory, primary disk, status, uptime, tags,
+the network interfaces its guest agent reports, and the address pmox
+connects to.
 
-If the argument is omitted, pmox auto-selects the only pmox VM when
-one exists, or shows an interactive picker when there are several.`,
+With no VM named, pmox shows the default VM, or the only pmox VM, or
+shows the picker.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInfo(cmd, args)

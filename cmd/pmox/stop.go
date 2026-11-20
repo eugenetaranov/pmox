@@ -14,7 +14,8 @@ import (
 const stopTaskTimeout = 120 * time.Second
 
 type stopFlags struct {
-	force  bool
+	hard   bool
+	force  bool // deprecated spelling of hard
 	noWait bool
 }
 
@@ -23,9 +24,8 @@ func newStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop [name|vmid ...]",
 		Short: "Stop VMs",
-		Long: `Stop one or more VMs on the resolved Proxmox cluster. Default is ACPI
-graceful shutdown via POST /status/shutdown. --force sends a hard
-power-off via /status/stop — use it when the guest is unresponsive.
+		Long: `Stop one or more VMs with a graceful shutdown. --hard powers the VM
+off instead — use it when the guest is unresponsive.
 
 If no arguments are given, pmox auto-selects the only pmox VM when one
 exists, or shows a multi-select picker when there are several.
@@ -37,7 +37,9 @@ pmox waits for the PVE task to complete.`,
 			return runStop(cmd, args, f)
 		},
 	}
-	cmd.Flags().BoolVar(&f.force, "force", false, "hard power-off instead of ACPI graceful shutdown")
+	cmd.Flags().BoolVar(&f.hard, "hard", false, "hard power-off instead of a graceful shutdown")
+	cmd.Flags().BoolVar(&f.force, "force", false, "hard power-off (deprecated: use --hard)")
+	deprecatedFlag(cmd, "force", "--hard", "hard")
 	cmd.Flags().BoolVar(&f.noWait, "no-wait", false, "return after the stop task is queued instead of waiting for completion")
 	return cmd
 }
@@ -83,7 +85,7 @@ func executeStop(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 		upid  string
 		label string
 	)
-	if f.force {
+	if f.hard {
 		label = "stop"
 		sp.Set(fmt.Sprintf("Stopping %s…", ref.Name))
 		upid, err = client.Stop(ctx, ref.Node, ref.VMID)
@@ -105,7 +107,7 @@ func executeStop(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	msg := fmt.Sprintf("%s stopped (vmid %d)", ref.Name, ref.VMID)
 	if f.noWait {
 		msg = fmt.Sprintf("%s is shutting down (vmid %d)", ref.Name, ref.VMID)
-		if f.force {
+		if f.hard {
 			msg = fmt.Sprintf("%s is stopping (vmid %d)", ref.Name, ref.VMID)
 		}
 	}

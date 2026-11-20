@@ -1,5 +1,5 @@
 // Package tackroles fetches the list of community roles published in
-// github.com/tackhq/tack-roles, so 'pmox apply --init' can offer a
+// github.com/tackhq/tack-roles, so 'pmox playbook init' can offer a
 // picker instead of scaffolding a single hardcoded example role. There
 // is no API for this — the list lives only as a Markdown table in the
 // repo's README — so this package fetches and parses that table.
@@ -29,7 +29,7 @@ type Role struct {
 // Fetch GETs readmeURL and parses its "## Available roles" table.
 // Returns an error if the fetch fails or the table can't be found —
 // callers should treat this as best-effort and fall back to a static
-// default rather than blocking 'pmox apply --init' on it.
+// default rather than blocking 'pmox playbook init' on it.
 func Fetch(ctx context.Context, readmeURL string) ([]Role, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, readmeURL, nil)
 	if err != nil {

@@ -70,7 +70,50 @@ func paletteMenu(cmd *cobra.Command) palette.Menu {
 			})
 		}
 	}
+	m.All = paletteAll(cmd)
 	return m
+}
+
+// paletteAll lists every runnable command below cmd, each once, for
+// the palette's filter: cmd's own commands first (as paletteMenu lists
+// them), then the ones inside its groups, keyed by their path ("vm
+// resize"). A command that cmd lists as a shortcut isn't repeated under
+// its canonical path.
+func paletteAll(cmd *cobra.Command) []palette.Item {
+	listed := map[string]bool{} // canonical paths already shown as shortcuts
+	for _, c := range cmd.Commands() {
+		if canon := c.Annotations[canonicalAnnotation]; canon != "" && c.IsAvailableCommand() {
+			listed[canon] = true
+		}
+	}
+	var out []palette.Item
+	var walk func(c *cobra.Command, path []string)
+	walk = func(c *cobra.Command, path []string) {
+		for _, sub := range c.Commands() {
+			if !sub.IsAvailableCommand() || sub.Name() == "help" || sub.Name() == "completion" {
+				continue
+			}
+			p := append(append([]string{}, path...), sub.Name())
+			group := sub.HasAvailableSubCommands() && sub.Annotations[paletteLeafAnnotation] == ""
+			if len(p) > 1 && listed[strings.Join(p, " ")] {
+				continue
+			}
+			desc := sub.Short
+			if i := strings.LastIndex(desc, "  ("); i > 0 && strings.HasSuffix(desc, ")") {
+				desc = desc[:i]
+			}
+			hint := ""
+			if canon := sub.Annotations[canonicalAnnotation]; canon != "" {
+				hint = "pmox " + canon
+			}
+			out = append(out, palette.Item{Key: strings.Join(p, " "), Path: p, Desc: desc, Hint: hint, Sub: group})
+			if group {
+				walk(sub, p)
+			}
+		}
+	}
+	walk(cmd, nil)
+	return out
 }
 
 // paletteResolver resolves a path to its menu under root.

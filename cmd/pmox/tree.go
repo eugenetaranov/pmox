@@ -132,6 +132,30 @@ func flagUsages(fs *pflag.FlagSet) string {
 	return out
 }
 
+// deprecatedFlag turns flag old of c into a hidden but still working
+// form: when it is given, one note naming replacement goes to stderr
+// (never stdout, like deprecated), and with forwardTo its value is set
+// on that flag too.
+func deprecatedFlag(c *cobra.Command, old, replacement, forwardTo string) {
+	fl := c.Flags().Lookup(old)
+	fl.Hidden = true
+	prev := c.PreRunE
+	c.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed(old) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: '--%s' is deprecated and will be removed — use '%s'\n", old, replacement)
+			if forwardTo != "" {
+				if err := cmd.Flags().Set(forwardTo, fl.Value.String()); err != nil {
+					return err
+				}
+			}
+		}
+		if prev != nil {
+			return prev(cmd, args)
+		}
+		return nil
+	}
+}
+
 // errGroupHelp makes a bare noun outside a terminal exit with the
 // user-input code after printing the group's help (already printed, so
 // main adds no "Error:" line).
@@ -173,7 +197,7 @@ func newVMCmd() *cobra.Command {
 The most common verbs are also available at the top level:
 pmox launch, list, start, stop, restart, delete, shell, exec, cp, sync,
 apply.
-('pmox info' shows the Proxmox host; 'pmox vm info <name>' a VM.)
+('pmox info' alone shows the Proxmox host; 'pmox info <name>' a VM.)
 
 'pmox vm use <name>' sets a default VM: shell, exec and the other
 everyday commands then go to it when no VM is named.`)
@@ -213,12 +237,14 @@ Examples:
   pmox context list
   pmox context add
   pmox context use prod
+  pmox context edit prod
   pmox context rename 192.168.0.185 prod
   pmox context delete lab`,
 		rename(newGetContextsCmd(), "list", "ls"),
 		newContextAddCmd(),
 		rename(newUseContextCmd(), "use"),
 		rename(newCurrentContextCmd(), "current"),
+		newEditContextCmd(),
 		rename(newRenameContextCmd(), "rename"),
 		rename(newDeleteContextCmd(), "delete", "rm"),
 	)
@@ -229,7 +255,14 @@ func registerCommands(root *cobra.Command) {
 	cobra.AddTemplateFunc("flagUsages", flagUsages)
 	tmpl := root.UsageTemplate()
 	tmpl = strings.ReplaceAll(tmpl, ".LocalFlags.FlagUsages", "flagUsages .LocalFlags")
-	tmpl = strings.ReplaceAll(tmpl, ".InheritedFlags.FlagUsages", "flagUsages .InheritedFlags")
+	// A subcommand's help doesn't repeat the global flags; it points at
+	// the root's.
+	tmpl = strings.Replace(tmpl, `{{if .HasAvailableInheritedFlags}}
+
+Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}`, `{{if .HasAvailableInheritedFlags}}
+
+Global flags (--context, -o/--output, --no-input, …): see 'pmox --help'{{end}}`, 1)
 	root.SetUsageTemplate(tmpl)
 
 	root.AddGroup(
@@ -252,17 +285,22 @@ func registerCommands(root *cobra.Command) {
 		shortcut(newStartCmd(), groupCommon, "vm start"),
 		shortcut(newStopCmd(), groupCommon, "vm stop"),
 		shortcut(newRestartCmd(), groupCommon, "vm restart"),
+		shortcut(newResizeCmd(), groupCommon, "vm resize"),
 		shortcut(rename(newDeleteCmd(), "delete", "rm"), groupCommon, "vm delete"),
 		shortcut(newExecCmd(), groupCommon, "vm exec"),
 		shortcut(newCpCmd(), groupCommon, "vm cp"),
 		shortcut(newSyncCmd(), groupCommon, "vm sync"),
 		shortcut(newApplyCmd(), groupCommon, "vm apply"),
 		shortcut(newUmountCmd(), groupCommon, "mount delete"),
-		shortcut(newRemountCmd(), groupCommon, "mount restart"),
 	)
+	// 'remount' is another spelling of 'mount restart': it keeps working,
+	// but root help and the root palette list only mount and umount.
+	remount := shortcut(newRemountCmd(), groupCommon, "mount restart")
+	remount.Hidden = true
+	root.AddCommand(remount)
 
 	for _, g := range []*cobra.Command{
-		newVMCmd(), newTemplateCmd(), newContextCmd(), newConfigCmd(), newMountGroupCmd(), newKeyCmd(), newAccessCmd(), newYardoCmd(), newRouterCmd(),
+		newVMCmd(), newTemplateCmd(), newContextCmd(), newConfigCmd(), newMountGroupCmd(), newPlaybookCmd(), newKeyCmd(), newAccessCmd(), newYardoCmd(), newRouterCmd(),
 	} {
 		g.GroupID = groupResources
 		root.AddCommand(g)
@@ -286,4 +324,5 @@ func registerCommands(root *cobra.Command) {
 	)
 
 	wireCompletions(root)
+	applyExamples(root)
 }

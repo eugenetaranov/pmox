@@ -11,7 +11,7 @@ The CLI SHALL expose `pmox vm resize [name|vmid] [--cpu <cores>] [--mem <GiB>] [
 
 #### Scenario: Memory and cores together
 - **WHEN** a user runs `pmox resize web1 --cpu 4 --mem 8`
-- **THEN** `web1` is set to 4 cores and 8 GiB in one configuration change
+- **THEN** `web1` is set to 4 cores and 8 GiB, and a running VM is restarted at most once
 
 #### Scenario: Nothing to change
 - **WHEN** a user runs `pmox resize web1` with no sizing flag

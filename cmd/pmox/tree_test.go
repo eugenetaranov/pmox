@@ -27,14 +27,18 @@ func findPath(t *testing.T, path string) *cobra.Command {
 
 func TestCommandTreeResolves(t *testing.T) {
 	canonical := []string{
-		"vm launch", "vm create", "vm clone", "vm list", "vm ls", "vm info", "vm use", "vm start", "vm stop", "vm delete", "vm rm",
+		"vm launch", "vm create", "vm clone", "vm list", "vm ls", "vm info", "vm use", "vm start", "vm stop", "vm restart", "vm resize", "vm delete", "vm rm",
 		"vm shell", "vm exec", "vm cp", "vm sync", "vm apply", "vm ssh-config",
 		"template create", "template list", "template ls",
-		"context list", "context ls", "context use", "context current", "context rename", "context delete", "context rm",
-		"config edit", "config path", "config cloud-init",
-		"mount create", "mount list", "mount ls", "mount delete", "mount rm",
-		"key publish", "key unpublish", "key show",
-		"access grant", "access revoke", "access list", "access sync",
+		"context list", "context ls", "context add", "context use", "context current", "context edit", "context rename", "context delete", "context rm",
+		"config path", "config cloud-init",
+		"mount create", "mount list", "mount ls", "mount restart", "mount autostart", "mount delete", "mount rm",
+		"playbook init", "playbook list", "playbook ls", "playbook default", "playbook update",
+		"key list", "key ls", "key publish", "key unpublish", "key show",
+		"access setup", "access grant", "access revoke", "access show", "access sync",
+		"router create", "router login", "router status", "router delete", "router rm",
+		"router route add", "router route list", "router route ls", "router route delete", "router route rm",
+		"yardo push", "yardo apply", "yardo verify", "yardo gitkey",
 		"init", "doctor", "cleanup", "version",
 	}
 	for _, p := range canonical {
@@ -43,7 +47,7 @@ func TestCommandTreeResolves(t *testing.T) {
 			t.Errorf("canonical %q is hidden/deprecated", p)
 		}
 	}
-	shortcuts := []string{"launch", "create", "list", "ls", "start", "stop", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
+	shortcuts := []string{"launch", "create", "list", "ls", "start", "stop", "restart", "resize", "delete", "rm", "shell", "exec", "cp", "sync", "apply", "mount", "umount"}
 	// The root's info is the Proxmox host's; a VM's is vm info.
 	if c := findPath(t, "info"); c.Annotations[canonicalAnnotation] != "" || !strings.Contains(c.Short, "Proxmox host") {
 		t.Errorf("root info = %q (%q), want the host overview", c.Short, c.Annotations[canonicalAnnotation])
@@ -57,6 +61,7 @@ func TestCommandTreeResolves(t *testing.T) {
 	for _, p := range []string{
 		"create-template", "ssh-config", "clone",
 		"config get-contexts", "config use-context", "config current-context", "config rename-context", "config delete-context",
+		"config edit", "vm resize ram", "vm resize cpu", "vm resize disk",
 	} {
 		if c := findPath(t, p); !c.Hidden || !strings.HasPrefix(c.Annotations[deprecatedAnnotation], "pmox ") {
 			t.Errorf("%q should be a hidden deprecated form pointing at its replacement, got %q", p, c.Annotations[deprecatedAnnotation])
@@ -248,4 +253,122 @@ func TestEveryVerbAcceptsNoArgs(t *testing.T) {
 		}
 	}
 	walk(rootCmd)
+}
+
+// A deprecated flag still works, forwards its value, and says so on
+// stderr only.
+func TestDeprecatedFlag(t *testing.T) {
+	var hard, force bool
+	c := &cobra.Command{Use: "stop", RunE: func(*cobra.Command, []string) error { return nil }}
+	c.Flags().BoolVar(&hard, "hard", false, "")
+	c.Flags().BoolVar(&force, "force", false, "")
+	deprecatedFlag(c, "force", "--hard", "hard")
+	var out, errb bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errb)
+
+	c.SetArgs([]string{"--force"})
+	if err := c.Execute(); err != nil || !hard {
+		t.Fatalf("--force: err %v, hard %v", err, hard)
+	}
+	if out.Len() != 0 || !strings.Contains(errb.String(), "'--force' is deprecated") || !strings.Contains(errb.String(), "'--hard'") {
+		t.Errorf("stdout %q, stderr %q", out.String(), errb.String())
+	}
+	if !c.Flags().Lookup("force").Hidden || strings.Contains(c.UsageString(), "--force") {
+		t.Error("the deprecated flag must not appear in help")
+	}
+
+	errb.Reset()
+	hard = false
+	_ = c.Flags().Set("force", "false")
+	c.Flags().Lookup("force").Changed = false
+	c.SetArgs([]string{"--hard"})
+	if err := c.Execute(); err != nil || !hard || errb.Len() != 0 {
+		t.Errorf("--hard: err %v, hard %v, stderr %q", err, hard, errb.String())
+	}
+}
+
+// --hard always means power-off and --force always means the pmox tag
+// check (the router's own route is not a VM).
+func TestHardAndForceMeanOneThingEach(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if f := c.Flags().Lookup("hard"); f != nil && !strings.Contains(f.Usage, "power-off") {
+			t.Errorf("%s --hard: %q should be about powering off", c.CommandPath(), f.Usage)
+		}
+		if f := c.Flags().Lookup("force"); f != nil && !f.Hidden && !strings.Contains(f.Usage, "tag") && !strings.HasPrefix(c.CommandPath(), "pmox router") {
+			t.Errorf("%s --force: %q should be about the pmox tag check", c.CommandPath(), f.Usage)
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+	for _, p := range []string{"stop", "vm stop", "restart", "delete"} {
+		if findPath(t, p).Flags().Lookup("hard") == nil {
+			t.Errorf("%s should take --hard", p)
+		}
+	}
+	if f := findPath(t, "stop").Flags().Lookup("force"); f == nil || !f.Hidden {
+		t.Error("stop --force should remain as a hidden deprecated flag")
+	}
+}
+
+func TestServerFlagIsDeprecated(t *testing.T) {
+	if f := rootCmd.PersistentFlags().Lookup("server"); f == nil || !f.Hidden {
+		t.Fatal("--server should remain as a hidden flag")
+	}
+	if strings.Contains(rootCmd.UsageString(), "--server") {
+		t.Error("--server must not appear in help")
+	}
+	t.Setenv("PMOX_SERVER", "")
+	var b bytes.Buffer
+	warnDeprecatedServer(&b)
+	if b.Len() != 0 {
+		t.Errorf("no note expected: %q", b.String())
+	}
+	serverFlag = "lab"
+	t.Cleanup(func() { serverFlag = "" })
+	t.Setenv("PMOX_SERVER", "lab")
+	warnDeprecatedServer(&b)
+	if !strings.Contains(b.String(), "'--context'") || !strings.Contains(b.String(), "'PMOX_CONTEXT'") {
+		t.Errorf("notes = %q", b.String())
+	}
+}
+
+// ls and rm are the only verb aliases, and always alias list and delete.
+func TestOnlyLsAndRmAliases(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, a := range c.Aliases {
+			ok := (a == "ls" && c.Name() == "list") || (a == "rm" && c.Name() == "delete") ||
+				(c.Name() == "launch" && a == "create") || (c.Name() == "upgrade" && a == "up") ||
+				c.CommandPath() == "pmox access show" // also answers to list/ls
+			if !ok && !c.Hidden && c.Annotations[deprecatedAnnotation] == "" {
+				t.Errorf("%s has alias %q", c.CommandPath(), a)
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+}
+
+// remount keeps working, without a note, but root help and the palette
+// list only mount and umount.
+func TestRemountIsOutOfRootHelp(t *testing.T) {
+	c := findPath(t, "remount")
+	if !c.Hidden || c.Annotations[deprecatedAnnotation] != "" || c.ValidArgsFunction == nil {
+		t.Errorf("remount: hidden %v, deprecated %q; want hidden, not deprecated, still completing", c.Hidden, c.Annotations[deprecatedAnnotation])
+	}
+	help := rootCmd.UsageString()
+	if strings.Contains(help, "remount") || !strings.Contains(help, "umount") || !strings.Contains(help, "  mount ") {
+		t.Errorf("root help should list mount and umount, not remount:\n%s", help)
+	}
+	for _, it := range paletteMenu(rootCmd).Items {
+		if it.Key == "remount" {
+			t.Error("remount is in the root palette")
+		}
+	}
 }

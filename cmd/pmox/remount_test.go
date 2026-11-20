@@ -26,7 +26,7 @@ func TestMountOptionsRoundTrip(t *testing.T) {
 		t.Errorf("round trip: %+v", back)
 	}
 	args := mountChildArgs("/bin/pmox", back, o.Server, "/src", "web1", "/opt/app", o.Insecure, o.Extra)
-	for _, want := range []string{"--server https://pve:8006/api2/json", "--ssh-insecure", "--gitignore", "--no-delete", "--debounce 1s", "--exclude=data", "/src web1:/opt/app -- --bwlimit=100"} {
+	for _, want := range []string{"--context https://pve:8006/api2/json", "--ssh-insecure", "--gitignore", "--no-delete", "--debounce 1s", "--exclude=data", "/src web1:/opt/app -- --bwlimit=100"} {
 		if !strings.Contains(strings.Join(args, " "), want) {
 			t.Errorf("child args lack %q: %v", want, args)
 		}

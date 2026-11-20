@@ -59,7 +59,7 @@ func connect(ctx context.Context, cmd *cobra.Command, opts connectOptions) (*ses
 		fmt.Fprintf(cmd.ErrOrStderr(), "using server %s (%s)\n", resolved.URL, resolved.Source)
 	}
 	if err := resolved.Server.CheckAddress(resolved.URL); err != nil {
-		return nil, fmt.Errorf("%w (pmox config edit)", err)
+		return nil, fmt.Errorf("%w (pmox context edit)", err)
 	}
 	pin, err := checkTLSPin(ctx, cmd.ErrOrStderr(), cfg, resolved.URL, resolved.Server, pinTOFU)
 	if err != nil {

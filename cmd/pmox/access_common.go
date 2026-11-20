@@ -47,7 +47,7 @@ func targetLabel(cfg *config.Config, r *server.Resolved) string {
 
 // selectContexts picks the clusters a key/access command acts on:
 //   - --all-contexts: every configured server;
-//   - --context / --server / env, or a single configured server: that one;
+//   - --context / env, or a single configured server: that one;
 //   - otherwise, on a terminal, a multi-select of all contexts
 //     (preselecting the current one); without a terminal, an error.
 func selectContexts(ctx context.Context, all bool, multi bool) (*config.Config, []*server.Resolved, error) {
