@@ -16,6 +16,8 @@ type Row struct {
 	// Overlay is the network IP is on when it's an overlay: "tailscale"
 	// or "netbird"; empty for a LAN address.
 	Overlay string `json:"overlay,omitempty"`
+	// Default marks the context's default VM ('pmox vm use').
+	Default bool `json:"default,omitempty"`
 }
 
 // overlayTag is the IP cell's suffix for each overlay.
@@ -44,6 +46,18 @@ func ipCell(r Row) string {
 // STATUS 8; IP is as wide as its widest cell, overlay tag included.
 func RenderTable(w io.Writer, rows []Row) {
 	nameW, nodeW, ipW := 4, 4, 2
+	// A leading marker column, only when some row is the default VM.
+	mark := func(Row) string { return "" }
+	for _, r := range rows {
+		if r.Default {
+			mark = func(r Row) string {
+				if r.Default {
+					return "* "
+				}
+				return "  "
+			}
+		}
+	}
 	for _, r := range rows {
 		if n := len(ipCell(r)); n > ipW {
 			ipW = n
@@ -63,9 +77,9 @@ func RenderTable(w io.Writer, rows []Row) {
 	}
 	format := fmt.Sprintf("%%-%ds  %%-%dd  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipW)
 	header := fmt.Sprintf("%%-%ds  %%-%ds  %%-%ds  %%-%ds  %%-%ds\n", nameW, vmidCol, nodeW, statCol, ipW)
-	fmt.Fprintf(w, header, "NAME", "VMID", "NODE", "STATUS", "IP")
+	fmt.Fprintf(w, mark(Row{})+header, "NAME", "VMID", "NODE", "STATUS", "IP")
 	for _, r := range rows {
-		fmt.Fprintf(w, format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), ipCell(r))
+		fmt.Fprintf(w, mark(r)+format, truncate(r.Name, nameMax), r.VMID, truncate(r.Node, nodeMax), truncate(r.Status, statCol), ipCell(r))
 	}
 }
 

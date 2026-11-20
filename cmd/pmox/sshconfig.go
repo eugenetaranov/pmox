@@ -55,6 +55,7 @@ Examples:
 	addSSHFlags(cmd, f)
 	addForwardFlags(cmd, f, false)
 	cmd.Flags().BoolVar(&asCommand, "command", false, "print a ready-to-run ssh command instead of a config block")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -65,7 +66,7 @@ func runSSHConfig(cmd *cobra.Command, args []string, f *sshFlags, asCommand bool
 		return err
 	}
 	srv := resolved.Server
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

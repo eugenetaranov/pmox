@@ -27,7 +27,7 @@ func findPath(t *testing.T, path string) *cobra.Command {
 
 func TestCommandTreeResolves(t *testing.T) {
 	canonical := []string{
-		"vm launch", "vm create", "vm clone", "vm list", "vm ls", "vm info", "vm start", "vm stop", "vm delete", "vm rm",
+		"vm launch", "vm create", "vm clone", "vm list", "vm ls", "vm info", "vm use", "vm start", "vm stop", "vm delete", "vm rm",
 		"vm shell", "vm exec", "vm cp", "vm sync", "vm apply", "vm ssh-config",
 		"template create", "template list", "template ls",
 		"context list", "context ls", "context use", "context current", "context rename", "context delete", "context rm",

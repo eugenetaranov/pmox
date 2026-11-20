@@ -175,6 +175,7 @@ another server and `-o json` (short for `--output json`) prints it as JSON. For 
 | `clone` | Clone an existing VM/template into a new VM (source optional → picker) | `pmox vm clone web1 web2` |
 | `list`, `ls` | List pmox-tagged VMs with IPs; `--all` for every VM | `pmox vm list` |
 | `info` | Show CPU/mem/disk/status/uptime/interfaces for one VM | `pmox vm info web1` |
+| `use` | Set the default VM that `shell`, `exec` and the other everyday commands go to (`--clear` removes it) | `pmox vm use web1` |
 | `start` | Start a VM and wait for the guest agent to report an IP | `pmox vm start web1` |
 | `stop` | ACPI graceful shutdown of one or more VMs (`--force` for hard stop) | `pmox vm stop web1 web2` |
 | `resize ram`, `cpu`, `disk` | Set memory (GiB) or cores (applied at the next stop/start; `--restart` does it now), or grow the disk (`+20` or `60` GiB) and, on a running VM, its filesystem | `pmox vm resize disk web1 +20` |
@@ -234,6 +235,22 @@ shows an **arrow-key picker** when several do:
 - `mount` — omit the VM prefix of `[<name|vmid>:]<remote_path>`, give only the local directory (`pmox mount ./src`), or omit both and pmox asks for the local directory and the target.
 - `umount` — omit the argument and pmox lists the running mounts to stop (one running mount is stopped without asking).
 - `context use` — omit the name to pick a context.
+
+**A default VM.** With several VMs, `pmox vm use web1` makes `web1` the
+default for the current context (it is saved as `default_vm` under that
+server in the config). With no VM named, `shell`, `exec`, `vm info`,
+`start`, `apply`, `vm ssh-config`, `yardo push`, `yardo gitkey` and the
+VM part of `cp`, `sync` and `mount` targets (`pmox cp ./app.tar :/tmp/`)
+then go to it instead of showing the picker, in scripts too; pmox says
+which VM it chose (`→ web1 (default VM)`). `pmox list` marks it with
+`*`.
+
+- An explicit name always wins, and `--pick` shows the picker once.
+- `stop`, `delete`, `resize` and `clone` never use the default: they
+  keep asking, so a bare `pmox delete` can't land on your main VM.
+- `pmox vm use` alone picks the VM; `pmox vm use --clear` removes the
+  default. Deleting the default VM clears it, and a default that has
+  gone missing is reported and cleared the next time it would be used.
 
 **Agent and port forwarding.** `pmox shell -A web1` forwards your local
 ssh-agent, so git on the VM uses your laptop's keys and no key has to live

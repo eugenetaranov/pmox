@@ -62,10 +62,11 @@ func executeList(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 			continue
 		}
 		rows = append(rows, vm.Row{
-			Name:   r.Name,
-			VMID:   r.VMID,
-			Node:   r.Node,
-			Status: r.Status,
+			Name:    r.Name,
+			VMID:    r.VMID,
+			Node:    r.Node,
+			Status:  r.Status,
+			Default: sessionDefault.name != "" && r.Name == sessionDefault.name && vm.HasPMOXTag(r.Tags),
 		})
 	}
 	fetchIPs(ctx, client, rows)

@@ -41,6 +41,7 @@ IP-wait loop. --wait overrides the default 3m budget for the IP poll.`,
 	}
 	cmd.Flags().BoolVar(&f.noWait, "no-wait", false, "return after the start task completes; skip the IP-ready poll")
 	cmd.Flags().DurationVar(&f.wait, "wait", defaultWait, "total wait budget for the guest agent to report an IP")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -50,7 +51,7 @@ func runStart(cmd *cobra.Command, args []string, f *startFlags) error {
 	if err != nil {
 		return err
 	}
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

@@ -298,3 +298,27 @@ func TestEscGoesBackThenAborts(t *testing.T) {
 		t.Error("esc on the first field should abort")
 	}
 }
+
+// With a default VM the field opens as "<default>:", cursor in the path,
+// and ↑/↓ still switch VM.
+func TestRemoteOpensWithDefaultVM(t *testing.T) {
+	r := &Remote{Title: "Remote target", VMs: threeVMs, DefaultPath: defMnt, DefaultVM: "web2"}
+	f := New(context.Background(), r)
+	if v := r.in.str(); v != "web2:" {
+		t.Fatalf("field opens as %q, want web2:", v)
+	}
+	if g := r.ghost(); g != "/mnt/src" {
+		t.Errorf("ghost = %q, want the default path", g)
+	}
+	key(f, tea.KeyDown)
+	if v := r.in.str(); !strings.HasSuffix(v, ":") || v == "web2:" {
+		t.Errorf("after ↓ = %q, want another VM", v)
+	}
+
+	// A default that isn't one of the VMs is ignored.
+	r2 := &Remote{Title: "Remote target", VMs: threeVMs, DefaultVM: "gone"}
+	New(context.Background(), r2)
+	if v := r2.in.str(); v != "" {
+		t.Errorf("unknown default: field opens as %q, want empty", v)
+	}
+}

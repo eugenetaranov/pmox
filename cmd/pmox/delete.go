@@ -269,6 +269,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 			fmt.Fprintf(cmd.ErrOrStderr(), "✓ VM %q (vmid %d) is already gone\n", ref.Name, ref.VMID)
 			forgetTackProfile(cmd, f.serverURL, ref.VMID)
 			forgetVMIdentity(cmd, f.serverURL, ref.VMID)
+			forgetDefaultVM(cmd, ref)
 			return nil
 		}
 		return fmt.Errorf("get status for vm %d: %w", ref.VMID, err)
@@ -329,6 +330,7 @@ func destroyVM(ctx context.Context, cmd *cobra.Command, client *pveclient.Client
 
 	forgetTackProfile(cmd, f.serverURL, ref.VMID)
 	forgetVMIdentity(cmd, f.serverURL, ref.VMID)
+	forgetDefaultVM(cmd, ref)
 	mark := ""
 	if spinner != nil {
 		mark = "✓ "

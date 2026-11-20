@@ -40,6 +40,9 @@ type Remote struct {
 	DefaultPath func(prev []string) string
 	// List completes remote paths (nil: no remote completion).
 	List Lister
+	// DefaultVM, when it names one of VMs, opens the field as
+	// "<DefaultVM>:" (still editable).
+	DefaultVM string
 
 	ctx     context.Context
 	in      input
@@ -81,8 +84,13 @@ func (r *Remote) focus(ctx context.Context, prev []string) {
 		r.def = r.DefaultPath(prev)
 	}
 	r.err, r.hint = "", ""
-	if r.in.str() == "" && r.single() {
-		r.in.set(r.VMs[0].Name + ":")
+	if r.in.str() == "" {
+		if r.single() {
+			r.in.set(r.VMs[0].Name + ":")
+		} else if _, ok := r.exact(r.DefaultVM); ok && r.DefaultVM != "" {
+			r.in.set(r.DefaultVM + ":")
+			r.syncHighlight()
+		}
 	}
 }
 

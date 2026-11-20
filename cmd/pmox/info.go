@@ -27,6 +27,7 @@ one exists, or shows an interactive picker when there are several.`,
 			return runInfo(cmd, args)
 		},
 	}
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -36,7 +37,7 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

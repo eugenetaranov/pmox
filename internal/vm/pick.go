@@ -29,8 +29,14 @@ var (
 	isStderrTTY = tui.StderrIsTerminal
 	noInput     = tui.NoInput
 	selectOne   = tui.Select
+	selectOneAt = tui.SelectAt
 	selectMulti = tui.SelectMulti
 )
+
+// DefaultName is the context's default VM ('pmox vm use'), "" for none.
+// The pickers mark its row, and the single-select starts on it. Whether
+// a command uses the default instead of asking is the caller's decision.
+var DefaultName string
 
 // Pick returns a single pmox-tagged VM. When the cluster has exactly one
 // such VM, it is returned silently. When multiple exist and both stdin
@@ -42,7 +48,12 @@ func Pick(ctx context.Context, client *pveclient.Client) (*Ref, error) {
 	if err != nil || single != nil {
 		return single, err
 	}
-	chosen, err := selectOne("Select a pmox VM", c.opts)
+	var chosen string
+	if c.defaultKey != "" {
+		chosen, err = selectOneAt("Select a pmox VM", c.opts, c.defaultKey)
+	} else {
+		chosen, err = selectOne("Select a pmox VM", c.opts)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +89,8 @@ func PickMulti(ctx context.Context, client *pveclient.Client) ([]*Ref, error) {
 type pickerCandidates struct {
 	opts   []huh.Option[string]
 	byVMID map[string]pveclient.Resource
+	// defaultKey is the key of the default VM's row ("" when none).
+	defaultKey string
 }
 
 // loadPickerCandidates lists pmox-tagged VMs. With exactly one it is
@@ -121,7 +134,12 @@ func loadPickerCandidates(ctx context.Context, client *pveclient.Client) (single
 	}
 	for _, r := range pmoxVMs {
 		key := fmt.Sprintf("%d", r.VMID)
-		c.opts = append(c.opts, huh.NewOption(formatPickerRow(r), key))
+		label := formatPickerRow(r)
+		if DefaultName != "" && r.Name == DefaultName {
+			label += "  ★ default"
+			c.defaultKey = key
+		}
+		c.opts = append(c.opts, huh.NewOption(label, key))
 		c.byVMID[key] = r
 	}
 	return nil, c, nil

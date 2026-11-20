@@ -6,6 +6,7 @@ target and a local path, how remote paths are read, and how a missing
 destination directory is confirmed and created.
 
 ## Requirements
+
 ### Requirement: Target field for `<vm>:<path>`
 
 pmox SHALL provide an interactive target field that every command
@@ -202,3 +203,17 @@ writable location.
 - **WHEN** `pmox cp -r ./cfg web1:/opt/new/` runs without a terminal and `/opt/new` doesn't exist
 - **THEN** it fails before running scp, with an error naming `/opt/new` and `--mkdir`
 
+### Requirement: Targets use the default VM
+For `cp`, `sync` and `mount`, a target written without a VM (a bare `:`, `:<path>`, or `mount`'s bare remote path) SHALL resolve to the context's default VM when one is set, without prompting. The interactive `<vm>:<path>` field SHALL open with the default VM filled in and the cursor in the path, and SHALL stay editable so another VM can be chosen. `--pick` SHALL ignore the default.
+
+#### Scenario: Bare colon with a default
+- **WHEN** `web1` is the default, three pmox VMs exist, and a user runs `pmox cp ./app.tar :/tmp/`
+- **THEN** the file is copied to `web1:/tmp/` with no picker
+
+#### Scenario: Field prefilled
+- **WHEN** `web1` is the default and a user runs `pmox mount ./src` on a terminal
+- **THEN** the target field opens as `web1:` with the path suggestion, and ↑/↓ still switch VM
+
+#### Scenario: Mount with a bare remote path
+- **WHEN** `web1` is the default and a user runs `pmox mount ./src /opt/app`
+- **THEN** the mount targets `web1:/opt/app`

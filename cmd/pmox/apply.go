@@ -98,6 +98,7 @@ it scaffolds the same fixed default as before.`,
 	cmd.Flags().StringVar(&f.setDef, "default", "", "set the default playbook (by name; without a name, pick one) and exit")
 	optionalValue(cmd, "default", pickDefaultSentinel, "[=name]")
 	cmd.Flags().BoolVar(&f.update, "update", false, "git pull the cloned playbook repo and exit")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -160,7 +161,7 @@ func runApply(cmd *cobra.Command, args []string, f *applyFlags) error {
 		profileArg = args[1]
 	}
 
-	arg, err := resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

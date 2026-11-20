@@ -65,6 +65,10 @@ type Server struct {
 	// AddressLAN (empty means this) or AddressOverlay, the VM's
 	// Tailscale/NetBird address when it has one.
 	Address string `yaml:"address,omitempty"`
+
+	// DefaultVM is the name of the VM that shell, exec and the other
+	// everyday commands target when none is named ('pmox vm use').
+	DefaultVM string `yaml:"default_vm,omitempty"`
 }
 
 // Address values.
@@ -332,6 +336,25 @@ func (c *Config) Save() error {
 	// Tighten a pre-existing config dir.
 	_ = os.Chmod(filepath.Dir(p), 0o700)
 	return nil
+}
+
+// SetDefaultVM stores name ("" clears it) as the default VM of the
+// server at canonicalURL, re-reading the config so nothing else in the
+// file is overwritten.
+func SetDefaultVM(canonicalURL, name string) error {
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	srv, ok := cfg.Servers[canonicalURL]
+	if !ok {
+		return fmt.Errorf("server %s is not configured", canonicalURL)
+	}
+	if srv.DefaultVM == name {
+		return nil
+	}
+	srv.DefaultVM = name
+	return cfg.Save()
 }
 
 // AddServer adds or replaces the server entry keyed by url.

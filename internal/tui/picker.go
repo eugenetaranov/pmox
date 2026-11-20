@@ -116,6 +116,26 @@ func Select(title string, opts []huh.Option[string]) (string, error) {
 	})
 }
 
+// SelectAt is Select with the cursor starting on the option whose value
+// is initial (the first option when none matches).
+func SelectAt(title string, opts []huh.Option[string], initial string) (string, error) {
+	if len(opts) == 0 {
+		return "", ErrCancelled
+	}
+	if len(opts) == 1 {
+		return opts[0].Value, nil
+	}
+	start := opts[0].Value
+	for _, o := range opts {
+		if o.Value == initial {
+			start = initial
+		}
+	}
+	return runPicker(start, func(v *string) huh.Field {
+		return selectField(title, opts, v)
+	})
+}
+
 // SelectMulti runs a multi-choice picker (space toggles, enter confirms)
 // and returns the chosen values. An empty selection returns ErrCancelled
 // and an abort ErrAborted, so callers never proceed on "nothing selected".

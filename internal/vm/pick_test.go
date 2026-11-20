@@ -166,3 +166,43 @@ func TestPick_UserAborts(t *testing.T) {
 		t.Fatalf("expected ErrCancelled on abort, got %v", err)
 	}
 }
+
+// The default VM's row is marked in both pickers; the single-select
+// starts on it and the multi-select pre-selects nothing.
+func TestPick_MarksTheDefaultVM(t *testing.T) {
+	client := clusterServer(t, threeTaggedFixture)
+	defer withPickerStubs(t, true, true, false, nil)()
+	DefaultName = "alpha"
+	origAt, origMulti := selectOneAt, selectMulti
+	defer func() { DefaultName, selectOneAt, selectMulti = "", origAt, origMulti }()
+
+	var initial string
+	var labels []string
+	selectOneAt = func(_ string, opts []huh.Option[string], at string) (string, error) {
+		initial = at
+		for _, o := range opts {
+			labels = append(labels, o.Key)
+		}
+		return at, nil
+	}
+	ref, err := Pick(context.Background(), client)
+	if err != nil || ref.Name != "alpha" || initial != "100" {
+		t.Fatalf("ref = %+v, err = %v, cursor on %q; want alpha with the cursor on 100", ref, err, initial)
+	}
+	if !strings.Contains(labels[1], "default") || strings.Contains(labels[0], "default") {
+		t.Errorf("labels = %q, want only alpha marked", labels)
+	}
+
+	selectMulti = func(_ string, opts []huh.Option[string]) ([]string, error) {
+		for _, o := range opts {
+			if o.Value == "100" && !strings.Contains(o.Key, "default") {
+				t.Errorf("multi-select row %q should be marked", o.Key)
+			}
+		}
+		return []string{"200"}, nil
+	}
+	refs, err := PickMulti(context.Background(), client)
+	if err != nil || len(refs) != 1 || refs[0].Name != "beta" {
+		t.Errorf("refs = %+v, err = %v", refs, err)
+	}
+}

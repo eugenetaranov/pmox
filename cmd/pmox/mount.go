@@ -80,7 +80,7 @@ var mountResolveDestFn = func(ctx context.Context, client *pveclient.Client, std
 	if r, p, isRemote := parseRemoteArg(dest); isRemote {
 		return r, p, nil
 	}
-	picked, err := vmPickFn(ctx, client)
+	picked, err := pickTargetVM(ctx, client, stderr)
 	if err != nil {
 		return "", "", err
 	}
@@ -163,6 +163,7 @@ asking.`,
 	cmd.Flags().BoolVar(&f.noDelete, "no-delete", false, "disable --delete from rsync")
 	cmd.Flags().StringArrayVarP(&f.excludes, "exclude", "x", nil, "rsync exclude pattern (replaces defaults; repeatable)")
 	cmd.Flags().BoolVar(&f.mkdir, "mkdir", false, "create the remote directory if it doesn't exist, without asking")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -323,7 +324,8 @@ func resolveMountArgs(cmd *cobra.Command, client *pveclient.Client, f *mountFlag
 			}
 			return mountDefaultPath(prev[0])
 		},
-		List: targetLister(&f.sshFlags, serverURL, srv),
+		List:      targetLister(&f.sshFlags, serverURL, srv),
+		DefaultVM: targetDefaultVM(),
 	}
 	fields = append(fields, remote)
 	if err := targetRunFn(ctx, fields...); err != nil {

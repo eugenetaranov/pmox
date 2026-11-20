@@ -65,6 +65,7 @@ func connect(ctx context.Context, cmd *cobra.Command, opts connectOptions) (*ses
 	if err != nil {
 		return nil, err
 	}
+	setSessionDefault(resolved.URL, resolved.Server)
 	return &session{Client: newAPIClient(resolved.URL, resolved.Server, resolved.Secret, pin), Resolved: resolved, Cfg: cfg}, nil
 }
 

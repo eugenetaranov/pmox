@@ -26,7 +26,7 @@ func ensureVMRef(ctx context.Context, cmd *cobra.Command, client *pveclient.Clie
 	if ref != "" {
 		return ref, nil
 	}
-	picked, err := vmPickFn(ctx, client)
+	picked, err := pickTargetVM(ctx, client, cmd.ErrOrStderr())
 	if err != nil {
 		return "", err
 	}
@@ -90,7 +90,7 @@ func resolveCpSyncArgs(ctx context.Context, cmd *cobra.Command, client *pveclien
 	}
 	upload := dir == "upload"
 	local := &target.Local{Title: "Local destination"}
-	rem := &target.Remote{Title: "Remote source", VMs: vms, List: targetLister(f, serverURL, srv)}
+	rem := &target.Remote{Title: "Remote source", VMs: vms, List: targetLister(f, serverURL, srv), DefaultVM: targetDefaultVM()}
 	fields := []target.Field{rem, local}
 	if upload {
 		local.Title, rem.Title = "Local source", "Remote destination"
@@ -211,6 +211,7 @@ creates it without asking.`,
 	addSSHFlags(cmd, f)
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "copy directories recursively")
 	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create a missing destination directory without asking")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -300,6 +301,7 @@ creates it without asking.`,
 	addSSHFlags(cmd, f)
 	cmd.Flags().BoolVar(&noArchive, "no-archive", false, "don't pass rsync -a (pass your own flags after --)")
 	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create a missing destination directory without asking")
+	addPickFlag(cmd)
 	return cmd
 }
 

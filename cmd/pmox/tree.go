@@ -172,7 +172,10 @@ func newVMCmd() *cobra.Command {
 
 The most common verbs are also available at the top level:
 pmox launch, list, start, stop, delete, shell, exec, cp, sync, apply.
-('pmox info' shows the Proxmox host; 'pmox vm info <name>' a VM.)`)
+('pmox info' shows the Proxmox host; 'pmox vm info <name>' a VM.)
+
+'pmox vm use <name>' sets a default VM: shell, exec and the other
+everyday commands then go to it when no VM is named.`)
 	g.AddGroup(
 		&cobra.Group{ID: "vm-lifecycle", Title: "Lifecycle:"},
 		&cobra.Group{ID: "vm-access", Title: "Access & files:"},
@@ -184,7 +187,7 @@ pmox launch, list, start, stop, delete, shell, exec, cp, sync, apply.
 		}
 	}
 	add("vm-lifecycle",
-		newLaunchCmd(), newCloneCmd(), rename(newListCmd(), "list", "ls"), newInfoCmd(),
+		newLaunchCmd(), newCloneCmd(), rename(newListCmd(), "list", "ls"), newInfoCmd(), newVMUseCmd(),
 		newStartCmd(), newStopCmd(), newResizeCmd(), rename(newDeleteCmd(), "delete", "rm"),
 	)
 	add("vm-access",

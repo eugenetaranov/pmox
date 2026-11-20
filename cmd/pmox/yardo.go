@@ -61,6 +61,7 @@ pmox's default cloud-init.`,
 		RunE: func(cmd *cobra.Command, args []string) error { return runYardoPush(cmd, args, f) },
 	}
 	addSSHFlags(cmd, f)
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -70,7 +71,7 @@ func runYardoPush(cmd *cobra.Command, args []string, f *sshFlags) error {
 	if err != nil {
 		return err
 	}
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

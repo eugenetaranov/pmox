@@ -115,6 +115,7 @@ keys; -L forwards ports (pmox shell -L 3000 web1).`,
 	}
 	addSSHFlags(cmd, f)
 	addForwardFlags(cmd, f, true)
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -159,6 +160,7 @@ The default login user is "pmox". Override with --user / --identity.`,
 	cmd.Flags().SetInterspersed(false)
 	addSSHFlags(cmd, f)
 	addForwardFlags(cmd, f, false)
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -186,7 +188,7 @@ func runShell(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 	srv := resolved.Server
 
-	arg, err := resolveTargetArg(ctx, client, args, cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -249,7 +251,7 @@ func runExec(cmd *cobra.Command, args []string, f *sshFlags) error {
 	}
 	srv := resolved.Server
 
-	vmArg, err := resolveTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
+	vmArg, err := resolveDefaultTargetArg(ctx, client, vmArgs, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

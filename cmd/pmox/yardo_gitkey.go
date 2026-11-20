@@ -52,6 +52,7 @@ yardo saves only which hosts it is for. Re-run to replace it.`,
 	}
 	addSSHFlags(cmd, f)
 	cmd.Flags().StringArrayVar(&hosts, "host", nil, "a git host to use the key for (repeatable; default github.com)")
+	addPickFlag(cmd)
 	return cmd
 }
 
@@ -79,7 +80,7 @@ func runYardoGitKey(cmd *cobra.Command, args []string, f *sshFlags, hosts []stri
 	if err != nil {
 		return err
 	}
-	arg, err := resolveTargetArg(ctx, client, args[:len(args)-1], cmd.ErrOrStderr())
+	arg, err := resolveDefaultTargetArg(ctx, client, args[:len(args)-1], cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
